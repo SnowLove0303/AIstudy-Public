@@ -95,6 +95,9 @@ contextBridge.exposeInMainWorld("aistudyUpdates", {
   openReleaseDir: () => invokeApp("updates:open-release-dir"),
   check: () => invokeApp("updates:check"),
   download: (downloadUrl: string, expectedSize?: number) => invokeApp("updates:download", downloadUrl, expectedSize),
+  pauseDownload: () => invokeApp("updates:pause-download"),
+  resumeDownload: () => invokeApp("updates:resume-download"),
+  cancelDownload: () => invokeApp("updates:cancel-download"),
   install: (filePath: string) => invokeApp("updates:install", filePath),
   openReleasePage: (releaseUrl: string) => invokeApp("updates:open-release-page", releaseUrl),
   onDownloadProgress: (callback: (progress: unknown) => void) => {

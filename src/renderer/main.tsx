@@ -11,6 +11,8 @@ import {
   Folder,
   GitBranch,
   Globe2,
+  Pause,
+  Play,
   RefreshCw,
   Settings,
   X
@@ -72,12 +74,14 @@ type UpdateDownloadResult = {
   fileSize: number;
 };
 
+type UpdateDownloadStatus = "starting" | "downloading" | "paused" | "complete" | "cancelled";
+
 type UpdateDownloadProgress = {
   fileName: string;
   downloadedBytes: number;
   totalBytes: number;
   percent: number;
-  status: "starting" | "downloading" | "complete";
+  status: UpdateDownloadStatus;
 };
 
 type ErrorLogEntry = {
@@ -152,6 +156,9 @@ declare global {
       loadInfo: () => Promise<UpdateManagerInfo>;
       check: () => Promise<UpdateCheckResult>;
       download: (downloadUrl: string, expectedSize?: number) => Promise<UpdateDownloadResult>;
+      pauseDownload: () => Promise<boolean>;
+      resumeDownload: () => Promise<boolean>;
+      cancelDownload: () => Promise<boolean>;
       install: (filePath: string) => Promise<boolean>;
       openReleasePage: (releaseUrl: string) => Promise<boolean>;
       onDownloadProgress: (callback: (progress: UpdateDownloadProgress) => void) => () => void;
@@ -235,6 +242,14 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       setDownloadProgress(progress);
       if (progress.status === "complete") {
         setStatus("安装包下载完成，可以开始安装。");
+        return;
+      }
+      if (progress.status === "paused") {
+        setStatus("下载已暂停。");
+        return;
+      }
+      if (progress.status === "cancelled") {
+        setStatus("下载已取消。");
         return;
       }
       if (progress.totalBytes > 0) {
@@ -351,10 +366,57 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
         setStatus("安装程序已启动，当前应用将自动关闭。");
       })
       .catch((downloadError: unknown) => {
-        setError(downloadError instanceof Error ? downloadError.message : "下载更新失败。");
+        const message = downloadError instanceof Error ? downloadError.message : "下载更新失败。";
+        if (message.includes("取消")) {
+          setStatus("下载已取消。");
+          setDownloadProgress(null);
+          return;
+        }
+        setError(message);
       })
       .finally(() => setIsDownloading(false));
   }, [checkResult]);
+
+  const pauseDownload = React.useCallback(() => {
+    if (!window.aistudyUpdates) return;
+    void window.aistudyUpdates.pauseDownload()
+      .then((paused) => {
+        if (!paused) return;
+        setStatus("下载已暂停。");
+        setDownloadProgress((current) => current ? { ...current, status: "paused" } : current);
+      })
+      .catch((pauseError: unknown) => {
+        setError(pauseError instanceof Error ? pauseError.message : "下载暂时无法暂停。");
+      });
+  }, []);
+
+  const resumeDownload = React.useCallback(() => {
+    if (!window.aistudyUpdates) return;
+    void window.aistudyUpdates.resumeDownload()
+      .then((resumed) => {
+        if (!resumed) return;
+        setStatus("继续下载更新...");
+        setDownloadProgress((current) => current ? { ...current, status: "downloading" } : current);
+      })
+      .catch((resumeError: unknown) => {
+        setError(resumeError instanceof Error ? resumeError.message : "下载暂时无法继续。");
+      });
+  }, []);
+
+  const cancelDownload = React.useCallback(() => {
+    if (!window.aistudyUpdates) return;
+    void window.aistudyUpdates.cancelDownload()
+      .then((cancelled) => {
+        if (!cancelled) return;
+        setIsDownloading(false);
+        setDownloadProgress(null);
+        setDownloadResult(null);
+        setStatus("下载已取消。");
+      })
+      .catch((cancelError: unknown) => {
+        setError(cancelError instanceof Error ? cancelError.message : "下载暂时无法取消。");
+      });
+  }, []);
 
   const installUpdate = React.useCallback(() => {
     if (!window.aistudyUpdates || !downloadResult?.filePath) return;
@@ -383,7 +445,8 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     ? `已下载 ${downloadResult.fileName}${downloadResult.fileSize ? `（${formatFileSize(downloadResult.fileSize)}）` : ""}`
     : (checkResult?.hasUpdate ? "下载完成后自动启动安装程序。" : "检测到可更新版本后可用。");
   const installDescription = downloadResult ? "启动安装程序并退出当前应用。" : "安装包下载完成后可用。";
-  const visibleDownloadProgress = downloadProgress && (isDownloading || downloadProgress.status === "complete") ? downloadProgress : null;
+  const isDownloadPaused = downloadProgress?.status === "paused";
+  const visibleDownloadProgress = downloadProgress && (isDownloading || downloadProgress.status === "complete" || isDownloadPaused) ? downloadProgress : null;
   const progressPercent = visibleDownloadProgress ? Math.max(0, Math.min(100, visibleDownloadProgress.percent)) : 0;
   const progressSizeText = visibleDownloadProgress
     ? (visibleDownloadProgress.totalBytes > 0
@@ -557,7 +620,13 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
               {visibleDownloadProgress ? (
                 <div className="update-download-progress" aria-label="下载进度">
                   <div className="update-progress-heading">
-                    <span>{visibleDownloadProgress.status === "complete" ? "下载完成" : "正在下载"}</span>
+                    <span>
+                      {visibleDownloadProgress.status === "complete"
+                        ? "下载完成"
+                        : visibleDownloadProgress.status === "paused"
+                          ? "已暂停"
+                          : "正在下载"}
+                    </span>
                     <strong>{progressPercent}%</strong>
                   </div>
                   <div className="update-progress-track" aria-hidden="true">
@@ -567,6 +636,18 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
                     <span>{visibleDownloadProgress.fileName}</span>
                     <span>{progressSizeText}</span>
                   </div>
+                  {visibleDownloadProgress.status !== "complete" ? (
+                    <div className="update-progress-actions" aria-label="下载控制">
+                      <button type="button" onClick={isDownloadPaused ? resumeDownload : pauseDownload}>
+                        {isDownloadPaused ? <Play size={14} /> : <Pause size={14} />}
+                        <span>{isDownloadPaused ? "继续" : "暂停"}</span>
+                      </button>
+                      <button type="button" onClick={cancelDownload}>
+                        <X size={14} />
+                        <span>取消</span>
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <button className="update-option-row" type="button" onClick={installUpdate} disabled={!downloadResult}>
