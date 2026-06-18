@@ -18,6 +18,8 @@ const MIND_MAP_SNAPSHOT_RETENTION_LIMIT = AISTUDY_CORE_CONTRACT.mindMap.snapshot
 const KNOWLEDGE_DOCUMENT_SNAPSHOT_RETENTION_LIMIT = AISTUDY_CORE_CONTRACT.knowledgeDocument.snapshotRetentionLimit;
 const BEFORE_CLOSE_DRAIN_TIMEOUT_MS = 2500;
 const INLINE_DATA_URL_PATTERN = /^data:[^;,]+(?:;[^,]+)*;base64,/i;
+const UPDATE_DOWNLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+const UPDATE_DOWNLOAD_RETRY_LIMIT = 4;
 
 type CourseRecord = {
   id: string;
@@ -3265,6 +3267,43 @@ function sendUpdateDownloadProgress(event: IpcMainInvokeEvent, progress: UpdateD
   }
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getContentRangeTotal(contentRange: string | null) {
+  const match = contentRange?.match(/\/(\d+)\s*$/);
+  return match ? Number(match[1]) : 0;
+}
+
+async function fetchUpdateDownloadRange(downloadUrlValue: string, startByte: number, endByte?: number) {
+  const rangeValue = typeof endByte === "number" ? `bytes=${startByte}-${endByte}` : `bytes=${startByte}-`;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= UPDATE_DOWNLOAD_RETRY_LIMIT; attempt += 1) {
+    try {
+      const response = await fetch(downloadUrlValue, {
+        headers: {
+          "User-Agent": "AIstudy-Updater",
+          Range: rangeValue
+        }
+      });
+
+      if (response.status === 206 || (startByte === 0 && response.ok)) {
+        return response;
+      }
+
+      lastError = new Error(`下载安装包失败：${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    await wait(600 * attempt);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("下载安装包失败。");
+}
+
 async function downloadUpdate(event: IpcMainInvokeEvent, downloadUrlValue: unknown): Promise<UpdateDownloadResult> {
   if (typeof downloadUrlValue !== "string" || !downloadUrlValue.startsWith("https://")) {
     throw new Error("下载地址不可用。");
@@ -3285,45 +3324,54 @@ async function downloadUpdate(event: IpcMainInvokeEvent, downloadUrlValue: unkno
     status: "starting"
   });
 
-  const response = await fetch(downloadUrlValue, {
-    headers: {
-      "User-Agent": "AIstudy-Updater"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`下载安装包失败：${response.status}`);
-  }
-
-  const totalBytes = Number(response.headers.get("content-length")) || 0;
-  const bodyReader = response.body?.getReader();
-  if (!bodyReader) {
-    throw new Error("下载安装包失败：没有收到文件内容。");
-  }
-
   let downloadedBytes = 0;
+  let totalBytes = 0;
   let lastProgressAt = 0;
   const fileHandle = await fs.open(tempFilePath, "w");
   try {
-    while (true) {
-      const { done, value } = await bodyReader.read();
-      if (done) break;
-      if (!value) continue;
+    while (totalBytes === 0 || downloadedBytes < totalBytes) {
+      const rangeEnd = totalBytes > 0
+        ? Math.min(downloadedBytes + UPDATE_DOWNLOAD_CHUNK_SIZE_BYTES - 1, totalBytes - 1)
+        : downloadedBytes + UPDATE_DOWNLOAD_CHUNK_SIZE_BYTES - 1;
+      const response = await fetchUpdateDownloadRange(downloadUrlValue, downloadedBytes, rangeEnd);
+      const contentRangeTotal = getContentRangeTotal(response.headers.get("content-range"));
+      if (contentRangeTotal > 0) {
+        totalBytes = contentRangeTotal;
+      } else if (response.status === 206) {
+        throw new Error("下载安装包失败：下载源没有返回完整文件大小。");
+      } else if (totalBytes === 0) {
+        totalBytes = Number(response.headers.get("content-length")) || 0;
+      }
 
-      const chunk = Buffer.from(value);
-      await fileHandle.write(chunk);
-      downloadedBytes += chunk.byteLength;
+      const bodyReader = response.body?.getReader();
+      if (!bodyReader) {
+        throw new Error("下载安装包失败：没有收到文件内容。");
+      }
 
-      const now = Date.now();
-      if (now - lastProgressAt > 160 || (totalBytes > 0 && downloadedBytes >= totalBytes)) {
-        lastProgressAt = now;
-        sendUpdateDownloadProgress(event, {
-          fileName,
-          downloadedBytes,
-          totalBytes,
-          percent: totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0,
-          status: "downloading"
-        });
+      while (true) {
+        const { done, value } = await bodyReader.read();
+        if (done) break;
+        if (!value) continue;
+
+        const chunk = Buffer.from(value);
+        await fileHandle.write(chunk);
+        downloadedBytes += chunk.byteLength;
+
+        const now = Date.now();
+        if (now - lastProgressAt > 160 || (totalBytes > 0 && downloadedBytes >= totalBytes)) {
+          lastProgressAt = now;
+          sendUpdateDownloadProgress(event, {
+            fileName,
+            downloadedBytes,
+            totalBytes,
+            percent: totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0,
+            status: "downloading"
+          });
+        }
+      }
+
+      if (totalBytes === 0) {
+        totalBytes = downloadedBytes;
       }
     }
   } catch (error) {
