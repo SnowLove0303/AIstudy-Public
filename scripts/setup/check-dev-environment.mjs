@@ -174,7 +174,7 @@ const summary = checks.reduce((acc, current) => {
   return acc;
 }, { ok: 0, warning: 0, error: 0 });
 
-console.log("AIstudy Public 新机器检查");
+console.log("AIstudy 新机器检查");
 console.log(`正常 ${summary.ok ?? 0}，需关注 ${summary.warning ?? 0}，不可用 ${summary.error ?? 0}`);
 console.log("");
 

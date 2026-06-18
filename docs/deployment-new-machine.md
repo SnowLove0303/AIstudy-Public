@@ -1,8 +1,8 @@
-# AIstudy Public 新机器部署检查
+# AIstudy 新机器部署检查
 
 ## 用户视角流程
 
-1. 已有安装包时，直接运行 `release/AIstudy Public-Setup-0.1.14.exe`。
+1. 已有安装包时，直接运行 `release/AIstudy-Setup-0.1.14.exe`。
 2. 需要在新机器上开发或重新打包时，先运行 `npm run setup:doctor`。
 3. 如果提示依赖缺失，运行 `npm run setup:install`。
 4. 依赖检查通过后，再运行 `npm run dist:oneclick`。
@@ -37,7 +37,7 @@ npm run dist:oneclick
 npm run setup:doctor
 ```
 
-检查通过后即可打包。MySQL 不存在时，核心学习区仍会走本机副本模式；需要正式同步时再配置 `AISTUDY_PUBLIC_MYSQL_*` 或 `AIstudyPublicData/config/mysql.config.json`。
+检查通过后即可打包。MySQL 不存在时，核心学习区仍会走本机副本模式；需要正式同步时再配置 `AISTUDY_MYSQL_*` 或 `AIstudyData/config/mysql.config.json`。
 
 ## 设计依据
 

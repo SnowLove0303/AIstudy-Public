@@ -62,7 +62,7 @@ const missingFields = Object.values(APP_ERROR_DEFINITIONS).filter((definition) =
 );
 
 if (missingFields.length) {
-  console.error("[AIstudy Public] Error code definitions are incomplete:", missingFields.map((item) => item.code).join(", "));
+  console.error("[AIstudy] Error code definitions are incomplete:", missingFields.map((item) => item.code).join(", "));
   process.exit(1);
 }
 
@@ -78,9 +78,9 @@ for (const item of cases) {
 }
 
 if (failures.length) {
-  console.error("[AIstudy Public] Error code validation failed:");
+  console.error("[AIstudy] Error code validation failed:");
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
 
-console.log(`[AIstudy Public] Error code validation passed: ${cases.length} cases, ${Object.keys(APP_ERROR_DEFINITIONS).length} definitions.`);
+console.log(`[AIstudy] Error code validation passed: ${cases.length} cases, ${Object.keys(APP_ERROR_DEFINITIONS).length} definitions.`);

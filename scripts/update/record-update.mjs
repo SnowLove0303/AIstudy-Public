@@ -38,7 +38,7 @@ function formatDate(date) {
 }
 
 function normalizeSummary(values) {
-  const summary = values.join(" ").trim() || process.env.AISTUDY_PUBLIC_UPDATE_SUMMARY?.trim();
+  const summary = values.join(" ").trim() || process.env.AISTUDY_UPDATE_SUMMARY?.trim();
   return (summary || "一键打包生成安装包")
     .replace(/\r?\n/g, " ")
     .replace(/\s+/g, " ")
@@ -60,7 +60,7 @@ function ensureUpdateDirectory() {
 
 function createEmptyIndex() {
   return [
-    "# AIstudy Public 更新索引",
+    "# AIstudy 更新索引",
     "",
     "> 本文件由 `scripts/update/record-update.mjs` 维护，用于记录版本号、更新时间和功能更新摘要。更新内容不在应用 UI 中展示。",
     "",
@@ -150,4 +150,4 @@ const withoutDuplicateVersion = removeVersionEntries(withLatest, version);
 const next = prependEntry(withoutDuplicateVersion, entryLines);
 
 fs.writeFileSync(updateIndexPath, `${next.trimEnd()}\n`, "utf8");
-console.log(`[AIstudy Public] Update index recorded: ${version} ${updatedAt}`);
+console.log(`[AIstudy] Update index recorded: ${version} ${updatedAt}`);

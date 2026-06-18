@@ -5,8 +5,8 @@ $projectRoot = Resolve-Path (Join-Path $scriptDir "..\..")
 $releaseRoot = Join-Path $projectRoot "release"
 $releasePrefix = (Join-Path $projectRoot "release-").ToLowerInvariant()
 $cacheRoot = Join-Path $projectRoot ".tmp\build-cache"
-$portableDataDir = Join-Path $releaseRoot "win-unpacked\AIstudyPublicData"
-$preservedDataDir = Join-Path $projectRoot ".tmp\packaging-preserve\AIstudyPublicData"
+$portableDataDir = Join-Path $releaseRoot "win-unpacked\AIstudyData"
+$preservedDataDir = Join-Path $projectRoot ".tmp\packaging-preserve\AIstudyData"
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $OutputEncoding
 try {
@@ -55,7 +55,7 @@ function Test-IsProjectBuildProcess {
   }
 
   $normalized = $path.ToLowerInvariant()
-  return $normalized.StartsWith((Join-Path $releaseRoot "win-unpacked\AIstudyPublic.exe").ToLowerInvariant()) -or
+  return $normalized.StartsWith((Join-Path $releaseRoot "win-unpacked\AIstudy.exe").ToLowerInvariant()) -or
     $normalized.StartsWith($releasePrefix)
 }
 
@@ -80,11 +80,11 @@ function Stop-ProjectRuntimeProcesses {
   }
 
   foreach ($runtimeProcess in $runtimeProcesses) {
-    Write-Host ("[AIstudy Public] Stop runtime PID {0}: {1}" -f $runtimeProcess.ProcessId, $runtimeProcess.Name)
+    Write-Host ("[AIstudy] Stop runtime PID {0}: {1}" -f $runtimeProcess.ProcessId, $runtimeProcess.Name)
     try {
       Stop-Process -Id $runtimeProcess.ProcessId -Force -ErrorAction Stop
     } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
-      Write-Host ("[AIstudy Public] Runtime PID {0} already exited." -f $runtimeProcess.ProcessId)
+      Write-Host ("[AIstudy] Runtime PID {0} already exited." -f $runtimeProcess.ProcessId)
     }
   }
   Start-Sleep -Milliseconds 800
@@ -112,7 +112,7 @@ function Save-PortableRuntimeData {
   }
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $preservedFullPath) | Out-Null
   Move-Item -LiteralPath $portableFullPath -Destination $preservedFullPath
-  Write-Host "[AIstudy Public] Preserved portable runtime data."
+  Write-Host "[AIstudy] Preserved portable runtime data."
 }
 
 function Restore-PortableRuntimeData {
@@ -132,7 +132,7 @@ function Restore-PortableRuntimeData {
     Remove-Item -LiteralPath $portableFullPath -Recurse -Force
   }
   Move-Item -LiteralPath $preservedFullPath -Destination $portableFullPath
-  Write-Host "[AIstudy Public] Restored portable runtime data."
+  Write-Host "[AIstudy] Restored portable runtime data."
 }
 
 Set-Location $projectRoot
@@ -147,47 +147,47 @@ $env:ELECTRON_BUILDER_CACHE = $electronBuilderCache
 $packageJson = Get-Content -LiteralPath (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json
 $appVersion = [string] $packageJson.version
 
-Write-Host "[AIstudy Public] Closing old packaged app instances..."
-$oldProcesses = Get-Process -Name "AIstudyPublic" -ErrorAction SilentlyContinue | Where-Object { Test-IsProjectBuildProcess $_ }
+Write-Host "[AIstudy] Closing old packaged app instances..."
+$oldProcesses = Get-Process -Name "AIstudy" -ErrorAction SilentlyContinue | Where-Object { Test-IsProjectBuildProcess $_ }
 
 if ($oldProcesses) {
   foreach ($process in $oldProcesses) {
-    Write-Host ("[AIstudy Public] Stop PID {0}: {1}" -f $process.Id, $process.Path)
+    Write-Host ("[AIstudy] Stop PID {0}: {1}" -f $process.Id, $process.Path)
     try {
       Stop-Process -Id $process.Id -Force -ErrorAction Stop
     } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
-      Write-Host ("[AIstudy Public] PID {0} already exited." -f $process.Id)
+      Write-Host ("[AIstudy] PID {0} already exited." -f $process.Id)
     }
   }
   Start-Sleep -Milliseconds 800
 } else {
-  Write-Host "[AIstudy Public] No old packaged app instance found."
+  Write-Host "[AIstudy] No old packaged app instance found."
 }
 
 try {
-  Write-Host "[AIstudy Public] Cleaning stale packaging artifacts..."
+  Write-Host "[AIstudy] Cleaning stale packaging artifacts..."
   Stop-ProjectRuntimeProcesses $portableDataDir
   Save-PortableRuntimeData
   Remove-BuildArtifact (Join-Path $releaseRoot "win-unpacked")
-  Remove-BuildArtifact (Join-Path $releaseRoot ("aistudy-public-{0}-x64.nsis.7z" -f $appVersion))
+  Remove-BuildArtifact (Join-Path $releaseRoot ("aistudy-{0}-x64.nsis.7z" -f $appVersion))
 
-  Write-Host "[AIstudy Public] Recording update index..."
+  Write-Host "[AIstudy] Recording update index..."
   & npm.cmd run update:record
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "[AIstudy Public] Update index failed with exit code $LASTEXITCODE."
+    Write-Host "[AIstudy] Update index failed with exit code $LASTEXITCODE."
     $exitCode = $LASTEXITCODE
   } else {
-    Write-Host "[AIstudy Public] Building installer..."
+    Write-Host "[AIstudy] Building installer..."
     & npm.cmd run dist
     $exitCode = $LASTEXITCODE
 
     if ($exitCode -ne 0) {
       $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
-      $prepackagedExe = Join-Path $prepackagedDir "AIstudyPublic.exe"
+      $prepackagedExe = Join-Path $prepackagedDir "AIstudy.exe"
 
       if (Test-Path -LiteralPath $prepackagedExe) {
-        Write-Host "[AIstudy Public] Standard packaging failed after win-unpacked was created."
-        Write-Host "[AIstudy Public] Retrying installer build from prepackaged app..."
+        Write-Host "[AIstudy] Standard packaging failed after win-unpacked was created."
+        Write-Host "[AIstudy] Retrying installer build from prepackaged app..."
         & npx.cmd electron-builder --win nsis --prepackaged $prepackagedDir
         $exitCode = $LASTEXITCODE
       }
@@ -199,8 +199,8 @@ try {
 }
 
 if ($exitCode -ne 0) {
-  Write-Host "[AIstudy Public] Packaging failed with exit code $exitCode."
+  Write-Host "[AIstudy] Packaging failed with exit code $exitCode."
   exit $exitCode
 }
 
-Write-Host ("[AIstudy Public] Done: release\AIstudy Public-Setup-{0}.exe" -f $appVersion)
+Write-Host ("[AIstudy] Done: release\AIstudy-Setup-{0}.exe" -f $appVersion)

@@ -77,8 +77,8 @@ declare global {
   }
 }
 
-const SNAPSHOT_KEY_PREFIX = "aistudy-public:mindmap-document:v1:";
-const LEGACY_SNAPSHOT_KEY_PREFIX = "aistudy-public:mindmap-snapshot:v1:";
+const SNAPSHOT_KEY_PREFIX = "aistudy:mindmap-document:v1:";
+const LEGACY_SNAPSHOT_KEY_PREFIX = "aistudy:mindmap-snapshot:v1:";
 const SAVE_DEBOUNCE_MS = 900;
 const EXPORT_OPTIONS: Array<{ value: MindMapExportType; label: string }> = [
   { value: "png", label: "PNG" },

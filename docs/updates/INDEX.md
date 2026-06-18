@@ -1,17 +1,26 @@
-# AIstudy Public 更新索引
+# AIstudy 更新索引
 
 > 本文件由 `scripts/update/record-update.mjs` 维护，用于记录版本号、更新时间和功能更新摘要。更新内容不在应用 UI 中展示。
 
 ## 最新版本
 
-- 版本号：0.1.15
-- 更新时间：2026-06-18 22:07:37
-- 功能更新：发布纯净公开版测试更新；公开版数据库已清空；提供自用版安装包用于更新验证；兼容 GitHub 公开版资产名规范化
+- 版本号：0.1.16
+- 更新时间：2026-06-18 22:35:29
+- 功能更新：纠正用户端更新架构；公开仓库发布单一 AIstudy 用户端安装包；更新保留用户本机数据库连接和 AIstudyData
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：main
-- 提交：23eaf7b
+- 提交：e91eda9
 
 ## 更新记录
+
+### 0.1.16 - 2026-06-18 22:35:29
+
+- 纠正用户端更新架构
+- 公开仓库发布单一 AIstudy 用户端安装包
+- 更新保留用户本机数据库连接和 AIstudyData
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：main
+- 提交：e91eda9
 
 ### 0.1.15 - 2026-06-18 22:07:37
 

@@ -7,7 +7,7 @@ type LocalSnapshotRecord<T> = {
   updatedAt: string;
 };
 
-const DATABASE_NAME = "aistudy-public-local-snapshots";
+const DATABASE_NAME = "aistudy-local-snapshots";
 const DATABASE_VERSION = 1;
 const STORE_NAME = "snapshots";
 

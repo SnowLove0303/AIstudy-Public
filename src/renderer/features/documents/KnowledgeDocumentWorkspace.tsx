@@ -62,7 +62,7 @@ type DocumentFormatBrushState = {
 };
 
 const SAVE_DEBOUNCE_MS = 900;
-const DOCUMENT_STORAGE_PREFIX = "aistudy-public:knowledge-document:v1:";
+const DOCUMENT_STORAGE_PREFIX = "aistudy:knowledge-document:v1:";
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32];
 const COLOR_OPTIONS = ["#1f2937", "#2563eb", "#0f766e", "#d97706", "#dc2626", "#7c3aed"];
 const AI_CONTEXT_PANEL_WIDTH = 430;

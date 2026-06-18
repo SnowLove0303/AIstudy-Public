@@ -29,15 +29,15 @@ if ([string]::IsNullOrWhiteSpace($env:npm_config_registry)) {
   $env:npm_config_registry = "https://registry.npmmirror.com"
 }
 
-Write-Host "[AIstudy Public] Installing dependencies with project-local caches..."
-Write-Host "[AIstudy Public] npm cache: $npmCache"
-Write-Host "[AIstudy Public] Electron cache: $electronCache"
-Write-Host "[AIstudy Public] electron-builder cache: $electronBuilderCache"
-Write-Host "[AIstudy Public] Electron mirror: $env:ELECTRON_MIRROR"
+Write-Host "[AIstudy] Installing dependencies with project-local caches..."
+Write-Host "[AIstudy] npm cache: $npmCache"
+Write-Host "[AIstudy] Electron cache: $electronCache"
+Write-Host "[AIstudy] electron-builder cache: $electronBuilderCache"
+Write-Host "[AIstudy] Electron mirror: $env:ELECTRON_MIRROR"
 
 & npm.cmd ci --prefer-offline --no-audit --fund=false
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "[AIstudy Public] Dependency installation failed with exit code $LASTEXITCODE."
+  Write-Host "[AIstudy] Dependency installation failed with exit code $LASTEXITCODE."
   exit $LASTEXITCODE
 }
 

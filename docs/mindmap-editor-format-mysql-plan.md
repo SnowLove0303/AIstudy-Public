@@ -13,7 +13,7 @@
 最终产品仍然只有一个 exe：
 
 ```text
-AIstudyPublic.exe
+AIstudy.exe
   -> Electron main
   -> React renderer
   -> mind-map canvas module
@@ -583,4 +583,3 @@ MySQL 存储层
 - 数据库：快照表 + 节点投影表。
 - `.xmind`：交换格式，不是主存储格式。
 - 打包：只有一个 AIstudy exe。
-

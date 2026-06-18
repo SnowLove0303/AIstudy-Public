@@ -1,7 +1,7 @@
 {
-  "name": "aistudy-public",
-  "version": "0.1.15",
-  "description": "AIstudy public desktop shell.",
+  "name": "aistudy",
+  "version": "0.1.16",
+  "description": "AIstudy desktop shell.",
   "author": "SnowLove0303",
   "private": false,
   "repository": {
@@ -10,7 +10,7 @@
   },
   "aistudy": {
     "updateRepository": "https://github.com/SnowLove0303/AIstudy-Public.git",
-    "updateAssetPattern": "AIstudy*Public-Setup-*.exe"
+    "updateAssetPattern": "AIstudy-Setup-*.exe"
   },
   "main": "dist-electron/main.js",
   "type": "module",
@@ -50,9 +50,9 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.snowlove0303.aistudy.public",
-    "productName": "AIstudy Public",
-    "executableName": "AIstudyPublic",
+    "appId": "com.snowlove0303.aistudy",
+    "productName": "AIstudy",
+    "executableName": "AIstudy",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "directories": {
       "buildResources": "build",

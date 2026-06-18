@@ -9,7 +9,7 @@ AIstudy will ship as one exe only.
 The mind-map editor will be embedded as an internal renderer module, not launched as a second executable and not bound as a full Vue sub-app.
 
 ```text
-AIstudyPublic.exe
+AIstudy.exe
   -> Electron main process
   -> React renderer
   -> AIstudy mind-map canvas module
@@ -316,7 +316,7 @@ AIstudy should own its toolbar and side panels.
 Final product:
 
 ```text
-release/AIstudy Public-Setup-*.exe
+release/AIstudy-Setup-*.exe
 ```
 
 The installer contains one app.
@@ -324,7 +324,7 @@ The installer contains one app.
 Do not package:
 
 ```text
-AIstudyPublic.exe
+AIstudy.exe
 MindMapEditor.exe
 ```
 
@@ -424,4 +424,3 @@ verify destroy lifecycle
 ```
 
 After the spike proves the lifecycle and memory behavior, connect XMind import/export.
-

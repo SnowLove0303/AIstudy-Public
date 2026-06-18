@@ -60,7 +60,7 @@ const DEFAULT_ASSISTANT_MESSAGES: AiChatMessage[] = [
     content: "我会复用端口管理中已登录的豆包或 ChatGPT 页面来回答问题。"
   }
 ];
-const ASSISTANT_STORAGE_PREFIX = "aistudy-public:assistant-chat:v1:";
+const ASSISTANT_STORAGE_PREFIX = "aistudy:assistant-chat:v1:";
 const MAX_PERSISTED_MESSAGES = 80;
 const MAX_PERSISTED_MESSAGE_CHARS = 8000;
 
