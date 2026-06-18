@@ -81,10 +81,6 @@ Write-Host "[AIstudy Public] Cleaning stale packaging artifacts..."
 Remove-BuildArtifact (Join-Path $releaseRoot "win-unpacked")
 Remove-BuildArtifact (Join-Path $releaseRoot ("aistudy-public-{0}-x64.nsis.7z" -f $appVersion))
 
-if ([string]::IsNullOrWhiteSpace($env:AISTUDY_UPDATE_SUMMARY)) {
-  $env:AISTUDY_UPDATE_SUMMARY = "一键打包生成安装包"
-}
-
 Write-Host "[AIstudy Public] Recording update index..."
 & npm.cmd run update:record
 if ($LASTEXITCODE -ne 0) {

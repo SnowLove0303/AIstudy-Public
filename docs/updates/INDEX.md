@@ -1,22 +1,24 @@
-# AIstudy 更新索引
+# AIstudy Public 更新索引
 
 > 本文件由 `scripts/update/record-update.mjs` 维护，用于记录版本号、更新时间和功能更新摘要。更新内容不在应用 UI 中展示。
 
 ## 最新版本
 
 - 版本号：0.1.14
-- 更新时间：2026-06-18 20:51:38
-- 功能更新：涓€閿墦鍖呯敓鎴愬畨瑁呭寘
+- 更新时间：2026-06-18 21:02:23
+- 功能更新：一键打包生成安装包
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：main
+- 提交：e07c47d
 
 ## 更新记录
 
-### 0.1.14 - 2026-06-18 20:51:38
+### 0.1.14 - 2026-06-18 21:02:23
 
-- 涓€閿墦鍖呯敓鎴愬畨瑁呭寘
+- 一键打包生成安装包
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：main
+- 提交：e07c47d
 
 ### 0.1.13 - 2026-06-18 03:35:01
 
