@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-electron/
+release/
+release-*/
+artifacts/
+.tmp/
+.vite/
+*.log
+*.user
+*.suo
+.env
+.env.*
+!.env.example
