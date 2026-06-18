@@ -10,7 +10,7 @@
   },
   "aistudy": {
     "updateRepository": "https://github.com/SnowLove0303/AIstudy-Public.git",
-    "updateAssetPattern": "AIstudy Public-Setup-*.exe"
+    "updateAssetPattern": "AIstudy*Public-Setup-*.exe"
   },
   "main": "dist-electron/main.js",
   "type": "module",
