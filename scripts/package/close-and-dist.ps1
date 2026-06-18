@@ -5,6 +5,8 @@ $projectRoot = Resolve-Path (Join-Path $scriptDir "..\..")
 $releaseRoot = Join-Path $projectRoot "release"
 $releasePrefix = (Join-Path $projectRoot "release-").ToLowerInvariant()
 $cacheRoot = Join-Path $projectRoot ".tmp\build-cache"
+$portableDataDir = Join-Path $releaseRoot "win-unpacked\AIstudyPublicData"
+$preservedDataDir = Join-Path $projectRoot ".tmp\packaging-preserve\AIstudyPublicData"
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $OutputEncoding
 try {
@@ -57,6 +59,51 @@ function Test-IsProjectBuildProcess {
     $normalized.StartsWith($releasePrefix)
 }
 
+function Save-PortableRuntimeData {
+  $portableFullPath = [System.IO.Path]::GetFullPath($portableDataDir)
+  $releaseFullPath = [System.IO.Path]::GetFullPath($releaseRoot)
+  if (-not $portableFullPath.StartsWith($releaseFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to preserve path outside release: $portableFullPath"
+  }
+
+  if (-not (Test-Path -LiteralPath $portableFullPath)) {
+    return
+  }
+
+  $preservedFullPath = [System.IO.Path]::GetFullPath($preservedDataDir)
+  $tmpRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot ".tmp"))
+  if (-not $preservedFullPath.StartsWith($tmpRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to preserve data outside project .tmp: $preservedFullPath"
+  }
+
+  if (Test-Path -LiteralPath $preservedFullPath) {
+    Remove-Item -LiteralPath $preservedFullPath -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $preservedFullPath) | Out-Null
+  Move-Item -LiteralPath $portableFullPath -Destination $preservedFullPath
+  Write-Host "[AIstudy Public] Preserved portable runtime data."
+}
+
+function Restore-PortableRuntimeData {
+  $preservedFullPath = [System.IO.Path]::GetFullPath($preservedDataDir)
+  if (-not (Test-Path -LiteralPath $preservedFullPath)) {
+    return
+  }
+
+  $portableFullPath = [System.IO.Path]::GetFullPath($portableDataDir)
+  $releaseFullPath = [System.IO.Path]::GetFullPath($releaseRoot)
+  if (-not $portableFullPath.StartsWith($releaseFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to restore path outside release: $portableFullPath"
+  }
+
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $portableFullPath) | Out-Null
+  if (Test-Path -LiteralPath $portableFullPath) {
+    Remove-Item -LiteralPath $portableFullPath -Recurse -Force
+  }
+  Move-Item -LiteralPath $preservedFullPath -Destination $portableFullPath
+  Write-Host "[AIstudy Public] Restored portable runtime data."
+}
+
 Set-Location $projectRoot
 $npmCache = Join-Path $cacheRoot "npm"
 $electronCache = Join-Path $cacheRoot "electron"
@@ -86,36 +133,41 @@ if ($oldProcesses) {
   Write-Host "[AIstudy Public] No old packaged app instance found."
 }
 
-Write-Host "[AIstudy Public] Cleaning stale packaging artifacts..."
-Remove-BuildArtifact (Join-Path $releaseRoot "win-unpacked")
-Remove-BuildArtifact (Join-Path $releaseRoot ("aistudy-public-{0}-x64.nsis.7z" -f $appVersion))
+try {
+  Write-Host "[AIstudy Public] Cleaning stale packaging artifacts..."
+  Save-PortableRuntimeData
+  Remove-BuildArtifact (Join-Path $releaseRoot "win-unpacked")
+  Remove-BuildArtifact (Join-Path $releaseRoot ("aistudy-public-{0}-x64.nsis.7z" -f $appVersion))
 
-Write-Host "[AIstudy Public] Recording update index..."
-& npm.cmd run update:record
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "[AIstudy Public] Update index failed with exit code $LASTEXITCODE."
-  exit $LASTEXITCODE
+  Write-Host "[AIstudy Public] Recording update index..."
+  & npm.cmd run update:record
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[AIstudy Public] Update index failed with exit code $LASTEXITCODE."
+    $exitCode = $LASTEXITCODE
+  } else {
+    Write-Host "[AIstudy Public] Building installer..."
+    & npm.cmd run dist
+    $exitCode = $LASTEXITCODE
+
+    if ($exitCode -ne 0) {
+      $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
+      $prepackagedExe = Join-Path $prepackagedDir "AIstudyPublic.exe"
+
+      if (Test-Path -LiteralPath $prepackagedExe) {
+        Write-Host "[AIstudy Public] Standard packaging failed after win-unpacked was created."
+        Write-Host "[AIstudy Public] Retrying installer build from prepackaged app..."
+        & npx.cmd electron-builder --win nsis --prepackaged $prepackagedDir
+        $exitCode = $LASTEXITCODE
+      }
+    }
+  }
+} finally {
+  Restore-PortableRuntimeData
 }
 
-Write-Host "[AIstudy Public] Building installer..."
-& npm.cmd run dist
-$exitCode = $LASTEXITCODE
-
 if ($exitCode -ne 0) {
-  $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
-  $prepackagedExe = Join-Path $prepackagedDir "AIstudyPublic.exe"
-
-  if (Test-Path -LiteralPath $prepackagedExe) {
-    Write-Host "[AIstudy Public] Standard packaging failed after win-unpacked was created."
-    Write-Host "[AIstudy Public] Retrying installer build from prepackaged app..."
-    & npx.cmd electron-builder --win nsis --prepackaged $prepackagedDir
-    $exitCode = $LASTEXITCODE
-  }
-
-  if ($exitCode -ne 0) {
-    Write-Host "[AIstudy Public] Packaging failed with exit code $exitCode."
-    exit $exitCode
-  }
+  Write-Host "[AIstudy Public] Packaging failed with exit code $exitCode."
+  exit $exitCode
 }
 
 Write-Host ("[AIstudy Public] Done: release\AIstudy Public-Setup-{0}.exe" -f $appVersion)

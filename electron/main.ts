@@ -531,8 +531,8 @@ const chromePortDefinitions: ChromePortDefinition[] = [
     loginUrl: "https://chatgpt.com/",
     hostKeyword: "chatgpt.com",
     authCookieDomains: ["chatgpt.com", "openai.com"],
-    authCookieNames: ["__Secure-next-auth.session-token", "__Secure-authjs.session-token", "oai-did", "oai-sc"],
-    authDomKeywords: ["New chat", "ChatGPT"]
+    authCookieNames: ["__Secure-next-auth.session-token", "__Secure-authjs.session-token"],
+    authDomKeywords: []
   }
 ];
 
@@ -807,7 +807,11 @@ function cookieMatchesPlatformAuth(platform: ChromePortDefinition, cookie: Chrom
   const value = cookie.value ?? "";
   if (!value) return false;
   const domainMatched = platform.authCookieDomains.some((keyword) => domain.includes(keyword));
-  const nameMatched = platform.authCookieNames.some((cookieName) => cookieName.toLowerCase() === name.toLowerCase());
+  const normalizedName = name.toLowerCase();
+  const nameMatched = platform.authCookieNames.some((cookieName) => {
+    const normalizedCookieName = cookieName.toLowerCase();
+    return normalizedName === normalizedCookieName || normalizedName.startsWith(`${normalizedCookieName}.`);
+  });
   return domainMatched && nameMatched;
 }
 
