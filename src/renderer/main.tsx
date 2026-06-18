@@ -151,7 +151,7 @@ declare global {
     aistudyUpdates?: {
       loadInfo: () => Promise<UpdateManagerInfo>;
       check: () => Promise<UpdateCheckResult>;
-      download: (downloadUrl: string) => Promise<UpdateDownloadResult>;
+      download: (downloadUrl: string, expectedSize?: number) => Promise<UpdateDownloadResult>;
       install: (filePath: string) => Promise<boolean>;
       openReleasePage: (releaseUrl: string) => Promise<boolean>;
       onDownloadProgress: (callback: (progress: UpdateDownloadProgress) => void) => () => void;
@@ -334,7 +334,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       status: "starting"
     });
 
-    window.aistudyUpdates.download(checkResult.downloadUrl)
+    window.aistudyUpdates.download(checkResult.downloadUrl, checkResult.assetSize)
       .then((result) => {
         setDownloadResult(result);
         setDownloadProgress({
@@ -344,10 +344,13 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
           percent: 100,
           status: "complete"
         });
-        setStatus("安装包下载完成，可以开始安装。");
+        setStatus("下载完成，正在启动安装程序...");
+        return window.aistudyUpdates?.install(result.filePath);
+      })
+      .then(() => {
+        setStatus("安装程序已启动，当前应用将自动关闭。");
       })
       .catch((downloadError: unknown) => {
-        setDownloadProgress(null);
         setError(downloadError instanceof Error ? downloadError.message : "下载更新失败。");
       })
       .finally(() => setIsDownloading(false));
@@ -378,7 +381,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   const onlineVersion = checkResult?.latestVersion ?? "未检测";
   const downloadDescription = downloadResult
     ? `已下载 ${downloadResult.fileName}${downloadResult.fileSize ? `（${formatFileSize(downloadResult.fileSize)}）` : ""}`
-    : (checkResult?.hasUpdate ? "获取最新安装包，下载完成后可安装。" : "检测到可更新版本后可用。");
+    : (checkResult?.hasUpdate ? "下载完成后自动启动安装程序。" : "检测到可更新版本后可用。");
   const installDescription = downloadResult ? "启动安装程序并退出当前应用。" : "安装包下载完成后可用。";
   const visibleDownloadProgress = downloadProgress && (isDownloading || downloadProgress.status === "complete") ? downloadProgress : null;
   const progressPercent = visibleDownloadProgress ? Math.max(0, Math.min(100, visibleDownloadProgress.percent)) : 0;
@@ -546,7 +549,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
               >
                 <span className="update-option-icon"><Download size={18} /></span>
                 <span className="update-option-copy">
-                  <strong>{isDownloading ? "正在下载更新" : "下载更新"}</strong>
+                  <strong>{isDownloading ? "正在下载更新" : "下载并安装更新"}</strong>
                   <span>{downloadDescription}</span>
                 </span>
                 <span className="update-option-meta">{onlineVersion}</span>
