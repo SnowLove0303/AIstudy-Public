@@ -22,10 +22,13 @@
     "build": "tsc && vite build && node scripts/build/prepare-renderer-vendors.mjs && tsc -p tsconfig.electron.json",
     "qa:error-codes": "npm run build && node scripts/qa/validate-error-codes.mjs",
     "pack": "npm run build && electron-builder --dir --config.electronDist=node_modules/electron/dist",
+    "pack:mac": "npm run build && node scripts/build/prepare-mac-icon.mjs && electron-builder --mac dir --config.electronDist=node_modules/electron/dist",
     "dist": "npm run build && electron-builder --win nsis --config.electronDist=node_modules/electron/dist",
+    "dist:mac": "npm run build && node scripts/build/prepare-mac-icon.mjs && electron-builder --mac dmg zip --config.electronDist=node_modules/electron/dist",
     "dist:oneclick": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package/close-and-dist.ps1",
     "setup:doctor": "node scripts/setup/check-dev-environment.mjs",
     "setup:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup/install-deps.ps1",
+    "setup:install:mac": "node scripts/setup/install-deps.mjs",
     "import:docx": "node scripts/importers/import-docx-to-node-documents.mjs",
     "audit:docx-import": "node scripts/importers/audit-docx-import.mjs",
     "update:record": "node scripts/update/record-update.mjs"
@@ -64,9 +67,28 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "build/icon.icns",
       "build/icon.ico",
       "package.json"
     ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.education",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
     "win": {
       "icon": "build/icon.ico",
       "target": [

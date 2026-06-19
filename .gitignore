@@ -6,6 +6,7 @@ release-*/
 artifacts/
 .tmp/
 .vite/
+build/AIstudy.iconset/
 *.log
 *.user
 *.suo
