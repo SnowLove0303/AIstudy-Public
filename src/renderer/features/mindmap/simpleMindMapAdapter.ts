@@ -694,9 +694,31 @@ export async function createSimpleMindMapEditor(
     setNodeTextOpacity(editingTextNode, 0);
   };
 
-  const restoreEditingNodeText = () => {
-    setNodeTextOpacity(editingTextNode, 1);
+  const rerenderEditedNodeText = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.reRender === "function") {
+      node.reRender(["text"], { resetWidth: true });
+    } else if (typeof node.layout === "function") {
+      node.layout();
+    }
+  };
+
+  const restoreEditingNodeText = (node?: unknown) => {
+    const targetNode = node && typeof node === "object" ? node : editingTextNode;
+    setNodeTextOpacity(targetNode, 1);
+    rerenderEditedNodeText(targetNode);
     editingTextNode = null;
+  };
+
+  const syncAfterTextEdit = (_textEditNode?: unknown, _activeNodeList?: unknown, node?: unknown) => {
+    restoreEditingNodeText(node);
+    if (typeof editor.render === "function") {
+      editor.render();
+    }
+    ensureStableRenderTreeNodeIds(editor);
+    syncSelectionFromActiveList();
+    scheduleViewportSync();
+    scheduleSnapshotSync(0);
   };
 
   const applyTextEditPreview = ({ node, text }: { node?: unknown; text?: unknown }) => {
@@ -749,7 +771,7 @@ export async function createSimpleMindMapEditor(
   editor.on("node_tree_render_end", syncSelectionFromActiveList);
   editor.on("node_text_edit_change", applyTextEditPreview);
   editor.on("before_show_text_edit", hideEditingNodeText);
-  editor.on("hide_text_edit", restoreEditingNodeText);
+  editor.on("hide_text_edit", syncAfterTextEdit);
   editor.on("node_dragend", syncAfterNodeDrag);
   setScrollbarWrapSize(el.clientWidth, el.clientHeight);
   events.onReady?.();
@@ -852,7 +874,7 @@ export async function createSimpleMindMapEditor(
       editor.off("node_tree_render_end", syncSelectionFromActiveList);
       editor.off("node_text_edit_change", applyTextEditPreview);
       editor.off("before_show_text_edit", hideEditingNodeText);
-      editor.off("hide_text_edit", restoreEditingNodeText);
+      editor.off("hide_text_edit", syncAfterTextEdit);
       editor.off("node_dragend", syncAfterNodeDrag);
       restoreEditingNodeText();
       editor.destroy();

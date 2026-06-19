@@ -4,14 +4,21 @@
 
 ## 最新版本
 
-- 版本号：0.1.25
-- 更新时间：2026-06-19 16:40:47
+- 版本号：0.1.26
+- 更新时间：2026-06-19 16:59:55
 - 功能更新：一键打包生成安装包
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：codex/public-handoff-runtime-alignment
-- 提交：7234fdf
+- 提交：84d842e
 
 ## 更新记录
+
+### 0.1.26 - 2026-06-19 16:59:55
+
+- 一键打包生成安装包
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/public-handoff-runtime-alignment
+- 提交：84d842e
 
 ### 0.1.25 - 2026-06-19 16:40:47
 
