@@ -392,7 +392,10 @@ export async function createCanvasDocumentEditor(
     pageGap: 16,
     width: pageSize.height,
     height: pageSize.width,
-    margins: [64, 64, 64, 64]
+    margins: [64, 64, 64, 64],
+    list: {
+      inheritStyle: true
+    }
   });
 
   let lastSelectedText = "";
@@ -525,18 +528,24 @@ export async function createCanvasDocumentEditor(
     const range = rememberRange();
     if (!range || range.tableId || (range.zone && range.zone !== "main")) return false;
 
-    const elementList = normalizeEditorData(editor.command.getValue().data).main;
-    if (elementList.length === 0) return false;
+    let rowElements: IElement[] = [];
+    try {
+      rowElements = editor.command.getRangeRow()?.filter(isTextElement) ?? [];
+    } catch {
+      rowElements = [];
+    }
 
-    const startIndex = Math.max(0, Math.min(range.startIndex, elementList.length - 1));
-    const endIndex = Math.max(startIndex, Math.min(range.endIndex, elementList.length - 1));
-    const selectedElements = elementList.slice(startIndex, endIndex + 1).filter(isTextElement);
-    if (selectedElements.length === 0) return false;
+    if (rowElements.length === 0) {
+      const elementList = normalizeEditorData(editor.command.getValue().data).main;
+      if (elementList.length === 0) return false;
+      const startIndex = Math.max(0, Math.min(range.startIndex, elementList.length - 1));
+      const endIndex = Math.max(startIndex, Math.min(range.endIndex, elementList.length - 1));
+      rowElements = elementList.slice(startIndex, endIndex + 1).filter(isTextElement);
+    }
 
-    const hasOrderedBlankLine = selectedElements.some((element) => element.listType === ListType.OL);
-    const hasVisibleTextInSelection = selectedElements.some((element) => getVisibleElementText(element).length > 0);
-    const hasNonOrderedText = selectedElements.some((element) => element.listType !== ListType.OL && getVisibleElementText(element).length > 0);
-    if (!hasOrderedBlankLine || hasVisibleTextInSelection || hasNonOrderedText) return false;
+    const hasOrderedBlankLine = rowElements.some((element) => element.listType === ListType.OL);
+    const hasVisibleTextInRow = rowElements.some((element) => getVisibleElementText(element).length > 0);
+    if (!hasOrderedBlankLine || hasVisibleTextInRow) return false;
 
     runFormatCommand(() => editor.command.executeList(null));
     return true;
