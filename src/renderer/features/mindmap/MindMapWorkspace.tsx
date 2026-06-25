@@ -28,6 +28,7 @@ import {
   buildMindMapOutline,
   countNodes,
   createInitialSnapshot,
+  createMindMapStructureSignature,
   MIND_MAP_LAYOUT_OPTIONS,
   normalizeLayout,
   normalizeSnapshot
@@ -428,6 +429,7 @@ export function MindMapWorkspace({
   const loadSequenceRef = React.useRef(0);
   const [snapshot, setSnapshot] = React.useState<MindMapSnapshot | null>(null);
   const snapshotRef = React.useRef<MindMapSnapshot | null>(null);
+  const snapshotUiSignatureRef = React.useRef("");
   const [mapId, setMapId] = React.useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = React.useState<string | null>(null);
   const [selectedNode, setSelectedNode] = React.useState<MindMapSelectedNode>({ id: null, title: "" });
@@ -468,7 +470,18 @@ export function MindMapWorkspace({
 
   React.useEffect(() => {
     snapshotRef.current = snapshot;
+    snapshotUiSignatureRef.current = createMindMapStructureSignature(snapshot?.root);
   }, [snapshot]);
+
+  const commitSnapshotForUi = React.useCallback((nextSnapshot: MindMapSnapshot | null, force = false) => {
+    snapshotRef.current = nextSnapshot;
+    const nextSignature = createMindMapStructureSignature(nextSnapshot?.root);
+    if (!force && snapshotUiSignatureRef.current === nextSignature) return;
+    snapshotUiSignatureRef.current = nextSignature;
+    React.startTransition(() => {
+      setSnapshot(nextSnapshot);
+    });
+  }, []);
 
   React.useEffect(() => {
     setTextFormatMenu(null);
@@ -570,7 +583,7 @@ export function MindMapWorkspace({
     setFocusedNodeId(null);
     setIsReady(false);
     setSavedAt(null);
-    setSnapshot(null);
+    commitSnapshotForUi(null, true);
     setMapId(null);
     setStorageMode("none");
 
@@ -585,7 +598,7 @@ export function MindMapWorkspace({
       .then(({ document, mode, error: loadError }) => {
         if (loadSequenceRef.current !== sequence) return;
         setMapId(document.mapId);
-        setSnapshot(document.snapshot);
+        commitSnapshotForUi(document.snapshot, true);
         setStorageMode(mode);
         setError(loadError);
       })
@@ -593,7 +606,7 @@ export function MindMapWorkspace({
         if (loadSequenceRef.current !== sequence) return;
         const document = await loadLocalDocument(courseId, courseName);
         setMapId(document.mapId);
-        setSnapshot(document.snapshot);
+        commitSnapshotForUi(document.snapshot, true);
         setStorageMode("local");
         setError("导图读取失败，已打开本地副本。");
       })
@@ -602,7 +615,7 @@ export function MindMapWorkspace({
           setIsLoading(false);
         }
       });
-  }, [courseId, courseName, externalChangeRevision, flushPendingSave, publishSelectedNode]);
+  }, [commitSnapshotForUi, courseId, courseName, externalChangeRevision, flushPendingSave, publishSelectedNode]);
 
   React.useEffect(() => {
     return () => {
@@ -621,10 +634,7 @@ export function MindMapWorkspace({
         setMapId(nextMapId);
       }
 
-      snapshotRef.current = nextSnapshot;
-      React.startTransition(() => {
-        setSnapshot(nextSnapshot);
-      });
+      commitSnapshotForUi(nextSnapshot);
       pendingSaveRef.current = {
         courseId,
         mapId: nextMapId,
@@ -637,7 +647,7 @@ export function MindMapWorkspace({
       }
       saveTimerRef.current = window.setTimeout(() => flushPendingSave(false), SAVE_DEBOUNCE_MS);
     },
-    [courseId, courseName, flushPendingSave, mapId]
+    [commitSnapshotForUi, courseId, courseName, flushPendingSave, mapId]
   );
 
   const queueCanvasSnapshotSave = React.useCallback(
@@ -711,9 +721,10 @@ export function MindMapWorkspace({
 
   const outline = React.useMemo(() => buildMindMapOutline(snapshot?.root), [snapshot]);
   const outlineNodeCount = React.useMemo(() => countOutlineItems(outline), [outline]);
+  const renderSnapshot = snapshotRef.current ?? snapshot;
   const focusedSnapshot = React.useMemo(
-    () => (snapshot ? createFocusedSnapshot(snapshot, focusedNodeId) : null),
-    [focusedNodeId, snapshot]
+    () => (renderSnapshot ? createFocusedSnapshot(renderSnapshot, focusedNodeId) : null),
+    [focusedNodeId, renderSnapshot]
   );
 
   React.useEffect(() => {

@@ -257,6 +257,28 @@ export function countNodes(root: SimpleMindMapNode | null | undefined): number {
   return count;
 }
 
+export function createMindMapStructureSignature(root: SimpleMindMapNode | null | undefined): string {
+  if (!root) return "";
+  const parts: string[] = [];
+  const stack: Array<{ node: SimpleMindMapNode; depth: number }> = [{ node: root, depth: 0 }];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const { node, depth } = current;
+    const children = getMindMapChildren(node);
+    const uid = typeof node.data?.uid === "string" ? node.data.uid : "";
+    const text = readNodeTitle(node, "");
+    parts.push(`${depth}:${uid.length}:${uid}:${text.length}:${text}:${children.length}`);
+
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ node: children[index], depth: depth + 1 });
+    }
+  }
+
+  return parts.join("|");
+}
+
 export function buildMindMapOutline(root: SimpleMindMapNode | null | undefined): MindMapOutlineItem[] {
   if (!root) return [];
 
