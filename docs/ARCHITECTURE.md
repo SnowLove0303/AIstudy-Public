@@ -252,3 +252,73 @@ Reusable deployment rules are tracked in `docs/功能规划/开箱即用与外�
 7. Verify create child, edit title, save, close, reopen, restore.
 
 Word editor comes after the mind-map persistence contract is stable.
+
+## Current Implemented Surfaces - 0.1.61
+
+The public version has moved beyond the first milestone. Current shipped surfaces are:
+
+- Course and section management with MySQL persistence, local mirror fallback, pending operation replay, drag sorting, and section collapse.
+- Mind-map workspace backed by `simple-mind-map`, full snapshot persistence, node projection, right-side catalog, topic element editing, export, layout switching, canvas viewport controls, and focused node views.
+- Mind-map free node positioning is disabled for the default knowledge workspace. Saved `customLeft/customTop` coordinates are stripped during snapshot normalization so structured layouts do not reopen with crossing branches.
+- Mind-map runtime loads the `simple-mind-map` core package and registers only the required plugin whitelist, avoiding packaged runtime failures from the full plugin bundle.
+- Mind-map text formatting is intentionally removed from the top toolbar. It opens from a selected topic through a canvas right-click floating panel.
+- Mind-map branch/layout operations are controlled by configurable shortcuts in Settings.
+- Word-style node documents backed by `@hufe921/canvas-editor`, stored as node-bound snapshots through `(course_id, mind_map_id, node_id)`.
+- Document editor uses a wide page size in a vertical reading flow. Do not use `PaperDirection.HORIZONTAL` for the normal document workspace; it creates a side-by-side blank page area.
+- Importer supports `.txt`, `.md`, `.markdown`, and `.docx` into node documents.
+- Settings contains runtime diagnostics, MCP control, shortcut settings, update management, and user-facing error logs.
+- AI assistant sends prompts through fixed Chrome debugging ports. Chrome discovery accepts registered executables, common install paths, and PATH launchers such as `chrome.cmd` when they point to a real `chrome.exe`; ChatGPT submission prepares the web input, sends through a trusted CDP Enter key event, then reads the reply by conversation order after the current send. Electron main uses Node `ws` with safe Buffer decoding for CDP calls.
+- MCP is a first-class module with renderer UI, Electron controller, external stdio server, HTTP remote access, Tailscale LAN exposure, read/edit tool boundaries, permissions, and call monitoring.
+- Tailscale LAN access is not public internet access. It uses Tailscale Serve for same-tailnet devices and must keep remote edit permissions off by default.
+- App updates preserve runtime data and database configuration. Version updates must not overwrite user courses, mind maps, documents, MCP remote state, or MySQL config.
+- The main knowledge workspace has collapsible left knowledge-base pane and right catalog pane. Collapsing side panes must not collapse or zero-width the central mind-map/document canvas.
+
+## Current Module Map
+
+```text
+electron/main.ts
+  Window lifecycle, MySQL, course/mindmap/document IPC, updates, diagnostics, errors, MCP bridge.
+
+electron/preload.cts
+  ContextBridge surface for renderer APIs. Renderer must not bypass this layer.
+
+electron/mcp/
+  MCP controller, remote access server, Tailscale Serve integration, permissions, call monitor.
+
+scripts/mcp/aistudy-mcp-server.mjs
+  External stdio MCP entry for Codex/Claude/Cursor style clients.
+
+src/renderer/main.tsx
+  Shell, settings dialog, side-pane collapse state, shortcut settings page.
+
+src/renderer/features/course/
+  Left knowledge-base list, sections, reorder, copy local locator path.
+
+src/renderer/features/mindmap/
+  Mind-map workspace, simple-mind-map adapter, topic elements, shortcut settings, catalog.
+
+src/renderer/features/documents/
+  Node document workspace, canvas-editor adapter, document snapshot and toolbar logic.
+
+src/renderer/features/mcp/
+  MCP settings UI, tool toggles, debugging output, LAN access state, permissions and monitor controls.
+```
+
+## Current Feature Rules
+
+- Do not reintroduce large engineering-style MCP cards. MCP stays in Settings as a compact Windows-settings-style vertical list.
+- Do not show raw paths, SQL, stack traces, or internal IDs in product pages unless the user explicitly requests an integration handoff such as MCP URL/API URL/Authorization or local knowledge-base path copy.
+- Knowledge-base path copy must provide a local locator path that other Codex instances can use, not a breadcrumb like `知识库 / AI Study / 开发需求`.
+- Remote MCP access must show exactly the connection lines needed by another device:
+
+```text
+MCP URL: ...
+API URL: ...
+Authorization: Bearer ...
+```
+
+- External MCP calls must be observable when monitoring is enabled.
+- Remote edit access must be permission-gated by capability: course management, mind-map editing, document writing, destructive operations.
+- Build verification is `npm run build`. Installer verification is `npm run dist:oneclick`.
+- `npm run dist:oneclick` rewrites `docs/updates/INDEX.md`; restore the real release summary after packaging.
+

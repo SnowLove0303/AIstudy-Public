@@ -4,14 +4,323 @@
 
 ## 最新版本
 
-- 版本号：0.1.26
-- 更新时间：2026-06-19 16:59:55
+- 版本号：0.1.68
+- 更新时间：2026-06-25 16:35:06
 - 功能更新：一键打包生成安装包
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
-- 分支：codex/public-handoff-runtime-alignment
-- 提交：84d842e
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
 
 ## 更新记录
+
+### 0.1.68 - 2026-06-25 16:35:06
+
+- 一键打包生成安装包
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.67 - 2026-06-24 23:55:58
+
+- 优化主思维导图打开和切换速度：减少快照重复规范化、目录生成不再复制整树，并在文档/导图切换时保留导图画布实例
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.66 - 2026-06-24 23:44:47
+
+- 信息采集板块调整为空白页面，仅保留导航入口
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.65 - 2026-06-24 22:45:24
+
+- 左侧导航新增信息采集板块，提供采集箱与来源区域入口，为后续网页和平台内容采集接入预留正式页面
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.64 - 2026-06-24 22:34:53
+
+- 端口管理新增 Bilibili 和知乎固定端口，沿用已有 Chrome 独立 profile、登录检测和状态保存逻辑
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.63 - 2026-06-22 16:26:29
+
+- 新增导图右侧排版面板：参考 XMind 的结构、主题、文本、分支、画布分区，右侧目录收起后自动打开，支持布局、颜色、边框、字号、宽度、边界概要和画布拖拽
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.62 - 2026-06-22 15:55:43
+
+- 修复设置弹窗层级：打开设置时左右侧栏折叠按钮不再浮到遮罩上方
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.61 - 2026-06-22 15:26:28
+
+- 修复 AI 助手 ChatGPT 桥接：写入输入框后使用 CDP Enter 键发送，再按网页回合顺序读取回复
+- 保留导图 _e is not a function 修复
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.60 - 2026-06-22 15:18:15
+
+- 修复 AI 助手 ChatGPT 发送链路：准备输入后使用 CDP 真实鼠标点击发送，再按网页回合顺序读取回复
+- 保留导图 _e is not a function 修复
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.59 - 2026-06-22 15:10:50
+
+- 增强 AI 助手 ChatGPT 桥接：发送按钮等待延长到 30 秒，适配 ChatGPT 页面慢切换
+- 保留 CDP Buffer 解码与导图修复
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.58 - 2026-06-22 15:06:51
+
+- 修复 AI 助手 CDP 返回值解析：Node ws Buffer 安全解码，确保应用内 ChatGPT Runtime.evaluate 返回值可读取
+- 保留导图 _e is not a function 修复
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.57 - 2026-06-22 15:02:39
+
+- 修复 AI 助手主进程 CDP 通讯：改用 Node ws 客户端，确保应用内 ChatGPT Runtime.evaluate 能拿到网页脚本返回
+- 保留导图 _e is not a function 修复
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.56 - 2026-06-22 14:55:40
+
+- 修复导图 _e is not a function：导图运行时改回核心包加必要插件白名单
+- 重做 ChatGPT 桥接读取逻辑，按本次发送后的网页回合顺序获取回复
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.55 - 2026-06-22 14:36:12
+
+- 修复 AI 聊天助手桥接：自动识别 chrome.cmd 指向的真实 Chrome
+- ChatGPT 写入后等待发送按钮就绪，减少 send-button-not-found
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.54 - 2026-06-22 14:19:04
+
+- 修复打包版导图初始化 is not a constructor
+- 导图运行时改用 simple-mind-map/full
+- 继续清理旧导图自由坐标避免分支穿线
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.53 - 2026-06-21 20:29:50
+
+- 修复导图右向逻辑布局穿线和跨组错位
+- 关闭自由节点定位
+- 打开旧导图时自动清理 customLeft/customTop 自由坐标
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.52 - 2026-06-21 20:07:51
+
+- 修正文档编辑器右侧并排空白页，文档宽纸张改为纵向阅读流
+- 窗口或侧栏尺寸变化后自动重建文档编辑器
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.51 - 2026-06-21 19:53:20
+
+- 修正文档编辑器横向页面尺寸，减少右侧无效空白，让文档页面按工作区宽度展开。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.50 - 2026-06-21 19:14:34
+
+- 修复左侧知识库栏折叠后导图画布被挤到零宽的问题，折叠时只隐藏侧栏内容并保留画布显示。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.49 - 2026-06-21 19:09:29
+
+- 知识库界面去掉重复标题，并为左侧知识库栏和右侧目录栏新增折叠隐藏按钮。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.48 - 2026-06-21 18:59:54
+
+- 修复导图画布右键文字排版菜单不弹出的问题，改为捕获画布右键事件后打开排版浮层。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.47 - 2026-06-21 18:56:04
+
+- 知识库思维导图工具栏瘦身：文字排版改为选中主题后右键浮层，分支排版改为可配置快捷键并加入设置页。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.46 - 2026-06-21 18:42:51
+
+- 知识库思维导图补齐 Xmind 常用主题元素工具：备注、标签、链接、图片、优先级、进度与折叠展开，并接入选中节点快照保存。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.45 - 2026-06-21 18:24:13
+
+- 修复 MCP 内网访问重启后自动关闭的问题
+- 内网访问开关状态持久保存，AIstudy 下次启动会自动恢复本机 HTTP 服务和 Tailscale Serve
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.44 - 2026-06-21 18:18:07
+
+- MCP 内网访问新增远程编辑权限细分
+- 远程编辑默认关闭，可按知识库管理、导图编辑、文档写入、删除操作分别授权
+- 设置页同步显示权限开关
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.43 - 2026-06-21 18:03:28
+
+- MCP 内网访问新增调用监控开关，开启后显示外部设备最近调用的工具、来源、状态、耗时和时间。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.42 - 2026-06-21 17:28:42
+
+- MCP 内网访问复制内容改为只包含 MCP URL、API URL 和 Authorization 三行，方便直接发送给另一台设备。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.41 - 2026-06-21 17:23:12
+
+- MCP 内网访问开启后在设置页直接显示 MCP URL、API URL 和 Authorization 三行连接信息，并保持一键复制。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.40 - 2026-06-21 16:28:22
+
+- MCP 设置页新增内网访问开关，自动检测 Tailscale、启动只读 HTTP MCP 服务并通过 Tailscale Serve 暴露给同一 tailnet 设备。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.39 - 2026-06-21 15:33:08
+
+- MCP 新增初始化说明、向导工具、目标解析、任务规划、Resources 与 Prompts，让 Codex/Claude Code 接入后能按流程自动操作。
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.38 - 2026-06-21 15:03:34
+
+- MCP 新增知识库/分区管理、导图节点增删改移、导图样式布局、节点文档读写追加与样式工具，并统一编辑许可保护
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.37 - 2026-06-21 14:43:53
+
+- MCP 读取、搜索和定位改为全库管理；编辑必须显式指定目标知识库，避免依赖客户端当前选中项
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.36 - 2026-06-21 14:25:14
+
+- MCP 控制台新增调试输出开关，执行工具后可在底部查看 PowerShell 风格调用记录
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.35 - 2026-06-21 13:54:39
+
+- MCP 控制台移入设置页，改为 Windows 设置风格纵向功能列表，并移除主导航入口
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.34 - 2026-06-19 22:02:38
+
+- MCP 对接能力补强：工具安全标注、知识库定位文件生成、外部服务版本同步
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.33 - 2026-06-19 21:52:28
+
+- MCP 与诊断链路加固：新增一键复制运行诊断报告，外部 MCP 服务改为懒连接健康检测
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.32 - 2026-06-19 21:31:45
+
+- MCP 抽成独立主进程管理模块：统一工具定义、调用状态、JSON-RPC、接入引导和 stdio 队列
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.31 - 2026-06-19 21:13:49
+
+- MCP 接入流程改为新手引导式：复制完整配置指南、工具说明按健康检测到读取再编辑排序
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.30 - 2026-06-19 19:19:32
+
+- MCP 工具卡片对齐开关功能卡布局：状态灯加名称、开关、执行调试入口
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.29 - 2026-06-19 19:08:15
+
+- MCP 控制台改为简约导向卡片：名称、开关、状态灯和最小执行入口
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.28 - 2026-06-19 18:39:08
+
+- 优化 MCP 控制台 UI 密度、顶部工具指标、紧凑卡片和结果侧栏层级
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
+
+### 0.1.27 - 2026-06-19 18:23:04
+
+- 新增 MCP 控制台独立导航、读取/编辑/管控工具状态灯、Node MCP stdio server、编辑权限收紧、F盘 userData 默认目录
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：codex/mcp-control-panel
+- 提交：3f05062
 
 ### 0.1.26 - 2026-06-19 16:59:55
 

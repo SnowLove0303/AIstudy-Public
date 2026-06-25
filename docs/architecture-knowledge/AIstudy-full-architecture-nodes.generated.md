@@ -2,7 +2,7 @@
 
 - course_id: `course_b0646e0778a04849ad739acbce882635`
 - mind_map_id: `mindmap_c3cc0407307b41959566503e537b1840`
-- generated_at: `2026-06-18T18:49:08.795Z`
+- generated_at: `2026-06-21T12:01:45.650Z`
 
 ## Nodes
 

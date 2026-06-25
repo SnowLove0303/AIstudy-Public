@@ -7,11 +7,12 @@
 ```bash
 npm run setup:doctor
 npm run setup:install
-npm run build
-npm run dev
+npm run dev:app
 ```
 
 默认 MySQL 数据库为 `aistudy_public`。应用启动时会自动创建数据库和基础表；如果本机没有 MySQL，核心编辑会降级到本地副本，不阻塞界面使用。
+
+日常改功能时用 `npm run dev:app` 验证，不需要打安装包。渲染器 UI 改动会热更新；主进程或 preload 改动时，停止后重新运行 `npm run dev:app` 即可。只有发布前才运行 `npm run dist:oneclick`。
 
 可选配置见 `.env.example` 或运行时 `AIstudyPublicData/config/mysql.config.json`。升级时不会重置数据库连接；如果新版没有找到公开版配置，会兼容读取旧 `AIstudyData/config/mysql.config.json`，并在未显式指定数据库名时自动选择已有课程、导图或文档数据的 MySQL 库。
 
