@@ -1683,6 +1683,8 @@ const DOCUMENT_TEMPLATE_STYLE = {
   article: { size: 20, color: "#2563eb", bold: true },
   body: { size: 20, color: "#1f2937", bold: false }
 };
+const DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
+const DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
 
 const DOCUMENT_TEMPLATE_STYLE_KEYS = new Set([
   "value",
@@ -1790,6 +1792,34 @@ function createTemplateElement(value, kind) {
   return { value, ...DOCUMENT_TEMPLATE_STYLE[kind] };
 }
 
+function shouldSplitDocumentTextRunAt(value, index) {
+  if (index < DOCUMENT_MAX_TEXT_RUN_LENGTH) return false;
+  const char = value[index] || "";
+  return char === "\n" || /[\s,，、;；。.!！?？:：]/.test(char);
+}
+
+function splitDocumentTextRunValue(value) {
+  const text = String(value ?? "");
+  if (text.length <= DOCUMENT_MAX_TEXT_RUN_LENGTH) return [text];
+  const parts = [];
+  let buffer = "";
+  for (let index = 0; index < text.length; index += 1) {
+    buffer += text[index];
+    if (shouldSplitDocumentTextRunAt(buffer, buffer.length - 1) || buffer.length >= DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH) {
+      parts.push(buffer);
+      buffer = "";
+    }
+  }
+  if (buffer) parts.push(buffer);
+  return parts.length > 0 ? parts : [text];
+}
+
+function createTemplateElements(value, kind) {
+  return splitDocumentTextRunValue(value)
+    .filter(Boolean)
+    .map((part) => createTemplateElement(part, kind));
+}
+
 function normalizeDocumentTemplateValue(value) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -1815,7 +1845,7 @@ function buildDocumentTemplateElements(text) {
   const flushBody = () => {
     const body = normalizeDocumentTemplateValue(bodyLines.join("\n"));
     bodyLines = [];
-    if (body) elements.push(createTemplateElement(`${body}\n`, "body"));
+    if (body) elements.push(...createTemplateElements(`${body}\n`, "body"));
   };
   for (const rawLine of lines) {
     const line = String(rawLine || "").trim();
@@ -1863,6 +1893,8 @@ function shouldMergeDocumentElements(previous, next) {
   if (!previous || !next) return false;
   if (previous.bold || next.bold) return false;
   if (previous.listType || next.listType) return false;
+  if (String(previous.value || "").length + String(next.value || "").length > DOCUMENT_MAX_TEXT_RUN_LENGTH) return false;
+  if (String(previous.value || "").includes("\n") || String(next.value || "").includes("\n")) return false;
   return getDocumentElementSignature(previous) === getDocumentElementSignature(next);
 }
 
@@ -1897,12 +1929,16 @@ function sanitizeDocumentElementList(value) {
       previousWasBlank = false;
     }
     if (!next.value) continue;
-    const previous = result[result.length - 1];
-    if (!isBlank && shouldMergeDocumentElements(previous, next)) {
-      previous.value = sanitizeDocumentElementValue(`${previous.value}${next.value}`);
-      continue;
+    for (const part of splitDocumentTextRunValue(next.value)) {
+      if (!part) continue;
+      const segment = { ...next, value: part };
+      const previous = result[result.length - 1];
+      if (!isBlank && shouldMergeDocumentElements(previous, segment)) {
+        previous.value = sanitizeDocumentElementValue(`${previous.value}${segment.value}`);
+        continue;
+      }
+      result.push(segment);
     }
-    result.push(next);
   }
   return result.length > 0 ? result : [{ value: "", ...DOCUMENT_TEMPLATE_STYLE.body }];
 }

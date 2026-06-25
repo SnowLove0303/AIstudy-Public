@@ -17,6 +17,8 @@ const LANDSCAPE_PAGE_RATIO = 794 / 1123;
 const DOCUMENT_PAGE_GUTTER = 32;
 const MIN_LANDSCAPE_PAGE_WIDTH = 960;
 const ZERO_WIDTH_BREAK = "\u200B";
+const MAX_TEXT_RUN_LENGTH = 360;
+const FORCE_TEXT_RUN_SPLIT_LENGTH = MAX_TEXT_RUN_LENGTH * 2;
 
 type CanvasEditorModule = typeof import("@hufe921/canvas-editor");
 type CanvasEditorInstance = InstanceType<CanvasEditorModule["default"]>;
@@ -79,6 +81,38 @@ function getTextRunSignature(element: IElement) {
   );
 }
 
+function shouldSplitTextRunAt(value: string, index: number) {
+  if (index < MAX_TEXT_RUN_LENGTH) return false;
+  const char = value[index] ?? "";
+  return char === "\n" || /[\s,，、;；。.!！?？:：]/.test(char);
+}
+
+function splitTextRunValue(value: string) {
+  if (value.length <= MAX_TEXT_RUN_LENGTH) return [value];
+
+  const parts: string[] = [];
+  let buffer = "";
+  for (let index = 0; index < value.length; index += 1) {
+    buffer += value[index];
+    if (shouldSplitTextRunAt(buffer, buffer.length - 1) || buffer.length >= FORCE_TEXT_RUN_SPLIT_LENGTH) {
+      parts.push(buffer);
+      buffer = "";
+    }
+  }
+  if (buffer) parts.push(buffer);
+  return parts.length > 0 ? parts : [value];
+}
+
+function canMergeTextRuns(left: IElement | undefined, right: IElement) {
+  if (!left || !isTextElement(left)) return false;
+  if (getTextRunSignature(left) !== getTextRunSignature(right)) return false;
+  const leftValue = toElementText(left.value);
+  const rightValue = toElementText(right.value);
+  if (leftValue.length + rightValue.length > MAX_TEXT_RUN_LENGTH) return false;
+  if (leftValue.includes("\n") || rightValue.includes("\n")) return false;
+  return true;
+}
+
 function compactElementList(value: unknown, fallbackToBlank: boolean): IElement[] {
   if (!Array.isArray(value)) return [{ value: "" } as IElement];
   const list = value.filter((item): item is IElement => Boolean(item && typeof item === "object"));
@@ -98,13 +132,16 @@ function compactElementList(value: unknown, fallbackToBlank: boolean): IElement[
       continue;
     }
 
-    const previous = compacted[compacted.length - 1];
-    if (previous && isTextElement(previous) && getTextRunSignature(previous) === getTextRunSignature(next)) {
-      previous.value = `${previous.value}${next.value}`;
-      continue;
+    for (const part of splitTextRunValue(next.value)) {
+      if (!part) continue;
+      const segment = { ...next, value: part } as IElement;
+      const previous = compacted[compacted.length - 1];
+      if (canMergeTextRuns(previous, segment)) {
+        previous.value = `${toElementText(previous.value)}${segment.value}`;
+        continue;
+      }
+      compacted.push(segment);
     }
-
-    compacted.push(next);
   }
 
   if (compacted.length > 0) return compacted;

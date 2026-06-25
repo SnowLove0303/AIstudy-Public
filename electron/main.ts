@@ -7282,6 +7282,8 @@ const MCP_DOCUMENT_STYLE = {
   article: { size: 24, color: "#2563eb", bold: true },
   body: { size: 24, color: "#111827", bold: false }
 } as const;
+const MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
+const MCP_DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
 
 function stripMcpMarkdownHeading(line: string) {
   return line.replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
@@ -7304,6 +7306,33 @@ function createMcpDocumentElement(value: string, kind: keyof typeof MCP_DOCUMENT
   } as Record<string, unknown>;
 }
 
+function shouldSplitMcpDocumentTextRunAt(value: string, index: number) {
+  if (index < MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH) return false;
+  const char = value[index] || "";
+  return char === "\n" || /[\s,，、;；。.!！?？:：]/.test(char);
+}
+
+function splitMcpDocumentTextRunValue(value: string) {
+  if (value.length <= MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH) return [value];
+  const parts: string[] = [];
+  let buffer = "";
+  for (let index = 0; index < value.length; index += 1) {
+    buffer += value[index];
+    if (shouldSplitMcpDocumentTextRunAt(buffer, buffer.length - 1) || buffer.length >= MCP_DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH) {
+      parts.push(buffer);
+      buffer = "";
+    }
+  }
+  if (buffer) parts.push(buffer);
+  return parts.length > 0 ? parts : [value];
+}
+
+function createMcpDocumentElements(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {
+  return splitMcpDocumentTextRunValue(value)
+    .filter(Boolean)
+    .map((part) => createMcpDocumentElement(part, kind));
+}
+
 function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
   const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
   const elements: Record<string, unknown>[] = [];
@@ -7312,7 +7341,7 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
     const body = bodyLines.join("\n").trim();
     bodyLines = [];
     if (!body) return;
-    elements.push(createMcpDocumentElement(`${body}\n\n`, "body"));
+    elements.push(...createMcpDocumentElements(`${body}\n\n`, "body"));
   };
 
   for (const rawLine of lines) {
