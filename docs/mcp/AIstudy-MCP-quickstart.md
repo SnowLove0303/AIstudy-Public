@@ -4,6 +4,8 @@
 
 如果是给另一台 Codex 直接接入，优先把单文件说明发给它：`docs/mcp/AIstudy-MCP-access-skill.md`。
 
+项目内标准 MCP 接入 skill 位于 `.claude/skills/aistudy-mcp-access/SKILL.md`；后续 MCP 功能更新时，同步清单见 `.claude/skills/aistudy-mcp-access/references/sync-checklist.md`。
+
 ## 先理解一句话
 
 AIstudy MCP 是一个本地工具入口，让外部 AI 助手可以读取和管理 AIstudy 的全库知识库、思维导图、节点搜索结果、节点文档，也可以通过 AIstudy 的端口管理打开固定端口 Chrome 页面。
@@ -135,6 +137,8 @@ AISTUDY_MCP_ALLOW_EDIT = "0"
 - `chatgpt`：ChatGPT，默认端口 `9230`
 - `bilibili`：Bilibili，默认端口 `9231`
 - `zhihu`：知乎，默认端口 `9232`
+- `zhaopin`：智联招聘，默认端口 `9233`
+- `zhipin`：BOSS直聘，默认端口 `9234`
 
 示例：
 
@@ -228,6 +232,6 @@ AISTUDY_MCP_ALLOW_EDIT=1
 - `mysql=false` 或启动报连接错误：MySQL 没启动，或配置指向了错误数据库。
 - `MCP requires an explicit knowledge base.`：写入没有传入 `courseId`。MCP 不依赖客户端当前选中项，编辑必须明确目标知识库。
 - `MCP edit calls are disabled by configuration.`：编辑权限没有打开，这是默认安全行为。
-- `resolve_course_locator` 返回的 `locatorPath`：这是给外部 Codex 使用的本地定位文件路径，里面包含数据目录、数据库名、表名和知识库 ID。
+- `resolve_course_locator` 返回的 `locatorPath`：这是给外部 Codex 使用的本地定位文件路径，里面包含数据目录、固定数据库名、固定表名和知识库 ID；其中数据库名和表名只是边界元数据，不代表公开版运行时支持覆盖库名或表名。
 - `Unknown tool: copy_config`：当前连接的是独立 `scripts/mcp` 服务，复制接入配置请在 AIstudy 设置页里点按钮。
 - `Chrome executable is missing`：Chrome 路径没找到，可配置 `AISTUDY_CHROME_PATH`。

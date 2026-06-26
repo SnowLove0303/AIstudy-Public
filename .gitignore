@@ -11,6 +11,7 @@ artifacts/
 *.log
 *.user
 *.suo
+*.lnk
 .env
 .env.*
 !.env.example

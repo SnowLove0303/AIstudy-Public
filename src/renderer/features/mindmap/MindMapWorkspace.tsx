@@ -369,14 +369,22 @@ function mergeFocusedSnapshot(
   masterSnapshot: MindMapSnapshot | null,
   focusedNodeId: string | null,
   focusedSnapshot: MindMapSnapshot
-): MindMapSnapshot {
-  if (!masterSnapshot || !focusedNodeId || getNodeId(masterSnapshot.root) === focusedNodeId) {
+): MindMapSnapshot | null {
+  if (!focusedNodeId) {
+    return focusedSnapshot;
+  }
+
+  if (!masterSnapshot) {
+    return null;
+  }
+
+  if (getNodeId(masterSnapshot.root) === focusedNodeId) {
     return focusedSnapshot;
   }
 
   const result = replaceNodeInTree(masterSnapshot.root, focusedNodeId, focusedSnapshot.root);
   if (!result.replaced) {
-    return focusedSnapshot;
+    return null;
   }
 
   return {
@@ -427,10 +435,13 @@ export function MindMapWorkspace({
   const pendingSaveRef = React.useRef<PendingSave | null>(null);
   const activeSaveRef = React.useRef<Promise<MindMapDocument | null>>(Promise.resolve(null));
   const loadSequenceRef = React.useRef(0);
+  const loadedRootNodeIdRef = React.useRef<string | null>(null);
   const [snapshot, setSnapshot] = React.useState<MindMapSnapshot | null>(null);
   const snapshotRef = React.useRef<MindMapSnapshot | null>(null);
   const snapshotUiSignatureRef = React.useRef("");
   const [mapId, setMapId] = React.useState<string | null>(null);
+  const [loadedCourseId, setLoadedCourseId] = React.useState<string | null>(null);
+  const [snapshotLoadRevision, setSnapshotLoadRevision] = React.useState(0);
   const [focusedNodeId, setFocusedNodeId] = React.useState<string | null>(null);
   const [selectedNode, setSelectedNode] = React.useState<MindMapSelectedNode>({ id: null, title: "" });
   const [isReady, setIsReady] = React.useState(false);
@@ -478,6 +489,10 @@ export function MindMapWorkspace({
     const nextSignature = createMindMapStructureSignature(nextSnapshot?.root);
     if (!force && snapshotUiSignatureRef.current === nextSignature) return;
     snapshotUiSignatureRef.current = nextSignature;
+    if (force) {
+      setSnapshot(nextSnapshot);
+      return;
+    }
     React.startTransition(() => {
       setSnapshot(nextSnapshot);
     });
@@ -582,6 +597,9 @@ export function MindMapWorkspace({
     publishSelectedNode({ id: null, title: "" });
     setFocusedNodeId(null);
     setIsReady(false);
+    setLoadedCourseId(null);
+    loadedRootNodeIdRef.current = null;
+    setSnapshotLoadRevision((value) => value + 1);
     setSavedAt(null);
     commitSnapshotForUi(null, true);
     setMapId(null);
@@ -599,6 +617,9 @@ export function MindMapWorkspace({
         if (loadSequenceRef.current !== sequence) return;
         setMapId(document.mapId);
         commitSnapshotForUi(document.snapshot, true);
+        setLoadedCourseId(courseId);
+        loadedRootNodeIdRef.current = document.snapshot ? getNodeId(document.snapshot.root) : null;
+        setSnapshotLoadRevision((value) => value + 1);
         setStorageMode(mode);
         setError(loadError);
       })
@@ -607,6 +628,9 @@ export function MindMapWorkspace({
         const document = await loadLocalDocument(courseId, courseName);
         setMapId(document.mapId);
         commitSnapshotForUi(document.snapshot, true);
+        setLoadedCourseId(courseId);
+        loadedRootNodeIdRef.current = document.snapshot ? getNodeId(document.snapshot.root) : null;
+        setSnapshotLoadRevision((value) => value + 1);
         setStorageMode("local");
         setError("导图读取失败，已打开本地副本。");
       })
@@ -653,6 +677,11 @@ export function MindMapWorkspace({
   const queueCanvasSnapshotSave = React.useCallback(
     (nextCanvasSnapshot: MindMapSnapshot) => {
       const nextSnapshot = mergeFocusedSnapshot(snapshotRef.current, focusedNodeId, nextCanvasSnapshot);
+      const nextRootNodeId = nextSnapshot ? getNodeId(nextSnapshot.root) : null;
+      if (!nextSnapshot || (focusedNodeId && nextRootNodeId === focusedNodeId && focusedNodeId !== loadedRootNodeIdRef.current)) {
+        setError("当前分支导图还没有合并到主导图，已阻止保存。请重新打开当前知识库后再试。");
+        return;
+      }
       queueSnapshotSave(nextSnapshot);
     },
     [focusedNodeId, queueSnapshotSave]
@@ -664,6 +693,11 @@ export function MindMapWorkspace({
     const currentMasterSnapshot = currentCanvasSnapshot
       ? mergeFocusedSnapshot(snapshotRef.current, focusedNodeId, currentCanvasSnapshot)
       : snapshotRef.current;
+    const currentRootNodeId = currentMasterSnapshot ? getNodeId(currentMasterSnapshot.root) : null;
+    if (focusedNodeId && currentRootNodeId === focusedNodeId && focusedNodeId !== loadedRootNodeIdRef.current) {
+      setError("当前分支导图还没有合并到主导图，已阻止保存。请重新打开当前知识库后再试。");
+      return Promise.resolve(null);
+    }
     if (!currentMasterSnapshot) return Promise.resolve(null);
 
     const nextMapId = mapId ?? createMindMapId();
@@ -719,9 +753,13 @@ export function MindMapWorkspace({
     [canUseEditor, courseId, queueCanvasSnapshotSave, queueSnapshotSave]
   );
 
-  const outline = React.useMemo(() => buildMindMapOutline(snapshot?.root), [snapshot]);
+  const isLoadedCourseSnapshot = Boolean(courseId && loadedCourseId === courseId);
+  const outline = React.useMemo(
+    () => (isLoadedCourseSnapshot ? buildMindMapOutline(snapshot?.root) : []),
+    [isLoadedCourseSnapshot, snapshot]
+  );
   const outlineNodeCount = React.useMemo(() => countOutlineItems(outline), [outline]);
-  const renderSnapshot = snapshotRef.current ?? snapshot;
+  const renderSnapshot = isLoadedCourseSnapshot ? snapshotRef.current ?? snapshot : null;
   const focusedSnapshot = React.useMemo(
     () => (renderSnapshot ? createFocusedSnapshot(renderSnapshot, focusedNodeId) : null),
     [focusedNodeId, renderSnapshot]
@@ -890,12 +928,13 @@ export function MindMapWorkspace({
     [outline, publishSelectedNode]
   );
 
-  if (!courseId || !snapshot || !focusedSnapshot) {
+  if (!courseId || !isLoadedCourseSnapshot || !snapshot || !focusedSnapshot) {
+    const placeholderText = courseId && !isLoadedCourseSnapshot ? "正在载入导图" : isLoading ? "正在载入导图" : "请选择课程";
     return (
       <div className="mindmap-placeholder">
         <GitBranch size={30} strokeWidth={1.7} />
         <div>
-          <strong>{isLoading ? "正在载入导图" : "请选择课程"}</strong>
+          <strong>{placeholderText}</strong>
         </div>
       </div>
     );
@@ -904,7 +943,7 @@ export function MindMapWorkspace({
   const nodeCount = focusedNodeId ? countNodes(focusedSnapshot.root) : outlineNodeCount;
   const storageText = storageMode === "mysql" ? "已连接" : storageMode === "local" ? "本地副本" : "未连接";
   const currentLayout = normalizeLayout(focusedSnapshot.layout);
-  const canvasKey = `${courseId}:${focusedNodeId ?? "full"}`;
+  const canvasKey = `${loadedCourseId}:${mapId ?? "pending"}:${focusedNodeId ?? "full"}:${snapshotLoadRevision}`;
   const topicElements = selectedNode.topicElements ?? EMPTY_TOPIC_ELEMENTS;
   const topicElementDisabled = !canUseEditor || !selectedNode.id;
 

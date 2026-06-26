@@ -1,0 +1,7 @@
+interface:
+  display_name: "AIstudy MCP Access"
+  short_description: "Connect AI agents to AIstudy MCP safely"
+  default_prompt: "Use $aistudy-mcp-access to connect to AIstudy MCP, start read-only, and resolve the exact target before editing."
+
+policy:
+  allow_implicit_invocation: true

@@ -115,6 +115,8 @@ doubao
 chatgpt
 bilibili
 zhihu
+zhaopin
+zhipin
 ```
 
 ## 安全边界

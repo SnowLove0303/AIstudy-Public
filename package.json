@@ -33,6 +33,8 @@
     "arch:knowledge:sync": "node scripts/architecture-knowledge/sync-architecture-doc.mjs",
     "codex:handoff:sync": "node scripts/architecture-knowledge/sync-architecture-doc.mjs --file=docs/codex/CODEX_HANDOFF.md --node-id=arch_14_scripts_docs_09 --title=\"Codex 接手公开版项目指引\"",
     "codex:handoff:commit": "node scripts/architecture-knowledge/sync-architecture-doc.mjs --file=docs/codex/CODEX_HANDOFF.md --node-id=arch_14_scripts_docs_09 --title=\"Codex 接手公开版项目指引\" --commit",
+    "github:sync:doctor": "node scripts/github/check-repo-sync.mjs",
+    "github:sync:fix": "node scripts/github/check-repo-sync.mjs --fix",
     "update:record": "node scripts/update/record-update.mjs"
   },
   "dependencies": {

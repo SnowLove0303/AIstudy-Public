@@ -5,20 +5,20 @@
 ## 最新版本
 
 - 版本号：0.1.68
-- 更新时间：2026-06-26 01:48:13
-- 功能更新：一键打包生成安装包
+- 更新时间：2026-06-26 16:41:19
+- 功能更新：新增 GitHub 仓库同步检查并同步 MCP 与配置契约
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：codex/mcp-control-panel
-- 提交：633bd6a
+- 提交：77c9fa5
 
 ## 更新记录
 
-### 0.1.68 - 2026-06-26 01:48:13
+### 0.1.68 - 2026-06-26 16:41:19
 
-- 一键打包生成安装包
+- 新增 GitHub 仓库同步检查并同步 MCP 与配置契约
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：codex/mcp-control-panel
-- 提交：633bd6a
+- 提交：77c9fa5
 
 ### 0.1.67 - 2026-06-24 23:55:58
 

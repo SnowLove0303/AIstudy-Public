@@ -113,7 +113,7 @@ const REMOTE_MINDMAP_EDIT_TOOLS = new Set([
   "update_mindmap_layout"
 ]);
 const REMOTE_MINDMAP_DELETE_TOOLS = new Set(["delete_mindmap_node"]);
-const REMOTE_DOCUMENT_EDIT_TOOLS = new Set(["write_node_document", "append_node_document", "update_node_document_style"]);
+const REMOTE_DOCUMENT_EDIT_TOOLS = new Set(["write_node_document", "append_node_document", "format_node_document", "update_node_document_style"]);
 const DEFAULT_PERMISSIONS: McpRemoteAccessPermissions = {
   edit: false,
   course: false,

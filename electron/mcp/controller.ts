@@ -30,6 +30,7 @@ export type McpToolId =
   | "read_node_document"
   | "write_node_document"
   | "append_node_document"
+  | "format_node_document"
   | "update_node_document_style"
   | "health_check"
   | "resolve_course_locator"
@@ -183,6 +184,7 @@ const documentSchema = {
     nodeId: { type: "string", maxLength: 120 },
     title: { type: "string", maxLength: 255 },
     text: { type: "string", maxLength: 20000 },
+    replaceExisting: { type: "boolean" },
     snapshot: { type: "object" },
     fontSize: { type: "integer", minimum: 10, maximum: 72 },
     color: { type: "string", maxLength: 32 },
@@ -216,7 +218,7 @@ const chromePortSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    platformId: { type: "string", enum: ["doubao", "chatgpt", "bilibili", "zhihu"] },
+    platformId: { type: "string", enum: ["doubao", "chatgpt", "bilibili", "zhihu", "zhaopin", "zhipin"] },
     url: { type: "string", maxLength: 2000 }
   }
 };
@@ -443,6 +445,14 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     inputSchema: documentSchema
   },
   {
+    id: "format_node_document",
+    mode: "edit",
+    title: "整理文档样式",
+    description: "只整理已有节点文档样式，必须逐字保留正文、空白和段落结构。",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    inputSchema: documentSchema
+  },
+  {
     id: "update_node_document_style",
     mode: "edit",
     title: "设置文档样式",
@@ -506,6 +516,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: use read_courses, read_current_mindmap, search_nodes, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
+    "For document writes: use write_node_document only for new content or explicit whole-document replacement with replaceExisting=true. Use append_node_document for additions, format_node_document for style cleanup that preserves every value, and update_node_document_style for simple whole-document style changes.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -687,7 +698,7 @@ function createMcpTaskPlan(args: Record<string, unknown>) {
   const documentLike = /文档|document|正文|内容/i.test(intent);
   const locatorLike = /路径|定位|locator|handoff|本地/i.test(intent);
   const searchLike = /搜索|查找|节点|node|关键词/i.test(intent) || Boolean(nodeQuery);
-  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|自动化|点击|输入|browser|port/i.test(intent);
+  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|zhaopin|zhipin|自动化|点击|输入|browser|port/i.test(intent);
 
   const steps: Array<Record<string, unknown>> = [
     { order: 1, tool: "mcp_get_started", arguments: {}, purpose: "确认 MCP 状态、全库范围和安全规则。" },
@@ -704,7 +715,7 @@ function createMcpTaskPlan(args: Record<string, unknown>) {
   }
   if (browserLike) {
     steps.push({ order: order++, tool: "chrome_ports_status", arguments: {}, purpose: "读取 AIstudy 端口管理信息，确认平台、端口、登录状态和当前页面。" });
-    steps.push({ order: order++, tool: "chrome_port_open_page", arguments: { platformId: "<doubao|chatgpt|bilibili|zhihu>", url: "<optionalUrl>" }, purpose: "启动或复用目标平台 Chrome，并打开页面。" });
+    steps.push({ order: order++, tool: "chrome_port_open_page", arguments: { platformId: "<doubao|chatgpt|bilibili|zhihu|zhaopin|zhipin>", url: "<optionalUrl>" }, purpose: "启动或复用目标平台 Chrome，并打开页面。" });
   } else if (locatorLike) {
     steps.push({ order: order++, tool: "resolve_course_locator", arguments: { courseId: courseId || undefined }, purpose: "生成本地 locatorPath 给其他智能体使用。" });
   } else if (documentLike) {

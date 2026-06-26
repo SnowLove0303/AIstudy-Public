@@ -5,7 +5,7 @@ import mysql from "mysql2/promise";
 
 const DEFAULT_COURSE_NAME = "AIstudy 全量功能架构";
 const DEFAULT_EDITOR_VERSION = "canvas-editor@0.9.135";
-const SNAPSHOT_KEEP_LIMIT = 30;
+const DOCUMENT_SNAPSHOT_KEEP_LIMIT = 80;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 
 function readArg(name, fallback = "") {
@@ -289,7 +289,7 @@ async function writeDocument(connection, target, sourceMarkdown, title) {
                SELECT id FROM knowledge_document_snapshots
                WHERE document_id = ?
                ORDER BY sequence_no DESC
-               LIMIT ${SNAPSHOT_KEEP_LIMIT}
+               LIMIT ${DOCUMENT_SNAPSHOT_KEEP_LIMIT}
              ) retained
            )`,
         [documentId, documentId]

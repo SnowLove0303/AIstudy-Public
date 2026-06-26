@@ -2,6 +2,8 @@
 
 这一个文件同时给人和 Codex/Claude Code 看。另一台设备拿到这份文档，再拿到 AIstudy 复制出来的三行连接信息，就能按顺序接入 MCP、读取知识库、搜索导图节点、读取节点文档、打开固定端口 Chrome 页面，并在明确授权后编辑。
 
+标准 agent skill 位于 `.claude/skills/aistudy-mcp-access/SKILL.md`，索引和同步检查表位于 `.claude/skills/aistudy-mcp-access/references/`。后续 MCP 工具或权限更新时，必须同步更新该 skill。
+
 ## 给 Codex/Claude Code 的 Skill 提示
 
 ```text
@@ -192,11 +194,11 @@ Authorization: Bearer ...
 
 ### 本地定位和交接
 
-- `resolve_course_locator`：生成本地定位文件，给另一个 Codex/Claude 快速找到知识库数据边界。不要用 UI 面包屑代替它。
+- `resolve_course_locator`：生成本地定位文件，给另一个 Codex/Claude 快速找到知识库数据边界。定位文件里的数据库名和表名是公开版固定边界元数据，不是可覆盖配置；不要用 UI 面包屑代替它。
 
 ### Chrome 端口管理
 
-- `chrome_ports_status`：读取 AIstudy 端口管理信息，包含豆包、ChatGPT、Bilibili、知乎的平台 ID、固定端口、默认地址、连接状态和当前检测页面。
+- `chrome_ports_status`：读取 AIstudy 端口管理信息，包含豆包、ChatGPT、Bilibili、知乎、智联招聘、BOSS直聘的平台 ID、固定端口、默认地址、连接状态和当前检测页面。
 - `chrome_port_open_page`：按 `platformId` 和可选 `url` 启动或复用固定端口 Chrome 页面。AIstudy 只负责打开页面，不执行网页脚本。
 
 可用 `platformId`：
@@ -205,6 +207,8 @@ Authorization: Bearer ...
 - `chatgpt`
 - `bilibili`
 - `zhihu`
+- `zhaopin`
+- `zhipin`
 
 示例：
 

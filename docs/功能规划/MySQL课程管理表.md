@@ -6,16 +6,17 @@
 
 ## 连接配置
 
-主进程按以下优先级读取连接配置：
+主进程只读取 MySQL 连接四项：`host`、`port`、`user`、`password`。公开版数据库名固定为 `aistudy_public`，表名固定为公开版表名；不得通过环境变量或 `mysql.config.json` 覆盖数据库名、表名，也不会自动检测旧 `aistudy` 数据库。
 
-1. 环境变量。
-2. `mysql.config.json`，可放在应用可执行文件同级目录。
-3. 旧版 `AIstudyData/config/mysql.config.json`，用于升级兼容。
-4. `AIstudyPublicData/config/mysql.config.json`，用于可迁移部署。
-5. `mysql.config.json`，可放在 Electron `userData` 目录，兼容旧版本。
-6. 默认值。
+连接四项按以下优先级读取：
 
-如果配置没有显式指定 `database`，启动时会自动检测 `aistudy_public` 和旧 `aistudy`，优先使用已经存在课程、导图或 Word 文档数据的数据库。升级安装包只更新程序文件，不允许把用户带到空库，也不允许清空或覆盖已有 MySQL 数据。
+1. 环境变量 `AISTUDY_PUBLIC_MYSQL_HOST`、`AISTUDY_PUBLIC_MYSQL_PORT`、`AISTUDY_PUBLIC_MYSQL_USER`、`AISTUDY_PUBLIC_MYSQL_PASSWORD`。
+2. `mysql.config.json`，可放在 Electron `userData` 目录。
+3. `AIstudyPublicData/config/mysql.config.json`，用于可迁移部署。
+4. `mysql.config.json`，可放在应用可执行文件同级目录。
+5. 默认值。
+
+升级安装包只更新程序文件，不允许清空或覆盖已有 MySQL 数据。公开版如果找不到或连不上 MySQL，会走本地副本兜底，而不是切换到旧库或其他库。
 
 支持的配置项：
 
@@ -25,17 +26,24 @@
 | `port` | `AISTUDY_PUBLIC_MYSQL_PORT` | `3306` |
 | `user` | `AISTUDY_PUBLIC_MYSQL_USER` | `root` |
 | `password` | `AISTUDY_PUBLIC_MYSQL_PASSWORD` | 空字符串 |
-| `database` | `AISTUDY_PUBLIC_MYSQL_DATABASE` | `aistudy_public` |
-| `courseTable` | `AISTUDY_PUBLIC_MYSQL_COURSE_TABLE` | `course_management_courses` |
-| `courseSectionTable` | `AISTUDY_PUBLIC_MYSQL_COURSE_SECTION_TABLE` | `knowledge_sections` |
-| `mindMapTable` | `AISTUDY_PUBLIC_MYSQL_MIND_MAP_TABLE` | `mind_maps` |
-| `mindMapSnapshotTable` | `AISTUDY_PUBLIC_MYSQL_MIND_MAP_SNAPSHOT_TABLE` | `mind_map_snapshots` |
-| `mindMapNodeTable` | `AISTUDY_PUBLIC_MYSQL_MIND_MAP_NODE_TABLE` | `mind_map_nodes` |
-| `knowledgeDocumentTable` | `AISTUDY_PUBLIC_MYSQL_KNOWLEDGE_DOCUMENT_TABLE` | `knowledge_documents` |
-| `knowledgeDocumentSnapshotTable` | `AISTUDY_PUBLIC_MYSQL_KNOWLEDGE_DOCUMENT_SNAPSHOT_TABLE` | `knowledge_document_snapshots` |
-| `assetTable` | `AISTUDY_PUBLIC_MYSQL_ASSET_TABLE` | `knowledge_assets` |
-| `knowledgeAssetLinkTable` | `AISTUDY_PUBLIC_MYSQL_KNOWLEDGE_ASSET_LINK_TABLE` | `knowledge_asset_links` |
-| `errorLogTable` | `AISTUDY_PUBLIC_MYSQL_ERROR_LOG_TABLE` | `app_error_logs` |
+
+固定库表：
+
+| 项 | 固定值 |
+| --- | --- |
+| 数据库 | `aistudy_public` |
+| 课程表 | `course_management_courses` |
+| 分区表 | `knowledge_sections` |
+| 导图表 | `mind_maps` |
+| 导图快照表 | `mind_map_snapshots` |
+| 导图节点投影表 | `mind_map_nodes` |
+| Word 文档表 | `knowledge_documents` |
+| Word 快照表 | `knowledge_document_snapshots` |
+| 资产表 | `knowledge_assets` |
+| 资产关联表 | `knowledge_asset_links` |
+| 错误日志表 | `app_error_logs` |
+
+即使旧配置里还保留 `database` 或 `*Table` 字段，当前公开版运行时也不会读取这些字段。
 
 `mysql.config.json` 示例：
 
@@ -44,24 +52,13 @@
   "host": "127.0.0.1",
   "port": 3306,
   "user": "root",
-  "password": "",
-  "database": "aistudy_public",
-  "courseTable": "course_management_courses",
-  "courseSectionTable": "knowledge_sections",
-  "mindMapTable": "mind_maps",
-  "mindMapSnapshotTable": "mind_map_snapshots",
-  "mindMapNodeTable": "mind_map_nodes",
-  "knowledgeDocumentTable": "knowledge_documents",
-  "knowledgeDocumentSnapshotTable": "knowledge_document_snapshots",
-  "assetTable": "knowledge_assets",
-  "knowledgeAssetLinkTable": "knowledge_asset_links",
-  "errorLogTable": "app_error_logs"
+  "password": ""
 }
 ```
 
 ## 建表和迁移规则
 
-应用首次读取或保存课程时，会尝试创建数据库、课程分区表和课程表。若数据库已存在但当前账号无建库权限，应用会继续使用已配置数据库并尝试建表。
+应用首次读取或保存课程时，会尝试创建固定数据库 `aistudy_public`、课程分区表和课程表。若数据库已存在但当前账号无建库权限，应用会继续使用 `aistudy_public` 并尝试建表。
 
 旧版课程表如果缺少 `section_id`、`sort_order` 或 `idx_section_order`，主进程会在启动数据层时自动补齐，不要求手工迁移。
 

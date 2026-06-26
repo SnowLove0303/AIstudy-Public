@@ -8,7 +8,7 @@
 - GitHub 仓库：`https://github.com/SnowLove0303/AIstudy-Public.git`
 - 应用名：`AIstudy`
 - 当前包名：`aistudy`
-- 当前版本号：`0.1.61`，以 `package.json` 的 `version` 为准
+- 当前版本号：`0.1.68`，以 `package.json` 的 `version` 为准
 - 公开版定位：开发端、发布端、纯净版基线
 - 自用版仓库：`F:\XIANGMU\AIstudy`
 
@@ -18,14 +18,14 @@
 
 最近一轮开发集中在 MCP、知识库主界面、思维导图工具和文档编辑器：
 
-- 最新安装包：`release\AIstudy-Setup-0.1.61.exe`
+- 最新安装包：`release\AIstudy-Setup-0.1.68.exe`
 - 最新免安装运行版：`release\win-unpacked\AIstudy.exe`
 - 最新更新摘要见：`docs/updates/INDEX.md`
 - 当前主要分支：`codex/mcp-control-panel`
-- 当前公开版已经具备 MCP 设置页、Tailscale 内网访问、远程权限细分、远程调用监控、导图/文档 MCP 读写工具、知识库本地路径复制、数据库更新保护、左右侧栏折叠、导图快捷键设置、右键文字排版浮层。
-- 最近一次修复：导图运行时改回核心包加必要插件白名单，避免 `simple-mind-map/full` 全量插件触发 `_e is not a function`；ChatGPT 桥接改为先准备输入并保持焦点，再通过 CDP 派发 Enter 键发送，最后按网页回合顺序读取本次回复，主进程 CDP 通讯使用 Node `ws` 客户端并修正 Buffer 解码。
+- 当前公开版已经具备 MCP 设置页、Tailscale 内网访问、远程权限细分、远程调用监控、导图/文档 MCP 读写工具、知识库本地路径复制、数据库更新保护、左右侧栏折叠、导图快捷键设置、右键文字排版浮层、右侧文档格式面板、端口管理和信息采集入口。
+- 最近一轮更新集中在一键打包、导图打开/切换性能、信息采集入口、右侧格式面板、端口支持和 ChatGPT CDP 发送稳定性。
 
-接手时先注意：工作区已有大量未提交改动，主要来自 MCP、导图工具、设置页、布局和文档编辑器修复。不要用 `git reset --hard` 或 checkout 回滚。
+接手时先注意：以 `git status --short --branch` 为准判断工作区状态；如果已有未提交改动，不要用 `git reset --hard` 或 checkout 回滚用户改动。
 
 ## 2. VS Code 接管方式
 
@@ -103,6 +103,8 @@ user: root
 password: 空
 database: aistudy_public
 ```
+
+公开版数据库名和表名固定，运行时配置只用于 MySQL 连接四项：`host`、`port`、`user`、`password`。不要恢复旧 `aistudy` 库自动检测，也不要把 database/table 环境变量描述为公开版能力。
 
 可参考 `.env.example`，也可用运行时配置：
 
@@ -374,6 +376,13 @@ npm run dist:oneclick
 
 ## 11. 最近版本记录
 
+- `0.1.68`：一键打包生成安装包。
+- `0.1.67`：优化主思维导图打开和切换速度，减少快照重复规范化，并在文档/导图切换时保留导图画布实例。
+- `0.1.66`：信息采集板块调整，仅保留导航入口。
+- `0.1.65`：将信息采集加入主导航。
+- `0.1.64`：新增 Bilibili 与知乎固定 Chrome 调试端口管理。
+- `0.1.63`：将文档格式面板移入右侧详情栏。
+- `0.1.62`：修复设置弹窗层级，避免被导图画布遮挡。
 - `0.1.61`：修复 ChatGPT 桥接发送链路，准备输入后使用 CDP Enter 键发送，避开 ChatGPT 页面对外部鼠标点击不稳定的问题。
 - `0.1.60`：修复 ChatGPT 桥接发送链路，准备输入后使用 CDP 真实鼠标点击发送，再按网页回合顺序读取回复，避免 `user-block-not-created`。
 - `0.1.59`：增强 AI 助手 ChatGPT 桥接，发送按钮等待延长到 30 秒，适配 ChatGPT 页面慢切换。

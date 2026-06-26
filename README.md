@@ -10,13 +10,15 @@ npm run setup:install
 npm run dev:app
 ```
 
-默认 MySQL 数据库为 `aistudy_public`。应用启动时会自动创建数据库和基础表；如果本机没有 MySQL，核心编辑会降级到本地副本，不阻塞界面使用。
+默认 MySQL 数据库固定为 `aistudy_public`，公开版表名也固定为公开版专用表。应用启动时会自动创建数据库和基础表；如果本机没有 MySQL，核心编辑会降级到本地副本，不阻塞界面使用。
 
 日常改功能时用 `npm run dev:app` 验证，不需要打安装包。渲染器 UI 改动会热更新；主进程或 preload 改动时，停止后重新运行 `npm run dev:app` 即可。只有发布前才运行 `npm run dist:oneclick`。
 
-可选配置见 `.env.example` 或运行时 `AIstudyPublicData/config/mysql.config.json`。升级时不会重置数据库连接；如果新版没有找到公开版配置，会兼容读取旧 `AIstudyData/config/mysql.config.json`，并在未显式指定数据库名时自动选择已有课程、导图或文档数据的 MySQL 库。
+可选连接配置见 `.env.example` 或运行时 `AIstudyPublicData/config/mysql.config.json`。公开版运行时只读取 MySQL 的 `host`、`port`、`user`、`password`；不再自动检测旧 `aistudy` 库，也不支持通过环境变量或配置文件覆盖数据库名和表名。升级安装包只更新程序文件，不会重置本机连接配置或清空已有 MySQL 数据。
 
 新机器开发或打包前先运行 `npm run setup:doctor`。弱网或离线打包时，先在有网络的机器运行 `npm run setup:install` 和 `npm run dist:oneclick`，再复制 `node_modules` 与 `.tmp/build-cache`。详见 `docs/deployment-new-machine.md`。
+
+同步 GitHub 前运行 `npm run github:sync:doctor` 检查本机 Git、远端分支、未提交改动、GitHub CLI 和 Release 安装包资产；详见 `docs/github-sync.md`。
 
 ## Architecture Direction
 

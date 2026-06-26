@@ -37,7 +37,7 @@ npm run dist:oneclick
 npm run setup:doctor
 ```
 
-检查通过后即可打包。MySQL 不存在时，核心学习区仍会走本机副本模式；需要正式同步时再配置 `AISTUDY_PUBLIC_MYSQL_*` 或 `AIstudyPublicData/config/mysql.config.json`。
+检查通过后即可打包。MySQL 不存在时，核心学习区仍会走本机副本模式；需要正式同步时再配置 `AISTUDY_PUBLIC_MYSQL_HOST`、`AISTUDY_PUBLIC_MYSQL_PORT`、`AISTUDY_PUBLIC_MYSQL_USER`、`AISTUDY_PUBLIC_MYSQL_PASSWORD`，或在 `AIstudyPublicData/config/mysql.config.json` 中写入同名连接项。公开版数据库名固定为 `aistudy_public`，表名固定为公开版表名，部署配置不得暗示可覆盖库名或表名。
 
 ## 设计依据
 

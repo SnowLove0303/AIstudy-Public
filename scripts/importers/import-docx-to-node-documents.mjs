@@ -9,7 +9,7 @@ const DEFAULT_DOCX =
   "E:/MorenAnzhuangLujing/微信/xwechat_files/wxid_ubnpnhvd699r22_2d2e/temp/RWTemp/2026-06/9e20f478899dc29eb19741386f9343c8/夸克扫描王_续表.docx";
 const DEFAULT_COURSE = "金融市场基础知识";
 const DOCUMENT_EDITOR_VERSION = "canvas-editor@0.9.135";
-const SNAPSHOT_KEEP_LIMIT = 16;
+const DOCUMENT_SNAPSHOT_KEEP_LIMIT = 80;
 const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 const MIN_ACCURACY = 0.95;
 
@@ -533,7 +533,7 @@ async function writeDocument(connection, courseId, mindMapId, segment) {
                SELECT id FROM knowledge_document_snapshots
                WHERE document_id = ?
                ORDER BY sequence_no DESC
-               LIMIT ${SNAPSHOT_KEEP_LIMIT}
+               LIMIT ${DOCUMENT_SNAPSHOT_KEEP_LIMIT}
              ) retained
            )`,
         [documentId, documentId]

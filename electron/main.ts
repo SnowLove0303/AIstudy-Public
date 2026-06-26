@@ -517,7 +517,7 @@ type RuntimeDiagnosticReportCopyResult = {
   diagnostic: RuntimeDiagnosticResult;
 };
 
-type ChromePortPlatformId = "doubao" | "chatgpt" | "bilibili" | "zhihu";
+type ChromePortPlatformId = "doubao" | "chatgpt" | "bilibili" | "zhihu" | "zhaopin" | "zhipin";
 
 type ChromePortDefinition = {
   id: ChromePortPlatformId;
@@ -723,6 +723,26 @@ const chromePortDefinitions: ChromePortDefinition[] = [
     authCookieDomains: ["zhihu.com"],
     authCookieNames: ["z_c0", "q_c1"],
     authDomKeywords: ["创作中心", "私信", "消息"]
+  },
+  {
+    id: "zhaopin",
+    name: "智联招聘",
+    port: 9233,
+    loginUrl: "https://www.zhaopin.com/",
+    hostKeyword: "zhaopin.com",
+    authCookieDomains: ["zhaopin.com"],
+    authCookieNames: ["zp_at", "zp_token", "at", "rt", "sts_sg", "sts_sid"],
+    authDomKeywords: ["我的简历"]
+  },
+  {
+    id: "zhipin",
+    name: "BOSS直聘",
+    port: 9234,
+    loginUrl: "https://www.zhipin.com/",
+    hostKeyword: "zhipin.com",
+    authCookieDomains: ["zhipin.com"],
+    authCookieNames: ["wt2", "wbg", "zp_at", "__zp_stoken__"],
+    authDomKeywords: ["我的简历"]
   }
 ];
 
@@ -6232,6 +6252,16 @@ function getNodeTitle(node: SimpleMindMapNode, fallback: string) {
   return getNonEmptyString(text, fallback).slice(0, 512);
 }
 
+function getMindMapRootTitleFromPayloadJson(payloadJson: string | null | undefined) {
+  if (!payloadJson) return "";
+  try {
+    const snapshot = normalizeMindMapSnapshot(JSON.parse(payloadJson));
+    return getNodeTitle(snapshot.root, "");
+  } catch {
+    return "";
+  }
+}
+
 function getNodeId(node: SimpleMindMapNode, pathKey: string) {
   const uid = getNonEmptyString(readNodeData(node).uid);
   if (uid && uid.length <= 96 && /^[A-Za-z0-9:_-]+$/.test(uid)) {
@@ -6527,22 +6557,22 @@ async function writeMindMapDocument(input: unknown): Promise<MindMapDocument> {
     const byteSize = Buffer.byteLength(payloadJson, "utf8");
     assertSnapshotStorageContract("Mind map", request.snapshot, byteSize, AISTUDY_CORE_CONTRACT.mindMap.maxSnapshotBytes);
 
+    const currentSnapshotMeta = existing?.currentSnapshotId
+      ? await readSnapshotMeta(connection, mindMapSnapshotTable, existing.currentSnapshotId, "mind_map_id", mapId)
+      : null;
+
     if (existing) {
       const [courseRows] = await connection.execute<CourseNameRow[]>(
         `SELECT name FROM ${courseTable} WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
         [request.courseId]
       );
+      const currentRootTitle = getMindMapRootTitleFromPayloadJson(currentSnapshotMeta?.payloadJson);
       const expectedTitles = new Set(
-        [existing.title, courseRows[0]?.name]
+        [existing.title, currentRootTitle, courseRows[0]?.name]
           .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
           .map((value) => value.trim())
       );
-      const incomingTitles = new Set(
-        [rootTitle, request.title]
-          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-          .map((value) => value.trim())
-      );
-      const matchedTitle = [...incomingTitles].some((value) => expectedTitles.has(value));
+      const matchedTitle = typeof rootTitle === "string" && expectedTitles.has(rootTitle.trim());
       if (expectedTitles.size > 0 && !matchedTitle) {
         throw createAppError(
           "APP_INVALID_ARGUMENT",
@@ -6551,9 +6581,6 @@ async function writeMindMapDocument(input: unknown): Promise<MindMapDocument> {
       }
     }
 
-    const currentSnapshotMeta = existing?.currentSnapshotId
-      ? await readSnapshotMeta(connection, mindMapSnapshotTable, existing.currentSnapshotId, "mind_map_id", mapId)
-      : null;
     const shouldReuseSnapshot = currentSnapshotMeta?.payloadHash === payloadHash;
     const snapshotId = shouldReuseSnapshot && existing?.currentSnapshotId ? existing.currentSnapshotId : createEntityId("mmsnap");
 
@@ -7415,6 +7442,103 @@ function applyMcpDocumentStyle(value: unknown, style: Record<string, unknown>): 
   return next;
 }
 
+const MCP_DOCUMENT_FORMAT_TEXT_COLOR = "#1f2937";
+const MCP_DOCUMENT_FORMAT_PRIMARY_COLOR = "#2563eb";
+
+function mcpDocumentElementText(value: unknown) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => (isRecord(item) && typeof item.value === "string" ? item.value : ""))
+    .join("");
+}
+
+function getMcpDocumentCoreText(value: unknown) {
+  return String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+}
+
+function isMcpDocumentMainHeadingText(value: unknown) {
+  return /^[一二三四五六七八九十]+[、.．]/.test(getMcpDocumentCoreText(value));
+}
+
+function isMcpDocumentNumberHeadingText(value: unknown) {
+  return /^\d+[.．]\s*\S/.test(getMcpDocumentCoreText(value));
+}
+
+function isMcpDocumentLabelText(value: unknown) {
+  const text = getMcpDocumentCoreText(value);
+  return text.length > 0 && text.length <= 40 && /[:：]$/.test(text) && !isMcpDocumentMainHeadingText(text);
+}
+
+function isMcpDocumentUrlText(value: unknown) {
+  return /^https?:\/\//i.test(getMcpDocumentCoreText(value));
+}
+
+function formatMcpDocumentElementPreservingValue(element: unknown): unknown {
+  if (!isRecord(element)) return element;
+  const next: Record<string, unknown> = { ...element };
+  delete next.rowFlex;
+  if (typeof next.value !== "string") return next;
+
+  const value = next.value;
+  const text = getMcpDocumentCoreText(value);
+  if (!text) {
+    next.size = Number.isFinite(Number(next.size)) ? Number(next.size) : 20;
+    next.bold = false;
+    next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
+    delete next.underline;
+    return next;
+  }
+  if (isMcpDocumentMainHeadingText(value)) {
+    next.size = 28;
+    next.bold = true;
+    next.color = MCP_DOCUMENT_FORMAT_PRIMARY_COLOR;
+    next.underline = true;
+    return next;
+  }
+  if (isMcpDocumentNumberHeadingText(value)) {
+    next.size = 22;
+    next.bold = true;
+    next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
+    delete next.underline;
+    return next;
+  }
+  if (isMcpDocumentLabelText(value)) {
+    next.size = 20;
+    next.bold = true;
+    next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
+    delete next.underline;
+    return next;
+  }
+  if (isMcpDocumentUrlText(value)) {
+    next.size = 20;
+    next.bold = false;
+    next.color = MCP_DOCUMENT_FORMAT_PRIMARY_COLOR;
+    next.underline = true;
+    return next;
+  }
+
+  next.size = 20;
+  next.bold = false;
+  next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
+  delete next.underline;
+  return next;
+}
+
+function formatMcpDocumentSnapshotPreservingText(snapshot: KnowledgeDocumentSnapshot): KnowledgeDocumentSnapshot {
+  const content = isRecord(snapshot.content) ? snapshot.content as Record<string, unknown> : {};
+  const originalMain = Array.isArray(content.main) ? content.main : [];
+  const formattedMain = originalMain.map(formatMcpDocumentElementPreservingValue);
+  if (formattedMain.length !== originalMain.length || mcpDocumentElementText(formattedMain) !== mcpDocumentElementText(originalMain)) {
+    throw createAppError("APP_INVALID_ARGUMENT", "MCP document format would change text.");
+  }
+  return {
+    ...snapshot,
+    schemaVersion: AISTUDY_CORE_CONTRACT.schemaVersion,
+    editor: AISTUDY_CORE_CONTRACT.editors.knowledgeDocument,
+    content: { ...content, main: formattedMain } as KnowledgeDocumentSnapshot["content"],
+    updatedAt: new Date().toISOString()
+  };
+}
+
 async function resolveMcpDocumentTarget(args: Record<string, unknown>) {
   const course = await getRequiredCourseForMcp(args.courseId);
   const mapId = normalizeMcpText(args.mindMapId, "") || (await readMindMapDocument(course.id))?.mapId || "";
@@ -7473,6 +7597,17 @@ async function readMcpNodeDocument(args: Record<string, unknown>) {
 async function writeMcpNodeDocument(args: Record<string, unknown>) {
   const target = await resolveMcpDocumentTarget(args);
   const title = normalizeMcpText(args.title, "") || "节点文档";
+  const existing = await readKnowledgeDocument({
+    courseId: target.course.id,
+    mindMapId: target.mindMapId,
+    nodeId: target.nodeId
+  });
+  if (existing?.hasContent && args.replaceExisting !== true) {
+    throw createAppError(
+      "APP_INVALID_ARGUMENT",
+      "Node document already has content. Use append_node_document for additions, format_node_document for style-only cleanup, or pass replaceExisting=true only when the user explicitly wants to overwrite the whole document."
+    );
+  }
   const snapshot = isRecord(args.snapshot)
     ? normalizeKnowledgeDocumentSnapshot(args.snapshot)
     : createMcpTextDocumentSnapshot(typeof args.text === "string" ? args.text : "");
@@ -7505,6 +7640,25 @@ async function appendMcpNodeDocument(args: Record<string, unknown>) {
     snapshot
   });
   return { course: target.course, document, text: extractMcpDocumentText(document.snapshot?.content ?? "") };
+}
+
+async function formatMcpNodeDocument(args: Record<string, unknown>) {
+  const target = await resolveMcpDocumentTarget(args);
+  const existing = await readKnowledgeDocument({
+    courseId: target.course.id,
+    mindMapId: target.mindMapId,
+    nodeId: target.nodeId
+  });
+  if (!existing?.snapshot) throw createAppError("APP_INVALID_ARGUMENT", "Node document is missing.");
+  const snapshot = formatMcpDocumentSnapshotPreservingText(existing.snapshot);
+  const document = await writeKnowledgeDocument({
+    courseId: target.course.id,
+    mindMapId: target.mindMapId,
+    nodeId: target.nodeId,
+    title: normalizeMcpText(args.title, "") || existing.title,
+    snapshot
+  });
+  return { course: target.course, document, preservedText: true };
 }
 
 async function updateMcpNodeDocumentStyle(args: Record<string, unknown>) {
@@ -7604,6 +7758,7 @@ async function runAdvancedMcpTool(toolId: string, args: Record<string, unknown>)
   if (toolId === "read_node_document") return readMcpNodeDocument(args);
   if (toolId === "write_node_document") return writeMcpNodeDocument(args);
   if (toolId === "append_node_document") return appendMcpNodeDocument(args);
+  if (toolId === "format_node_document") return formatMcpNodeDocument(args);
   if (toolId === "update_node_document_style") return updateMcpNodeDocumentStyle(args);
   throw createAppError("APP_INVALID_ARGUMENT", "Unknown MCP tool.");
 }

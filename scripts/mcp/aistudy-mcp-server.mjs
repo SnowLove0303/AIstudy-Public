@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { Socket } from "node:net";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import mysql from "mysql2/promise";
 
@@ -39,7 +40,9 @@ const chromePortDefinitions = [
   { id: "doubao", name: "豆包", port: 9224, loginUrl: "https://www.doubao.com/chat/", hostKeyword: "doubao.com/chat" },
   { id: "chatgpt", name: "ChatGPT", port: 9230, loginUrl: "https://chatgpt.com/", hostKeyword: "chatgpt.com" },
   { id: "bilibili", name: "Bilibili", port: 9231, loginUrl: "https://www.bilibili.com/", hostKeyword: "bilibili.com" },
-  { id: "zhihu", name: "知乎", port: 9232, loginUrl: "https://www.zhihu.com/", hostKeyword: "zhihu.com" }
+  { id: "zhihu", name: "知乎", port: 9232, loginUrl: "https://www.zhihu.com/", hostKeyword: "zhihu.com" },
+  { id: "zhaopin", name: "智联招聘", port: 9233, loginUrl: "https://www.zhaopin.com/", hostKeyword: "zhaopin.com" },
+  { id: "zhipin", name: "BOSS直聘", port: 9234, loginUrl: "https://www.zhipin.com/", hostKeyword: "zhipin.com" }
 ];
 
 const toolDefinitions = [
@@ -303,7 +306,7 @@ const toolDefinitions = [
       type: "object",
       additionalProperties: false,
       properties: {
-        platformId: { type: "string", enum: ["doubao", "chatgpt", "bilibili", "zhihu"] },
+        platformId: { type: "string", enum: ["doubao", "chatgpt", "bilibili", "zhihu", "zhaopin", "zhipin"] },
         url: { type: "string", maxLength: 2000 }
       },
       required: ["platformId"]
@@ -460,7 +463,7 @@ function createMcpTaskPlan(args = {}) {
   const documentLike = /文档|document|正文|内容/i.test(intent);
   const locatorLike = /路径|定位|locator|handoff|本地/i.test(intent);
   const searchLike = /搜索|查找|节点|node|关键词/i.test(intent) || Boolean(nodeQuery);
-  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|打开|browser|port/i.test(intent);
+  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|zhaopin|zhipin|打开|browser|port/i.test(intent);
   const steps = [
     { order: 1, tool: "mcp_get_started", arguments: {}, purpose: "确认 MCP 状态、全库范围和安全规则。" },
     { order: 2, tool: "read_courses", arguments: {}, purpose: "拿到真实 courseId，避免按显示名称猜参数。" }
@@ -476,7 +479,7 @@ function createMcpTaskPlan(args = {}) {
   }
   if (browserLike) {
     steps.push({ order: order++, tool: "chrome_ports_status", arguments: {}, purpose: "读取 AIstudy 端口管理信息，确认平台、端口、登录状态和当前页面。" });
-    steps.push({ order: order++, tool: "chrome_port_open_page", arguments: { platformId: "<doubao|chatgpt|bilibili|zhihu>", url: "<optionalUrl>" }, purpose: "启动或复用目标平台 Chrome，并打开页面。" });
+    steps.push({ order: order++, tool: "chrome_port_open_page", arguments: { platformId: "<doubao|chatgpt|bilibili|zhihu|zhaopin|zhipin>", url: "<optionalUrl>" }, purpose: "启动或复用目标平台 Chrome，并打开页面。" });
   } else if (locatorLike) {
     steps.push({ order: order++, tool: "resolve_course_locator", arguments: { courseId: courseId || undefined }, purpose: "生成本地 locatorPath 给其他智能体使用。" });
   } else if (documentLike) {
@@ -1710,6 +1713,21 @@ const DOCUMENT_TEMPLATE_STYLE_KEYS = new Set([
   "height"
 ]);
 
+const DOCUMENT_ELEMENT_NESTED_CONTAINER_KEYS = new Set([
+  "valueList",
+  "listWrap"
+]);
+
+const DOCUMENT_ELEMENT_PRESERVED_CONTAINER_KEYS = new Set([
+  "children",
+  "items",
+  "paragraphs",
+  "rows",
+  "cells",
+  "trList",
+  "tdList"
+]);
+
 const DOCUMENT_TEXT_CONTAINER_KEYS = new Set([
   "content",
   "main",
@@ -1722,8 +1740,11 @@ const DOCUMENT_TEXT_CONTAINER_KEYS = new Set([
   "cells",
   "trList",
   "tdList",
-  "valueList"
+  "valueList",
+  "listWrap"
 ]);
+
+const DOCUMENT_TEXT_LOSS_WARNING_THRESHOLD = 32;
 
 const DOCUMENT_TEXT_SKIP_KEYS = new Set([
   "schemaVersion",
@@ -1881,6 +1902,47 @@ function sanitizeDocumentElementValue(value) {
     .replace(/\n{3,}/g, "\n\n");
 }
 
+function sanitizeDocumentNestedContainer(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (item && typeof item === "object") return sanitizeDocumentElement(item);
+        if (typeof item === "string") return sanitizeDocumentElementValue(item);
+        return item;
+      })
+      .filter((item) => item !== null && item !== undefined);
+  }
+  if (value && typeof value === "object") {
+    const next = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "value") {
+        next.value = sanitizeDocumentElementValue(child);
+        continue;
+      }
+      if (DOCUMENT_ELEMENT_NESTED_CONTAINER_KEYS.has(key)) {
+        next[key] = sanitizeDocumentNestedContainer(child);
+        continue;
+      }
+      if (DOCUMENT_ELEMENT_PRESERVED_CONTAINER_KEYS.has(key)) {
+        next[key] = child;
+        continue;
+      }
+      if (DOCUMENT_TEMPLATE_STYLE_KEYS.has(key)) {
+        next[key] = child;
+      }
+    }
+    return next;
+  }
+  return value;
+}
+
+function hasDocumentNestedContainer(element) {
+  if (!element || typeof element !== "object") return false;
+  return [...DOCUMENT_ELEMENT_NESTED_CONTAINER_KEYS, ...DOCUMENT_ELEMENT_PRESERVED_CONTAINER_KEYS].some((key) =>
+    Object.prototype.hasOwnProperty.call(element, key)
+  );
+}
+
 function getDocumentElementSignature(element) {
   return JSON.stringify(
     Object.entries(element)
@@ -1902,9 +1964,18 @@ function sanitizeDocumentElement(element) {
   if (!element || typeof element !== "object") return null;
   const next = {};
   for (const [key, value] of Object.entries(element)) {
+    if (key === "value") continue;
+    if (DOCUMENT_ELEMENT_NESTED_CONTAINER_KEYS.has(key)) {
+      next[key] = sanitizeDocumentNestedContainer(value);
+      continue;
+    }
+    if (DOCUMENT_ELEMENT_PRESERVED_CONTAINER_KEYS.has(key)) {
+      next[key] = value;
+      continue;
+    }
     if (DOCUMENT_TEMPLATE_STYLE_KEYS.has(key)) next[key] = value;
   }
-  next.value = sanitizeDocumentElementValue(next.value);
+  next.value = sanitizeDocumentElementValue(element.value);
   if (next.rowFlex === "justify") next.rowFlex = "alignment";
   if (typeof next.size === "number") next.size = Math.max(10, Math.min(72, Math.round(next.size)));
   if (typeof next.color === "string" && !/^#[0-9a-f]{6}$/i.test(next.color) && !/^rgb\(/i.test(next.color)) delete next.color;
@@ -1918,7 +1989,8 @@ function sanitizeDocumentElementList(value) {
   for (const item of value) {
     const next = sanitizeDocumentElement(item);
     if (!next) continue;
-    const isBlank = !String(next.value || "").trim();
+    const hasNestedContainer = hasDocumentNestedContainer(next);
+    const isBlank = !extractDocumentText(next).trim();
     if (isBlank) {
       if (previousWasBlank) continue;
       if (result.length === 0) continue;
@@ -1927,6 +1999,10 @@ function sanitizeDocumentElementList(value) {
     } else {
       next.value = next.value.replace(/^\n+/, "").replace(/\n{2,}$/, "\n");
       previousWasBlank = false;
+    }
+    if (hasNestedContainer) {
+      result.push(next);
+      continue;
     }
     if (!next.value) continue;
     for (const part of splitDocumentTextRunValue(next.value)) {
@@ -1991,6 +2067,16 @@ function extractDocumentText(value) {
     }
   }
   return text;
+}
+
+function createDocumentTextIntegrity(rawText, normalizedText) {
+  const rawTextLength = rawText.length;
+  const normalizedTextLength = normalizedText.length;
+  const lostTextLength = Math.max(0, rawTextLength - normalizedTextLength);
+  const warning = lostTextLength > DOCUMENT_TEXT_LOSS_WARNING_THRESHOLD
+    ? `Document text extraction warning: normalized snapshot text is ${lostTextLength} characters shorter than raw payload text.`
+    : null;
+  return { rawTextLength, normalizedTextLength, lostTextLength, warning };
 }
 
 const DOCUMENT_FORMAT_TEXT_COLOR = "#1f2937";
@@ -2088,8 +2174,8 @@ function formatDocumentSnapshotPreservingText(snapshot) {
   const content = source.content && typeof source.content === "object" ? source.content : {};
   const originalMain = Array.isArray(content.main) ? content.main : [];
   const formattedMain = formatDocumentElementsPreservingText(originalMain);
-  const before = documentElementText(originalMain);
-  const after = documentElementText(formattedMain);
+  const before = extractDocumentText(originalMain);
+  const after = extractDocumentText(formattedMain);
   if (formattedMain.length !== originalMain.length || before !== after) {
     throw new Error("Document formatting aborted: editor values would change.");
   }
@@ -2127,14 +2213,32 @@ async function findDocument(runtime, target) {
 async function readNodeDocument(runtime, args) {
   const target = await resolveDocumentTarget(runtime, args);
   const doc = await findDocument(runtime, target);
-  if (!doc?.currentSnapshotId) return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, document: null, text: "" };
+  if (!doc?.currentSnapshotId) {
+    return {
+      course: target.course,
+      mindMapId: target.mindMapId,
+      nodeId: target.nodeId,
+      document: null,
+      text: "",
+      textRaw: "",
+      textNormalized: "",
+      rawTextLength: 0,
+      normalizedTextLength: 0,
+      lostTextLength: 0,
+      warning: null
+    };
+  }
   const [rows] = await runtime.pool.execute(
     `SELECT payload_json AS payloadJson, byte_size AS byteSize
      FROM ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")}
      WHERE id = ? AND document_id = ? LIMIT 1`,
     [doc.currentSnapshotId, doc.id]
   );
-  const snapshot = rows[0]?.payloadJson ? normalizeDocumentSnapshot(JSON.parse(rows[0].payloadJson)) : null;
+  const rawSnapshot = rows[0]?.payloadJson ? JSON.parse(rows[0].payloadJson) : null;
+  const rawText = extractDocumentText(rawSnapshot?.content || "");
+  const snapshot = rawSnapshot ? normalizeDocumentSnapshot(rawSnapshot) : null;
+  const normalizedText = extractDocumentText(snapshot?.content || "");
+  const textIntegrity = createDocumentTextIntegrity(rawText, normalizedText);
   const document = snapshot ? {
     courseId: target.course.id,
     mindMapId: target.mindMapId,
@@ -2146,7 +2250,16 @@ async function readNodeDocument(runtime, args) {
     byteSize: Number(doc.currentByteSize) || 0,
     hasContent: Boolean(Number(doc.hasContent))
   } : null;
-  return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, document, text: extractDocumentText(snapshot?.content || "") };
+  return {
+    course: target.course,
+    mindMapId: target.mindMapId,
+    nodeId: target.nodeId,
+    document,
+    text: rawText,
+    textRaw: rawText,
+    textNormalized: normalizedText,
+    ...textIntegrity
+  };
 }
 
 async function nextDocumentSequence(connection, runtime, documentId) {
@@ -2646,28 +2759,45 @@ async function closeRuntime() {
   }
 }
 
-process.stdin.setEncoding("utf8");
-let buffer = "";
-let pending = Promise.resolve();
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let newlineIndex = buffer.indexOf("\n");
-  while (newlineIndex >= 0) {
-    const line = buffer.slice(0, newlineIndex).trim();
-    buffer = buffer.slice(newlineIndex + 1);
-    newlineIndex = buffer.indexOf("\n");
-    if (!line) continue;
-    pending = pending.then(async () => {
-      try {
-        const response = await handleRequest(getRuntime, JSON.parse(line));
-        if (response) writeMessage(response);
-      } catch {
-        writeMessage({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
-      }
-    });
-  }
-});
-process.stdin.on("end", async () => {
-  await pending;
-  await closeRuntime();
-});
+function startStdioServer() {
+  process.stdin.setEncoding("utf8");
+  let buffer = "";
+  let pending = Promise.resolve();
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      newlineIndex = buffer.indexOf("\n");
+      if (!line) continue;
+      pending = pending.then(async () => {
+        try {
+          const response = await handleRequest(getRuntime, JSON.parse(line));
+          if (response) writeMessage(response);
+        } catch {
+          writeMessage({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+        }
+      });
+    }
+  });
+  process.stdin.on("end", async () => {
+    await pending;
+    await closeRuntime();
+  });
+}
+
+const isMainModule = process.argv[1]
+  ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  : false;
+
+if (isMainModule) {
+  startStdioServer();
+}
+
+export {
+  createDocumentTextIntegrity,
+  extractDocumentText,
+  normalizeDocumentSnapshot,
+  startStdioServer
+};
