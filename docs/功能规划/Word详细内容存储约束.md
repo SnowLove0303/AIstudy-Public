@@ -109,6 +109,12 @@ Word 内容快照表，只保存版本内容：
 }
 ```
 
+### 导出
+
+通道：`knowledge-documents:export-docx`
+
+输入仍然以当前节点文档快照为准，由 Electron main 生成 `.docx` 并写入用户选择的位置。导出是只读投影，不新增快照、不修改 `knowledge_documents` 当前指针，也不把导出文件路径写回 MySQL。
+
 ## 禁止事项
 
 - 禁止把 Word 内容写入 `mind_map_nodes`。
@@ -117,3 +123,4 @@ Word 内容快照表，只保存版本内容：
 - 禁止一次性读取整门课程所有 Word 详情。
 - 禁止把 Word 编辑器私有实例传出适配层。
 - 禁止在 UI 组件中拼 SQL 或直接访问 MySQL。
+- 禁止把导出的 `.docx` 文件路径当作节点文档的正式存储位置。

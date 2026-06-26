@@ -7,6 +7,7 @@
 - `../README.md`：仓库首页、启动命令、目录分布和开发边界。
 - `ARCHITECTURE.md`：架构基线、进程分层、数据所有权和不可破坏的边界。
 - `codex/CODEX_HANDOFF.md`：Codex 接手项目、验证、打包、提交和交付流程。
+- `public-selfuse-alignment.md`：公开版与本机 AI Study 自用版的功能对齐记录。
 - `architecture-knowledge/README.md`：开发侧架构知识库同步流程。
 
 ## 功能规划与契约

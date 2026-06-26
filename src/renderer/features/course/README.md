@@ -2,7 +2,7 @@
 
 ## Scope
 
-Course owns the left knowledge-base sidebar, course sections, course selection, section collapse state, and course/section drag ordering.
+Course owns the left knowledge-base sidebar, course sections, course selection, section collapse state, one-click section expand/collapse, and course/section drag ordering.
 
 Current files:
 
@@ -25,6 +25,7 @@ Current files:
 3. The action calls a dedicated IPC command through `courseApi`.
 4. Main process writes MySQL first, mirrors to local state, or records a pending operation if MySQL is unavailable.
 5. The sidebar shows the latest store and a plain-language sync state.
+6. One-click expand/collapse changes section UI state without unloading the active course workspace.
 
 ## Extension Rules
 
@@ -32,3 +33,4 @@ Current files:
 - Add a typed service method before wiring a new sidebar action.
 - Drag ordering must keep using `courses:reorder` and `course-sections:reorder`.
 - Do not add editor snapshot, asset, AI, or export data to course records.
+- Course/section deletion owns only the course index layer. Mind-map branch deletion and node-document cleanup are handled by the mind-map workspace, not by course records.

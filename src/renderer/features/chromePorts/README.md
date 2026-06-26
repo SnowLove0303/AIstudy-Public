@@ -2,18 +2,19 @@
 
 ## Scope
 
-Chrome Ports owns the UI for fixed Chrome debugging-port login and status checks used by the assistant.
+Chrome Ports owns the UI for fixed Chrome debugging-port login and status checks used by the assistant, MCP browser handoff, and external information collection flows.
 
 Current files:
 
-- `ChromePortManager.tsx`: port status cards, refresh, login-window opening, and temporary login monitoring.
+- `ChromePortManager.tsx`: port status cards, refresh, login-window opening, open-page handoff, and temporary login monitoring.
 
 ## Boundaries
 
 - Renderer UI must not launch Chrome directly.
 - Port probing, profile paths, CDP checks, and login-state detection are owned by Electron main.
 - Saved status is metadata only; cookies and secrets are not stored by this module.
-- Port failures affect AI features only and must not block course, mind-map, or document editing.
+- Port failures affect browser-assisted features only and must not block course, mind-map, or document editing.
+- Current platform ids are `doubao`, `chatgpt`, `bilibili`, `zhihu`, `zhaopin`, and `zhipin`.
 
 ## User Flow
 
@@ -22,6 +23,7 @@ Current files:
 3. User opens a provider login window.
 4. Main process starts or reuses Chrome with the provider's fixed profile and port.
 5. The UI monitors for login recognition and lets the user refresh later if needed.
+6. MCP or collection flows can request a platform page through the same fixed-port main-process API.
 
 ## Extension Rules
 

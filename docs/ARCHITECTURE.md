@@ -262,10 +262,13 @@ The public version has moved beyond the first milestone. Current shipped surface
 - Mind-map free node positioning is disabled for the default knowledge workspace. Saved `customLeft/customTop` coordinates are stripped during snapshot normalization so structured layouts do not reopen with crossing branches.
 - Mind-map runtime loads the `simple-mind-map` core package and registers only the required plugin whitelist, avoiding packaged runtime failures from the full plugin bundle.
 - Mind-map text formatting is intentionally removed from the top toolbar. It opens from a selected topic through a canvas right-click floating panel.
+- Mind-map topic bubble right-edge resizing is handled inside the simple-mind-map adapter. The stored bubble width must move the rendered shape and text together; it is not a separate text-box resize feature.
 - Mind-map branch/layout operations are controlled by configurable shortcuts in Settings.
 - Word-style node documents backed by `@hufe921/canvas-editor`, stored as node-bound snapshots through `(course_id, mind_map_id, node_id)`.
 - Document editor uses a wide page size in a vertical reading flow. Do not use `PaperDirection.HORIZONTAL` for the normal document workspace; it creates a side-by-side blank page area.
+- Current node documents can be exported to `.docx` through Electron main. Export is a projection of the active document snapshot and does not change MySQL content.
 - Importer supports `.txt`, `.md`, `.markdown`, and `.docx` into node documents.
+- Chrome fixed-port management currently covers 豆包、ChatGPT、Bilibili、知乎、智联招聘 and BOSS 直聘.
 - Settings contains runtime diagnostics, MCP control, shortcut settings, update management, and user-facing error logs.
 - AI assistant sends prompts through fixed Chrome debugging ports. Chrome discovery accepts registered executables, common install paths, and PATH launchers such as `chrome.cmd` when they point to a real `chrome.exe`; ChatGPT submission prepares the web input, sends through a trusted CDP Enter key event, then reads the reply by conversation order after the current send. Electron main uses Node `ws` with safe Buffer decoding for CDP calls.
 - MCP is a first-class module with renderer UI, Electron controller, external stdio server, HTTP remote access, Tailscale LAN exposure, read/edit tool boundaries, permissions, and call monitoring.

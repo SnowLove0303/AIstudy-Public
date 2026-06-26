@@ -6,7 +6,7 @@ Documents owns node-bound Word-like detail documents powered by `@hufe921/canvas
 
 Current files:
 
-- `KnowledgeDocumentWorkspace.tsx`: selected-node document loading, saving, toolbar, page navigation, importer entry, and inline AI panel.
+- `KnowledgeDocumentWorkspace.tsx`: selected-node document loading, saving, toolbar, page navigation, importer entry, DOCX export, and inline AI panel.
 - `canvasEditorAdapter.ts`: the only place that creates and controls the canvas editor instance.
 - `knowledgeDocumentTypes.ts`: document snapshot, status, save input, command, and format-state types.
 
@@ -17,6 +17,7 @@ Current files:
 - Renderer code must save through `window.aistudyKnowledgeDocuments` or the local snapshot fallback.
 - `knowledge_documents` stores the current pointer and metadata only; actual content belongs to snapshots.
 - Large images and attachments must not be stored as long inline base64 in document JSON.
+- DOCX export is a read-only projection of the current node document snapshot; it must not mutate the editor snapshot or document binding.
 
 ## User Flow
 
@@ -25,10 +26,12 @@ Current files:
 3. The document workspace loads the selected node document or creates an empty local snapshot.
 4. Editor changes queue a debounced save.
 5. Node switching, mode switching, and app close all flush pending document changes.
+6. User can export the current node document as `.docx`; the main process owns file dialog and file writing.
 
 ## Extension Rules
 
 - Add canvas-editor commands to the adapter handle before exposing them in UI.
 - Keep document status loading lightweight; do not load every document snapshot for a course.
 - Importers must produce a document snapshot and commit through the existing save path.
+- Exporters must read from the active document snapshot and keep generated files outside MySQL.
 - New asset handling must write to asset storage/link tables instead of embedding binaries.
