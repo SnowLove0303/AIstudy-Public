@@ -1056,6 +1056,11 @@ function normalizePositiveNumber(value: unknown, fallback = 0) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+function normalizeNumber(value: unknown, fallback = 0) {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 function normalizeBilibiliTimestamp(value: unknown) {
   const seconds = normalizePositiveNumber(value, 0);
   if (!seconds) return "";
@@ -1250,7 +1255,7 @@ async function resolveBilibiliUpByName(upName: string, cookieHeader: string): Pr
   if (!keyword) return null;
   const searchUrl = `https://api.bilibili.com/x/web-interface/search/type?search_type=bili_user&keyword=${encodeURIComponent(keyword)}`;
   const result = await fetchBilibiliJson<Record<string, unknown>>(searchUrl, "https://search.bilibili.com/", cookieHeader);
-  if (normalizePositiveNumber(result.code, -1) !== 0) return null;
+  if (normalizeNumber(result.code, -1) !== 0) return null;
   const data = readNestedRecord(result, "data");
   const users = Array.isArray(data?.result) ? data.result : [];
   const exact = users.find((item) => {
@@ -1273,7 +1278,7 @@ async function resolveBilibiliUpByName(upName: string, cookieHeader: string): Pr
 async function fetchBilibiliVideoByBvid(bvid: string, cookieHeader: string): Promise<InformationBilibiliVideo> {
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`;
   const result = await fetchBilibiliJson<Record<string, unknown>>(url, `https://www.bilibili.com/video/${bvid}/`, cookieHeader);
-  if (normalizePositiveNumber(result.code, -1) !== 0) {
+  if (normalizeNumber(result.code, -1) !== 0) {
     throw new Error(getNonEmptyString(result.message, "视频信息没有读取到"));
   }
   const data = readNestedRecord(result, "data");
@@ -1284,7 +1289,7 @@ async function fetchBilibiliVideoByBvid(bvid: string, cookieHeader: string): Pro
 async function fetchBilibiliUpVideos(up: InformationBilibiliUp, cookieHeader: string, pageSize: number) {
   const url = `https://api.bilibili.com/x/space/arc/search?mid=${up.mid}&ps=${pageSize}&pn=1&order=pubdate`;
   const result = await fetchBilibiliJson<Record<string, unknown>>(url, up.spaceUrl, cookieHeader);
-  const code = normalizePositiveNumber(result.code, -1);
+  const code = normalizeNumber(result.code, -1);
   if (code !== 0) {
     throw new Error(getNonEmptyString(result.message, "UP 视频列表暂时没有读取到"));
   }
