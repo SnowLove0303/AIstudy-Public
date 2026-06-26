@@ -22,8 +22,8 @@ import {
 import { MindMapCanvas, type MindMapCanvasHandle } from "./MindMapCanvas";
 import { MindMapTextFormatToolbar } from "./MindMapTextFormatToolbar";
 import { KnowledgeDocumentWorkspace } from "../documents/KnowledgeDocumentWorkspace";
-import { registerBeforeCloseSave } from "../../lib/saveDrain";
-import { readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
+import { drainBeforeCloseSaves, registerBeforeCloseSave } from "../../lib/saveDrain";
+import { deleteLocalSnapshot, readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
 import {
   buildMindMapOutline,
   countNodes,
@@ -66,6 +66,11 @@ export type WorkspaceNodeSelectionRequest = {
   nonce: number;
 };
 
+export type WorkspaceNodeDeletionRequest = {
+  nodeId: string;
+  nonce: number;
+};
+
 type MindMapWorkspaceProps = {
   courseId: string | null;
   courseName: string;
@@ -73,6 +78,7 @@ type MindMapWorkspaceProps = {
   externalChangeRevision?: number;
   modeChangeRequest: WorkspaceModeChangeRequest | null;
   nodeSelectionRequest: WorkspaceNodeSelectionRequest | null;
+  nodeDeletionRequest: WorkspaceNodeDeletionRequest | null;
   onEditorModeChange: (mode: WorkspaceEditorMode) => void;
   onOutlineChanged?: (outline: MindMapOutlineItem[]) => void;
   onNodeSelectedChanged?: (node: MindMapSelectedNode) => void;
@@ -136,6 +142,7 @@ declare global {
 
 const SNAPSHOT_KEY_PREFIX = "aistudy:mindmap-document:v1:";
 const LEGACY_SNAPSHOT_KEY_PREFIX = "aistudy:mindmap-snapshot:v1:";
+const DOCUMENT_STORAGE_PREFIX = "aistudy:knowledge-document:v1:";
 const SAVE_DEBOUNCE_MS = 900;
 const EXPORT_OPTIONS: Array<{ value: MindMapExportType; label: string }> = [
   { value: "png", label: "PNG" },
@@ -158,6 +165,10 @@ function getStorageKey(courseId: string) {
 
 function getLegacyStorageKey(courseId: string) {
   return `${LEGACY_SNAPSHOT_KEY_PREFIX}${courseId}`;
+}
+
+function getKnowledgeDocumentStorageKey(courseId: string, mindMapId: string, nodeId: string) {
+  return `${DOCUMENT_STORAGE_PREFIX}${courseId}:${mindMapId}:${nodeId}`;
 }
 
 function createDocument(courseId: string, courseName: string): MindMapDocument {
@@ -233,6 +244,16 @@ async function saveLocalDocument(input: PendingSave): Promise<MindMapDocument> {
   };
   await writeLocalSnapshot(getStorageKey(input.courseId), "mindmap", document);
   return document;
+}
+
+async function deleteLocalKnowledgeDocuments(courseId: string, mindMapId: string, nodeIds: string[]) {
+  await Promise.allSettled(
+    nodeIds.map(async (nodeId) => {
+      const storageKey = getKnowledgeDocumentStorageKey(courseId, mindMapId, nodeId);
+      localStorage.removeItem(storageKey);
+      await deleteLocalSnapshot(storageKey);
+    })
+  );
 }
 
 async function loadPersistedDocument(courseId: string, courseName: string) {
@@ -316,6 +337,73 @@ function findNodeInTree(root: SimpleMindMapNode | null | undefined, nodeId: stri
     if (found) return found;
   }
   return null;
+}
+
+function collectNodeIds(root: SimpleMindMapNode | null | undefined) {
+  const ids: string[] = [];
+  if (!root) return ids;
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    const nodeId = getNodeId(node);
+    if (nodeId) ids.push(nodeId);
+    const children = Array.isArray(node.children) ? node.children : [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+
+  return ids;
+}
+
+function removeNodeSubtree(
+  root: SimpleMindMapNode,
+  nodeId: string
+): { root: SimpleMindMapNode; removedNode: SimpleMindMapNode | null; fallbackNodeId: string | null } {
+  if (getNodeId(root) === nodeId) {
+    return { root, removedNode: null, fallbackNodeId: null };
+  }
+
+  const children = Array.isArray(root.children) ? root.children : [];
+  const directIndex = children.findIndex((child) => getNodeId(child) === nodeId);
+  if (directIndex >= 0) {
+    const removedNode = children[directIndex];
+    const nextChildren = children.filter((_, index) => index !== directIndex);
+    const fallbackNodeId =
+      getNodeId(children[directIndex + 1]) ??
+      getNodeId(children[directIndex - 1]) ??
+      getNodeId(root);
+
+    return {
+      root: {
+        ...root,
+        data: { ...root.data },
+        children: nextChildren
+      },
+      removedNode,
+      fallbackNodeId
+    };
+  }
+
+  for (let index = 0; index < children.length; index += 1) {
+    const result = removeNodeSubtree(children[index], nodeId);
+    if (!result.removedNode) continue;
+    const nextChildren = [...children];
+    nextChildren[index] = result.root;
+    return {
+      root: {
+        ...root,
+        data: { ...root.data },
+        children: nextChildren
+      },
+      removedNode: result.removedNode,
+      fallbackNodeId: result.fallbackNodeId
+    };
+  }
+
+  return { root, removedNode: null, fallbackNodeId: null };
 }
 
 function replaceNodeInTree(
@@ -421,6 +509,7 @@ export function MindMapWorkspace({
   externalChangeRevision = 0,
   modeChangeRequest,
   nodeSelectionRequest,
+  nodeDeletionRequest,
   onEditorModeChange,
   onOutlineChanged,
   onNodeSelectedChanged,
@@ -435,6 +524,7 @@ export function MindMapWorkspace({
   const pendingSaveRef = React.useRef<PendingSave | null>(null);
   const activeSaveRef = React.useRef<Promise<MindMapDocument | null>>(Promise.resolve(null));
   const loadSequenceRef = React.useRef(0);
+  const handledNodeDeletionNonceRef = React.useRef<number | null>(null);
   const loadedRootNodeIdRef = React.useRef<string | null>(null);
   const [snapshot, setSnapshot] = React.useState<MindMapSnapshot | null>(null);
   const snapshotRef = React.useRef<MindMapSnapshot | null>(null);
@@ -714,6 +804,70 @@ export function MindMapWorkspace({
     return flushPendingSave(false);
   }, [courseId, courseName, flushPendingSave, focusedNodeId, mapId]);
 
+  const deleteMindMapBranch = React.useCallback(
+    async (nodeId: string) => {
+      if (!courseId || !nodeId || !canUseEditorRef.current) return;
+      setTopicPanel(null);
+      setTextFormatMenu(null);
+      await drainBeforeCloseSaves();
+
+      const currentCanvasSnapshot = canvasRef.current?.getSnapshot();
+      const currentMasterSnapshot = currentCanvasSnapshot
+        ? mergeFocusedSnapshot(snapshotRef.current, focusedNodeId, currentCanvasSnapshot)
+        : snapshotRef.current;
+      if (!currentMasterSnapshot) return;
+
+      const rootNodeId = getNodeId(currentMasterSnapshot.root);
+      if (!rootNodeId || nodeId === rootNodeId) {
+        setError("根主题不能删除");
+        return;
+      }
+
+      const result = removeNodeSubtree(currentMasterSnapshot.root, nodeId);
+      if (!result.removedNode) return;
+
+      const removedNodeIds = collectNodeIds(result.removedNode);
+      const fallbackNodeId = result.fallbackNodeId ?? rootNodeId;
+      const nextFocusedNodeId = fallbackNodeId === rootNodeId ? null : fallbackNodeId;
+      const nextSnapshot: MindMapSnapshot = {
+        ...currentMasterSnapshot,
+        root: result.root,
+        view: undefined,
+        updatedAt: new Date().toISOString()
+      };
+      const nextMapId = mapId ?? createMindMapId();
+      if (!mapId) {
+        setMapId(nextMapId);
+      }
+
+      commitSnapshotForUi(nextSnapshot, true);
+      setFocusedNodeId(nextFocusedNodeId);
+
+      const nextOutline = buildMindMapOutline(nextSnapshot.root);
+      const fallbackItem = findOutlineItem(nextOutline, fallbackNodeId);
+      publishSelectedNode({
+        id: fallbackNodeId,
+        title: fallbackItem?.title ?? ""
+      });
+
+      const nextCanvasSnapshot = createFocusedSnapshot(nextSnapshot, nextFocusedNodeId);
+      canvasRef.current?.setSnapshot(nextCanvasSnapshot);
+      canvasRef.current?.selectNode(fallbackNodeId);
+
+      pendingSaveRef.current = {
+        courseId,
+        mapId: nextMapId,
+        title: courseName,
+        snapshot: nextSnapshot
+      };
+      const savedDocument = await flushPendingSave(false);
+      if (savedDocument?.mapId) {
+        await deleteLocalKnowledgeDocuments(courseId, savedDocument.mapId, removedNodeIds);
+      }
+    },
+    [commitSnapshotForUi, courseId, courseName, flushPendingSave, focusedNodeId, mapId, publishSelectedNode]
+  );
+
   const exportMap = React.useCallback(async () => {
     if (!courseId || !isReady || isLoading) return;
     setIsExporting(true);
@@ -822,6 +976,14 @@ export function MindMapWorkspace({
     publishSelectedNode(requestedNode);
     setFocusedNodeId(nodeId === rootNodeId ? null : nodeId);
   }, [nodeSelectionRequest, outline, publishSelectedNode]);
+
+  React.useEffect(() => {
+    const nodeId = nodeDeletionRequest?.nodeId;
+    const nonce = nodeDeletionRequest?.nonce ?? null;
+    if (!nodeId || nonce === null || handledNodeDeletionNonceRef.current === nonce) return;
+    handledNodeDeletionNonceRef.current = nonce;
+    void deleteMindMapBranch(nodeId);
+  }, [deleteMindMapBranch, nodeDeletionRequest]);
 
   const applyTextFormat = React.useCallback(
     (patch: MindMapTextFormatPatch) => {
@@ -999,7 +1161,7 @@ export function MindMapWorkspace({
         <button type="button" title={topicElements.expanded ? "折叠主题" : "展开主题"} onClick={() => canvasRef.current?.exec("toggle-expand")} disabled={topicElementDisabled}>
           <Rows3 size={15} />
         </button>
-        <button type="button" title="删除选中主题" onClick={() => canvasRef.current?.exec("delete-node")} disabled={!canUseEditor}>
+        <button type="button" title="删除选中主题" onClick={() => selectedNode.id && void deleteMindMapBranch(selectedNode.id)} disabled={!canUseEditor || !selectedNode.id}>
           <Trash2 size={15} />
         </button>
         <span className="mindmap-toolbar-separator" />

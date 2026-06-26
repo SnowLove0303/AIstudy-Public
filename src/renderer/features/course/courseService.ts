@@ -25,6 +25,7 @@ declare global {
       create: (input: { name: string }) => Promise<CourseStore>;
       rename: (input: { id: string; name: string }) => Promise<CourseStore>;
       toggle: (input: { id: string; collapsed: boolean }) => Promise<CourseStore>;
+      toggleAll: (input: { collapsed: boolean }) => Promise<CourseStore>;
       reorder: (input: CourseSectionReorderInput) => Promise<CourseStore>;
       delete: (sectionId: string) => Promise<CourseStore>;
     };
@@ -57,6 +58,7 @@ export const courseApi = {
   createSection: (name: string) => requireCourseSectionApi().create({ name }),
   renameSection: (id: string, name: string) => requireCourseSectionApi().rename({ id, name }),
   toggleSection: (id: string, collapsed: boolean) => requireCourseSectionApi().toggle({ id, collapsed }),
+  toggleAllSections: (collapsed: boolean) => requireCourseSectionApi().toggleAll({ collapsed }),
   reorderSection: (id: string, beforeSectionId: string | null) => requireCourseSectionApi().reorder({ id, beforeSectionId }),
   deleteSection: (sectionId: string) => requireCourseSectionApi().delete(sectionId)
 };

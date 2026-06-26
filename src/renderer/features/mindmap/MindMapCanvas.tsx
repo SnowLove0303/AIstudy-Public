@@ -21,6 +21,7 @@ import type {
 export type MindMapCanvasHandle = {
   exec: (command: MindMapCommand, payload?: MindMapCommandPayload) => void;
   selectNode: (nodeId: string) => MindMapSelectedNode | null;
+  setSnapshot: (snapshot: MindMapSnapshot) => void;
   setLayout: (layout: MindMapLayoutType) => MindMapSnapshot | null;
   applyTextFormat: (patch: MindMapTextFormatPatch) => MindMapSelectedNode | null;
   exportFile: (type: MindMapExportType, fileName: string) => Promise<void>;
@@ -83,6 +84,7 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
     () => ({
       exec: (command, payload) => editorRef.current?.exec(command, payload),
       selectNode: (nodeId) => editorRef.current?.selectNode(nodeId) ?? null,
+      setSnapshot: (nextSnapshot) => editorRef.current?.setSnapshot(nextSnapshot),
       setLayout: (layout) => editorRef.current?.setLayout(layout) ?? null,
       applyTextFormat: (patch) => editorRef.current?.applyTextFormat(patch) ?? null,
       exportFile: async (type, fileName) => {

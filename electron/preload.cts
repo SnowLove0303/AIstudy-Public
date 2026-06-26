@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("aistudyCourseSections", {
   create: (input: unknown) => invokeApp("course-sections:create", input),
   rename: (input: unknown) => invokeApp("course-sections:rename", input),
   toggle: (input: unknown) => invokeApp("course-sections:toggle", input),
+  toggleAll: (input: unknown) => invokeApp("course-sections:toggle-all", input),
   reorder: (input: unknown) => invokeApp("course-sections:reorder", input),
   delete: (sectionId: unknown) => invokeApp("course-sections:delete", sectionId)
 });
@@ -67,7 +68,8 @@ contextBridge.exposeInMainWorld("aistudyMindMaps", {
 contextBridge.exposeInMainWorld("aistudyKnowledgeDocuments", {
   load: (request: unknown) => invokeApp("knowledge-documents:load", request),
   listStatuses: (request: unknown) => invokeApp("knowledge-documents:list-statuses", request),
-  save: (request: unknown) => invokeApp("knowledge-documents:save", request)
+  save: (request: unknown) => invokeApp("knowledge-documents:save", request),
+  exportDocx: (request: unknown) => invokeApp("knowledge-documents:export-docx", request)
 });
 
 contextBridge.exposeInMainWorld("aistudyMcp", {

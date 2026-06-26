@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, ChevronRight, Copy, Edit3, FolderPlus, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDown, ChevronsRight, Copy, Edit3, FolderPlus, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import type { Course, CourseSection, CourseSyncStatus } from "./courseTypes";
 import { normalizeSectionName, sortByOrderThenUpdated } from "./courseTypes";
 
@@ -25,6 +25,7 @@ type CourseSidebarProps = {
   onCreateSection: (name: string) => Promise<void>;
   onRenameSection: (sectionId: string, name: string) => Promise<void>;
   onToggleSection: (sectionId: string, collapsed: boolean) => void;
+  onToggleAllSections: (collapsed: boolean) => void;
   onDeleteSection: (section: CourseSection) => void;
   onMoveCourse: (course: Course, sectionId: string | null) => void;
   onReorderCourse: (courseId: string, sectionId: string | null, beforeCourseId: string | null) => void;
@@ -84,6 +85,7 @@ export function CourseSidebar({
   onCreateSection,
   onRenameSection,
   onToggleSection,
+  onToggleAllSections,
   onDeleteSection,
   onMoveCourse,
   onReorderCourse,
@@ -319,6 +321,13 @@ export function CourseSidebar({
     }
   }
 
+  function toggleAllSections(collapsed: boolean) {
+    closeCourseMoveMenu();
+    closeCourseContextMenu();
+    setIsUnsectionedCollapsed(collapsed);
+    onToggleAllSections(collapsed);
+  }
+
   function startDragCourse(event: React.DragEvent<HTMLElement>, courseId: string) {
     if (!canReorder) {
       event.preventDefault();
@@ -453,6 +462,17 @@ export function CourseSidebar({
       </label>
 
       {renderSyncStatus()}
+
+      <div className="course-section-toolbar" aria-label="分区视图">
+        <button type="button" onClick={() => toggleAllSections(false)} disabled={sections.length === 0 && isUnsectionedCollapsed === false}>
+          <ChevronsDown size={14} />
+          <span>展开</span>
+        </button>
+        <button type="button" onClick={() => toggleAllSections(true)} disabled={sections.length === 0 && isUnsectionedCollapsed === true}>
+          <ChevronsRight size={14} />
+          <span>收叠</span>
+        </button>
+      </div>
 
       {courses.length === 0 && editingSectionId !== NEW_SECTION_ID ? (
         <div className="pane-empty-state">

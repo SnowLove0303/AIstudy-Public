@@ -44,6 +44,7 @@ import {
   MindMapWorkspace,
   type WorkspaceEditorMode,
   type WorkspaceModeChangeRequest,
+  type WorkspaceNodeDeletionRequest,
   type WorkspaceNodeSelectionRequest
 } from "./features/mindmap/MindMapWorkspace";
 import type { MindMapOutlineItem, MindMapSelectedNode } from "./features/mindmap/mindMapTypes";
@@ -869,6 +870,7 @@ function App() {
   const [workspaceEditorMode, setWorkspaceEditorMode] = React.useState<WorkspaceEditorMode>("mindmap");
   const [modeChangeRequest, setModeChangeRequest] = React.useState<WorkspaceModeChangeRequest | null>(null);
   const [nodeSelectionRequest, setNodeSelectionRequest] = React.useState<WorkspaceNodeSelectionRequest | null>(null);
+  const [nodeDeletionRequest, setNodeDeletionRequest] = React.useState<WorkspaceNodeDeletionRequest | null>(null);
   const [activeSection, setActiveSection] = React.useState<AppSection>("knowledge");
   const [isLibraryPaneCollapsed, setIsLibraryPaneCollapsed] = React.useState(false);
   const [isCatalogPaneCollapsed, setIsCatalogPaneCollapsed] = React.useState(false);
@@ -992,6 +994,7 @@ function App() {
     setWorkspaceEditorMode("mindmap");
     setModeChangeRequest(null);
     setNodeSelectionRequest(null);
+    setNodeDeletionRequest(null);
   }, [activeCourseId]);
 
   const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
@@ -1031,6 +1034,10 @@ function App() {
 
   function toggleCourseSection(sectionId: string, collapsed: boolean) {
     void runCourseStoreCommand(() => courseApi.toggleSection(sectionId, collapsed));
+  }
+
+  function toggleAllCourseSections(collapsed: boolean) {
+    void runCourseStoreCommand(() => courseApi.toggleAllSections(collapsed));
   }
 
   function deleteCourseSection(section: CourseSection) {
@@ -1092,6 +1099,13 @@ function App() {
   function selectCatalogNode(item: MindMapOutlineItem) {
     if (!item.nodeId) return;
     setNodeSelectionRequest({ nodeId: item.nodeId, nonce: Date.now() });
+  }
+
+  function deleteCatalogNode(item: MindMapOutlineItem) {
+    if (!item.nodeId || !item.parentNodeId) return;
+    const confirmed = window.confirm(`确定删除“${item.title}”及其分支和文档内容吗？`);
+    if (!confirmed) return;
+    setNodeDeletionRequest({ nodeId: item.nodeId, nonce: Date.now() });
   }
 
   return (
@@ -1181,6 +1195,7 @@ function App() {
           onCreateSection={createCourseSection}
           onRenameSection={renameCourseSection}
           onToggleSection={toggleCourseSection}
+          onToggleAllSections={toggleAllCourseSections}
           onDeleteSection={deleteCourseSection}
           onMoveCourse={moveCourseToSection}
           onReorderCourse={reorderCourse}
@@ -1222,6 +1237,7 @@ function App() {
               externalChangeRevision={externalContentRevision}
               modeChangeRequest={modeChangeRequest}
               nodeSelectionRequest={nodeSelectionRequest}
+              nodeDeletionRequest={nodeDeletionRequest}
               onEditorModeChange={setWorkspaceEditorMode}
               onOutlineChanged={setMindMapOutline}
               onNodeSelectedChanged={setSelectedMindMapNode}
@@ -1269,6 +1285,7 @@ function App() {
                 selectedNodeId={selectedMindMapNode.id}
                 resetKey={activeCourseId ?? ""}
                 onNodeSelect={selectCatalogNode}
+                onNodeDelete={deleteCatalogNode}
               />
             </nav>
           ) : (

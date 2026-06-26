@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Trash2 } from "lucide-react";
 import type { MindMapOutlineItem } from "./mindMapTypes";
 
 type MindMapCatalogProps = {
@@ -7,6 +7,13 @@ type MindMapCatalogProps = {
   selectedNodeId: string | null;
   resetKey: string;
   onNodeSelect?: (item: MindMapOutlineItem) => void;
+  onNodeDelete?: (item: MindMapOutlineItem) => void;
+};
+
+type CatalogContextMenuState = {
+  item: MindMapOutlineItem;
+  x: number;
+  y: number;
 };
 
 type CatalogRenderOptions = {
@@ -14,6 +21,7 @@ type CatalogRenderOptions = {
   collapsedPaths: ReadonlySet<string>;
   onToggle: (path: string) => void;
   onNodeSelect?: (item: MindMapOutlineItem) => void;
+  onNodeContextMenu?: (event: React.MouseEvent<HTMLDivElement>, item: MindMapOutlineItem) => void;
 };
 
 function collectCollapsiblePaths(items: MindMapOutlineItem[], paths = new Set<string>()) {
@@ -57,6 +65,7 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
               role="treeitem"
               tabIndex={0}
               onClick={() => options.onNodeSelect?.(item)}
+              onContextMenu={(event) => options.onNodeContextMenu?.(event, item)}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
@@ -91,15 +100,44 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
   );
 }
 
-export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect }: MindMapCatalogProps) {
+export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect, onNodeDelete }: MindMapCatalogProps) {
   const [collapsedPaths, setCollapsedPaths] = React.useState<Set<string>>(() => collectDefaultCollapsedPaths(items));
+  const [contextMenu, setContextMenu] = React.useState<CatalogContextMenuState | null>(null);
   const knownCollapsiblePathsRef = React.useRef<Set<string>>(collectCollapsiblePaths(items));
 
   React.useEffect(() => {
     const validPaths = collectCollapsiblePaths(items);
     knownCollapsiblePathsRef.current = validPaths;
     setCollapsedPaths(collectDefaultCollapsedPaths(items));
+    setContextMenu(null);
   }, [resetKey]);
+
+  React.useEffect(() => {
+    if (!contextMenu) return undefined;
+
+    const closeMenu = () => setContextMenu(null);
+    const closeMenuFromPointer = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest(".catalog-context-menu")) return;
+      closeMenu();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+
+    document.addEventListener("mousedown", closeMenuFromPointer, true);
+    document.addEventListener("contextmenu", closeMenu, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+
+    return () => {
+      document.removeEventListener("mousedown", closeMenuFromPointer, true);
+      document.removeEventListener("contextmenu", closeMenu, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [contextMenu]);
 
   React.useEffect(() => {
     const validPaths = collectCollapsiblePaths(items);
@@ -134,10 +172,52 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect }
     });
   }, []);
 
-  return renderCatalogItems(items, {
-    selectedNodeId,
-    collapsedPaths,
-    onToggle: togglePath,
-    onNodeSelect
-  });
+  const openContextMenu = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>, item: MindMapOutlineItem) => {
+      if (!onNodeDelete || !item.nodeId || !item.parentNodeId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onNodeSelect?.(item);
+      const width = 178;
+      const height = 42;
+      setContextMenu({
+        item,
+        x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+        y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8))
+      });
+    },
+    [onNodeDelete, onNodeSelect]
+  );
+
+  const runDelete = React.useCallback(() => {
+    if (!contextMenu) return;
+    const item = contextMenu.item;
+    setContextMenu(null);
+    onNodeDelete?.(item);
+  }, [contextMenu, onNodeDelete]);
+
+  return (
+    <>
+      {renderCatalogItems(items, {
+        selectedNodeId,
+        collapsedPaths,
+        onToggle: togglePath,
+        onNodeSelect,
+        onNodeContextMenu: openContextMenu
+      })}
+      {contextMenu ? (
+        <div
+          className="catalog-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button type="button" onClick={runDelete}>
+            <Trash2 size={14} />
+            <span>删除</span>
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
 }

@@ -1,0 +1,13 @@
+{
+  "name": "quill",
+  "version": "2.0.4",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./dist/quill.snow.css": "./dist/quill.snow.css",
+    "./package.json": "./package.json"
+  }
+}

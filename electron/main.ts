@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { AISTUDY_CORE_CONTRACT } from "./coreContract.js";
 import { classifyAppError, createAppError, getAppErrorDefinition } from "./appErrors.js";
+import { exportKnowledgeDocumentDocx } from "./documentExport.js";
 import { createMcpController } from "./mcp/controller.js";
 import { createMcpRemoteAccessController } from "./mcp/remoteAccess.js";
 
@@ -140,6 +141,10 @@ type CourseSectionToggleRequest = {
   collapsed?: unknown;
 };
 
+type CourseSectionToggleAllRequest = {
+  collapsed?: unknown;
+};
+
 type PendingCourseOperation = {
   id: string;
   action:
@@ -152,6 +157,7 @@ type PendingCourseOperation = {
     | "section:rename"
     | "section:reorder"
     | "section:toggle"
+    | "section:toggle-all"
     | "section:delete";
   payload: Record<string, unknown>;
   createdAt: string;
@@ -169,6 +175,7 @@ const PENDING_COURSE_OPERATION_ACTIONS = new Set<PendingCourseOperation["action"
   "section:rename",
   "section:reorder",
   "section:toggle",
+  "section:toggle-all",
   "section:delete"
 ]);
 
@@ -5412,6 +5419,20 @@ async function applyPendingCourseOperation(connection: PoolConnection, runtime: 
       );
       return;
     }
+    case "section:toggle-all": {
+      const collapsed = readPendingPayloadBoolean(operation, "collapsed");
+      const updatedAt = readPendingPayloadString(operation, "updatedAt");
+      for (const sectionIdValue of readPendingPayloadRecordArray(operation, "sections")) {
+        const sectionId = normalizeId(sectionIdValue.id, "Course section id");
+        await connection.execute(
+          `UPDATE ${runtime.courseSectionTable}
+           SET collapsed = ?, updated_at = ?
+           WHERE id = ? AND deleted_at IS NULL`,
+          [collapsed ? 1 : 0, toMysqlDate(updatedAt), sectionId]
+        );
+      }
+      return;
+    }
     case "section:delete": {
       const sectionId = normalizeId(operation.payload.sectionId, "Course section id");
       const updatedAt = readPendingPayloadString(operation, "updatedAt");
@@ -5642,6 +5663,55 @@ async function toggleCourseSectionCommand(input: CourseSectionToggleRequest): Pr
       },
       "section:toggle",
       { sectionId, collapsed, updatedAt }
+    );
+  }
+}
+
+async function toggleAllCourseSectionsCommand(input: CourseSectionToggleAllRequest): Promise<CourseStore> {
+  const current = await readCourseStore();
+  const collapsed = input?.collapsed === true;
+  if (current.sections.length === 0) return current;
+
+  const changedSections = current.sections.filter((section) => section.collapsed !== collapsed);
+  if (changedSections.length === 0) return current;
+
+  const updatedAt = new Date().toISOString();
+  const nextStore = {
+    ...current,
+    sections: current.sections.map((section) =>
+      section.collapsed === collapsed ? section : { ...section, collapsed, updatedAt }
+    )
+  };
+
+  try {
+    const { pool, courseSectionTable } = await getMysqlRuntime();
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute(
+        `UPDATE ${courseSectionTable}
+         SET collapsed = ?, updated_at = ?
+         WHERE deleted_at IS NULL AND collapsed <> ?`,
+        [collapsed ? 1 : 0, toMysqlDate(updatedAt), collapsed ? 1 : 0]
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+    return await readCourseStore();
+  } catch (error) {
+    console.warn("Course sections toggle all fell back to local store.", error);
+    return await writeLocalCourseStoreWithPending(
+      nextStore,
+      "section:toggle-all",
+      {
+        collapsed,
+        updatedAt,
+        sections: changedSections.map((section) => ({ id: section.id }))
+      }
     );
   }
 }
@@ -6536,7 +6606,7 @@ async function softDeleteKnowledgeDocumentsForMissingNodes(
 
 async function writeMindMapDocument(input: unknown): Promise<MindMapDocument> {
   const request = normalizeMindMapSaveRequest(input);
-  const { pool, courseTable, mindMapTable, mindMapSnapshotTable, mindMapNodeTable } = await getMysqlRuntime();
+  const { pool, courseTable, mindMapTable, mindMapSnapshotTable, mindMapNodeTable, knowledgeDocumentTable } = await getMysqlRuntime();
   const connection = await pool.getConnection();
   const now = new Date();
   const updatedAt = now.toISOString();
@@ -6622,6 +6692,14 @@ async function writeMindMapDocument(input: unknown): Promise<MindMapDocument> {
     }
 
     await upsertMindMapNodes(connection, mindMapNodeTable, request.courseId, mapId, nodes, now);
+    await softDeleteKnowledgeDocumentsForMissingNodes(
+      connection,
+      knowledgeDocumentTable,
+      request.courseId,
+      mapId,
+      nodes.map((node) => node.nodeId),
+      now
+    );
     await connection.commit();
 
     return {
@@ -8040,6 +8118,8 @@ ipcMain.handle("course-sections:rename", withUserFacingError("course-sections:re
 
 ipcMain.handle("course-sections:toggle", withUserFacingError("course-sections:toggle", "分区折叠状态没有保存，请稍后再试。", (_event, input) => toggleCourseSectionCommand(input as CourseSectionToggleRequest)));
 
+ipcMain.handle("course-sections:toggle-all", withUserFacingError("course-sections:toggle-all", "分区折叠状态没有保存，请稍后再试。", (_event, input) => toggleAllCourseSectionsCommand(input as CourseSectionToggleAllRequest)));
+
 ipcMain.handle("course-sections:reorder", withUserFacingError("course-sections:reorder", "分区排序没有完成，请稍后再试。", (_event, input) => reorderCourseSectionCommand(input as CourseSectionReorderRequest)));
 
 ipcMain.handle("course-sections:delete", withUserFacingError("course-sections:delete", "分区删除没有完成，请稍后再试。", (_event, sectionId) => deleteCourseSectionCommand(sectionId)));
@@ -8053,6 +8133,11 @@ ipcMain.handle("knowledge-documents:load", withUserFacingError("knowledge-docume
 ipcMain.handle("knowledge-documents:list-statuses", withUserFacingError("knowledge-documents:list-statuses", "文档状态读取没有完成，请稍后再试。", (_event, request) => listKnowledgeDocumentStatuses(request)));
 
 ipcMain.handle("knowledge-documents:save", withUserFacingError("knowledge-documents:save", "文档保存没有完成，请稍后再试。", (_event, request) => writeKnowledgeDocument(request)));
+
+ipcMain.handle("knowledge-documents:export-docx", withUserFacingError("knowledge-documents:export-docx", "Word 文档导出没有完成，请稍后再试。", (event, request) => {
+  const invokeEvent = event as IpcMainInvokeEvent;
+  return exportKnowledgeDocumentDocx(BrowserWindow.fromWebContents(invokeEvent.sender), request);
+}));
 
 ipcMain.handle("mcp:state", withUserFacingError("mcp:state", "MCP 状态暂时无法读取。", () => mcpController.getState()));
 

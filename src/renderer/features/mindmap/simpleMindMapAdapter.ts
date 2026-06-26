@@ -43,6 +43,10 @@ const EMPTY_MIND_MAP_VIEWPORT_STATE: MindMapViewportState = {
 const DEFAULT_NODE_TEXT_WRAP_WIDTH = 300;
 const MIN_NODE_TEXT_WRAP_WIDTH = 160;
 const MAX_NODE_TEXT_WRAP_WIDTH = 560;
+const MIN_NODE_BUBBLE_WIDTH = 72;
+const MIN_NODE_BUBBLE_HEIGHT = 30;
+const MAX_NODE_BUBBLE_WIDTH = 960;
+const MAX_NODE_BUBBLE_HEIGHT = 520;
 const INITIAL_VIEW_SCALE = 1;
 
 let xmindExportPluginPromise: Promise<SimpleMindMapPlugin> | null = null;
@@ -137,7 +141,7 @@ async function ensureXMindExportPlugin(editor: any) {
 function toEditorData(snapshot: MindMapSnapshot) {
   const layout = normalizeLayout(snapshot.layout);
   return {
-    root: applyLayoutSafeTextWidths(normalizeMindMapTree(snapshot.root)),
+    root: applyLayoutSafeNodeDimensions(normalizeMindMapTree(snapshot.root)),
     layout,
     theme: {
       template: snapshot.theme?.template ?? "default",
@@ -162,7 +166,7 @@ function toSnapshot(editor: any): MindMapSnapshot {
     schemaVersion: AISTUDY_CORE_CONTRACT.schemaVersion,
     editor: AISTUDY_CORE_CONTRACT.editors.mindMap,
     editorVersion: MIND_MAP_EDITOR_VERSION,
-    root: normalizeMindMapTree(root),
+    root: applyLayoutSafeNodeDimensions(normalizeMindMapTree(root)),
     layout,
     theme: {
       template: data.theme?.template ?? "default",
@@ -495,7 +499,28 @@ function normalizeTextWrapWidth(value: unknown) {
   return Math.min(MAX_NODE_TEXT_WRAP_WIDTH, Math.max(MIN_NODE_TEXT_WRAP_WIDTH, Math.round(width)));
 }
 
-function applyLayoutSafeTextWidths(node: MindMapSnapshot["root"]): MindMapSnapshot["root"] {
+function normalizeBubbleDimension(value: unknown, min: number, max: number) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return undefined;
+  return Math.min(max, Math.max(min, Math.round(size)));
+}
+
+function normalizeBubbleWidth(value: unknown) {
+  return normalizeBubbleDimension(value, MIN_NODE_BUBBLE_WIDTH, MAX_NODE_BUBBLE_WIDTH);
+}
+
+function normalizeBubbleHeight(value: unknown) {
+  return normalizeBubbleDimension(value, MIN_NODE_BUBBLE_HEIGHT, MAX_NODE_BUBBLE_HEIGHT);
+}
+
+function readNodeBubbleSize(data: Record<string, unknown>) {
+  return {
+    width: normalizeBubbleWidth(data.customBubbleWidth),
+    height: normalizeBubbleHeight(data.customBubbleHeight)
+  };
+}
+
+function applyLayoutSafeNodeDimensions(node: MindMapSnapshot["root"]): MindMapSnapshot["root"] {
   const data = { ...node.data } as Record<string, unknown>;
   const customTextWidth = normalizeTextWrapWidth(data.customTextWidth);
   if (customTextWidth === undefined) {
@@ -503,15 +528,36 @@ function applyLayoutSafeTextWidths(node: MindMapSnapshot["root"]): MindMapSnapsh
   } else {
     data.customTextWidth = customTextWidth;
   }
+  const customBubbleWidth = normalizeBubbleWidth(data.customBubbleWidth);
+  if (customBubbleWidth === undefined) {
+    delete data.customBubbleWidth;
+  } else {
+    data.customBubbleWidth = customBubbleWidth;
+  }
+  const customBubbleHeight = normalizeBubbleHeight(data.customBubbleHeight);
+  if (customBubbleHeight === undefined) {
+    delete data.customBubbleHeight;
+  } else {
+    data.customBubbleHeight = customBubbleHeight;
+  }
 
   return {
     ...node,
     data: data as MindMapSnapshot["root"]["data"],
-    children: Array.isArray(node.children) ? node.children.map(applyLayoutSafeTextWidths) : []
+    children: Array.isArray(node.children) ? node.children.map(applyLayoutSafeNodeDimensions) : []
   };
 }
 
-function applyNodeTextWrapWidth(editor: any, node: any, width: number | undefined) {
+function treeHasCustomNodeLayout(node: MindMapSnapshot["root"] | null | undefined): boolean {
+  if (!node) return false;
+  const data = node.data as Record<string, unknown> | undefined;
+  if (normalizeTextWrapWidth(data?.customTextWidth) !== undefined) return true;
+  if (normalizeBubbleWidth(data?.customBubbleWidth) !== undefined) return true;
+  if (normalizeBubbleHeight(data?.customBubbleHeight) !== undefined) return true;
+  return Array.isArray(node.children) && node.children.some(treeHasCustomNodeLayout);
+}
+
+function applyNodeTextWrapWidth(editor: any, node: any, width: number | undefined, options: { renderTree?: boolean } = {}) {
   if (!node) return;
   if (typeof node.setData === "function") {
     node.setData({ customTextWidth: width });
@@ -528,7 +574,43 @@ function applyNodeTextWrapWidth(editor: any, node: any, width: number | undefine
   if (typeof node.reRender === "function") {
     node.reRender(["text"], { resetWidth: true });
   }
-  if (typeof editor.render === "function") {
+  if (options.renderTree !== false && typeof editor.render === "function") {
+    editor.render();
+  }
+}
+
+function applyNodeBubbleWidth(
+  editor: any,
+  node: any,
+  width: number | undefined,
+  options: { renderTree?: boolean; persist?: boolean } = {}
+) {
+  if (!node) return;
+  const naturalWidth = normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width);
+  const normalizedWidth = normalizeBubbleWidth(width);
+  const nextWidth =
+    normalizedWidth !== undefined && naturalWidth !== undefined && normalizedWidth <= naturalWidth + 1
+      ? undefined
+      : normalizedWidth;
+
+  const data = readNodeData(node);
+  if (nextWidth === undefined) {
+    delete data.customBubbleWidth;
+  } else {
+    data.customBubbleWidth = nextWidth;
+  }
+
+  node.customBubbleWidth = nextWidth;
+
+  if (options.persist !== false && typeof node.setData === "function") {
+    node.setData({ customBubbleWidth: nextWidth });
+  }
+  if (typeof node.reRender === "function") {
+    node.reRender([], { resetWidth: false });
+  } else if (typeof node.layout === "function") {
+    node.layout();
+  }
+  if (options.renderTree !== false && typeof editor.render === "function") {
     editor.render();
   }
 }
@@ -667,6 +749,84 @@ function installDotGrid(editor: any) {
   svg.insertBefore(background, defs.nextSibling);
 }
 
+function installPerNodeTextWrapWidthSupport(editor: any) {
+  const root = editor.renderer?.root;
+  const proto = root && typeof root === "object" ? Object.getPrototypeOf(root) : null;
+  if (!proto || proto.__aistudyPerNodeTextWrapWidth) return;
+  const originalCreateTextNode = proto.createTextNode;
+  if (typeof originalCreateTextNode !== "function") return;
+
+  Object.defineProperty(proto, "__aistudyPerNodeTextWrapWidth", {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false
+  });
+  proto.createTextNode = function createTextNodeWithCustomWrapWidth(this: any, specifyText?: unknown) {
+    const customTextWidth = normalizeTextWrapWidth(this?.getData?.("customTextWidth"));
+    if (customTextWidth === undefined || !this?.mindMap?.opt) {
+      return originalCreateTextNode.call(this, specifyText);
+    }
+
+    const previousWidth = this.mindMap.opt.textAutoWrapWidth;
+    this.mindMap.opt.textAutoWrapWidth = customTextWidth;
+    try {
+      return originalCreateTextNode.call(this, specifyText);
+    } finally {
+      this.mindMap.opt.textAutoWrapWidth = previousWidth;
+    }
+  };
+}
+
+function installBubbleSizeSupport(editor: any) {
+  const root = editor.renderer?.root;
+  const proto = root && typeof root === "object" ? Object.getPrototypeOf(root) : null;
+  if (!proto || proto.__aistudyBubbleSizeSupport) return;
+  const originalGetNodeRect = proto.getNodeRect;
+  if (typeof originalGetNodeRect !== "function") return;
+
+  Object.defineProperty(proto, "__aistudyBubbleSizeSupport", {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false
+  });
+  proto.getNodeRect = function getNodeRectWithBubbleSize(this: any) {
+    const rect = originalGetNodeRect.call(this);
+    const data = readNodeData(this);
+    const bubbleSize = readNodeBubbleSize(data);
+    const runtimeBubbleWidth = bubbleSize.width ?? normalizeBubbleWidth(this?.customBubbleWidth);
+    const naturalWidth = Number(rect?.width);
+    const naturalHeight = Number(rect?.height);
+    const safeNaturalWidth = Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : MIN_NODE_BUBBLE_WIDTH;
+    const safeNaturalHeight = Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : MIN_NODE_BUBBLE_HEIGHT;
+    const width = runtimeBubbleWidth === undefined ? safeNaturalWidth : Math.max(safeNaturalWidth, runtimeBubbleWidth);
+    const height = bubbleSize.height === undefined ? safeNaturalHeight : Math.max(safeNaturalHeight, bubbleSize.height);
+    const extraX = Math.max(0, width - safeNaturalWidth) / 2;
+    const extraY = Math.max(0, height - safeNaturalHeight) / 2;
+
+    this.__aistudyNaturalNodeRect = {
+      width: safeNaturalWidth,
+      height: safeNaturalHeight
+    };
+    this.__aistudyBubbleSize = {
+      width,
+      height
+    };
+
+    if (this.shapePadding && typeof this.shapePadding === "object") {
+      this.shapePadding.paddingX = Number(this.shapePadding.paddingX || 0) + extraX;
+      this.shapePadding.paddingY = Number(this.shapePadding.paddingY || 0) + extraY;
+    }
+
+    return {
+      ...rect,
+      width,
+      height
+    };
+  };
+}
+
 export async function createSimpleMindMapEditor(
   el: HTMLElement,
   snapshot: MindMapSnapshot,
@@ -697,6 +857,7 @@ export async function createSimpleMindMapEditor(
     textAutoWrapWidth: DEFAULT_NODE_TEXT_WRAP_WIDTH,
     minNodeTextModifyWidth: MIN_NODE_TEXT_WRAP_WIDTH,
     maxNodeTextModifyWidth: MAX_NODE_TEXT_WRAP_WIDTH,
+    enableDragModifyNodeWidth: false,
     openRealtimeRenderOnNodeTextEdit: false,
     isLimitMindMapInCanvas: false,
     isLimitMindMapInCanvasWhenHasScrollbar: false,
@@ -710,6 +871,14 @@ export async function createSimpleMindMapEditor(
     }
   });
   installDotGrid(editor);
+  const installRuntimeNodeExtensions = () => {
+    installPerNodeTextWrapWidthSupport(editor);
+    installBubbleSizeSupport(editor);
+  };
+  installRuntimeNodeExtensions();
+  if (treeHasCustomNodeLayout(snapshot.root)) {
+    editor.render?.();
+  }
 
   let destroyed = false;
   let acceptSnapshotEvents = false;
@@ -719,9 +888,23 @@ export async function createSimpleMindMapEditor(
   let snapshotSyncTimer: number | null = null;
   let snapshotSyncFrame: number | null = null;
   let viewportSyncFrame: number | null = null;
+  let textEditPositionSyncFrame: number | null = null;
+  const scheduleNodeResizeHandleSync = () => {};
   const viewportControlSize = {
     width: Math.max(1, el.clientWidth),
     height: Math.max(1, el.clientHeight)
+  };
+
+  const scheduleTextEditPositionSync = () => {
+    const textEdit = editor.renderer?.textEdit;
+    if (!textEdit?.isShowTextEdit?.()) return;
+    if (textEditPositionSyncFrame !== null) return;
+    textEditPositionSyncFrame = window.requestAnimationFrame(() => {
+      textEditPositionSyncFrame = null;
+      if (!destroyed && textEdit.isShowTextEdit?.()) {
+        textEdit.updateTextEditNode?.();
+      }
+    });
   };
 
   const emitViewportState = (state: MindMapViewportState = calculateViewportState(editor)) => {
@@ -731,6 +914,7 @@ export async function createSimpleMindMapEditor(
   };
 
   const emitPluginViewportState = (data: unknown) => {
+    scheduleNodeResizeHandleSync();
     emitViewportState(normalizeViewportState(data));
   };
 
@@ -740,6 +924,8 @@ export async function createSimpleMindMapEditor(
     }
     viewportSyncFrame = window.requestAnimationFrame(() => {
       viewportSyncFrame = null;
+      scheduleTextEditPositionSync();
+      scheduleNodeResizeHandleSync();
       emitViewportState();
     });
   };
@@ -778,17 +964,211 @@ export async function createSimpleMindMapEditor(
     }, delayMs);
   };
 
-  const emitSnapshot = () => scheduleSnapshotSync();
+  const emitSnapshot = () => {
+    scheduleNodeResizeHandleSync();
+    scheduleSnapshotSync();
+  };
 
   let selectedRenderNode: any = null;
   let selectedNodeId: string | null = null;
   let editingTextNode: any = null;
+  let bubbleResizeEdgeCursorActive = false;
+  let nodeResizeDragState: {
+    node: any;
+    startClientX: number;
+    startWidth: number;
+    naturalMinWidth: number;
+    nextWidth: number;
+    lastAppliedWidth: number;
+    frame: number | null;
+  } | null = null;
+
+  const getEditorScale = () => {
+    const transform = editor.draw?.transform?.();
+    const scale = Number(transform?.scaleX ?? transform?.scaleY ?? 1);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  };
+
+  const getSingleActiveNodeForResize = () => {
+    const activeNodes = Array.isArray(editor.renderer?.activeNodeList) ? editor.renderer.activeNodeList : [];
+    if (activeNodes.length > 1) return null;
+    return activeNodes[0] ?? selectedRenderNode ?? null;
+  };
+
+  const getNodeBubbleScreenRect = (node: any) => {
+    const element =
+      node?.shapeNode?.node ??
+      node?._customNodeContent ??
+      node?._textData?.node?.node ??
+      node?.group?.node ??
+      null;
+    const rect = element && typeof element.getBoundingClientRect === "function" ? element.getBoundingClientRect() : null;
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return rect;
+  };
+
+  const getNodeNaturalBubbleWidth = (node: any) => {
+    return normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width) ?? MIN_NODE_BUBBLE_WIDTH;
+  };
+
+  const getNodeResizeStartWidth = (node: any) => {
+    const customWidth = normalizeBubbleWidth(readNodeData(node).customBubbleWidth);
+    if (customWidth !== undefined) return customWidth;
+    const screenRect = getNodeBubbleScreenRect(node);
+    const measuredWidth = screenRect ? screenRect.width / getEditorScale() : Number(node?.width);
+    return normalizeBubbleWidth(measuredWidth) ?? getNodeNaturalBubbleWidth(node);
+  };
+
+  const getNodeFromRightBubbleResizeEdge = (event: MouseEvent | PointerEvent) => {
+    if (nodeResizeDragState) return nodeResizeDragState.node;
+    const textEdit = editor.renderer?.textEdit;
+    if (textEdit?.isShowTextEdit?.()) return null;
+    const node = getSingleActiveNodeForResize();
+    if (!node) return null;
+    const rect = getNodeBubbleScreenRect(node);
+    if (!rect) return null;
+    const x = Number(event.clientX);
+    const y = Number(event.clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const isInsideVerticalBand = y >= rect.top - 6 && y <= rect.bottom + 6;
+    const isOnRightEdge = x >= rect.right - 8 && x <= rect.right + 4;
+    return isInsideVerticalBand && isOnRightEdge ? node : null;
+  };
+
+  const setBubbleResizeEdgeCursor = (enabled: boolean) => {
+    const target = (editor.svg?.node ?? el) as HTMLElement | SVGSVGElement | null;
+    if (!target) return;
+    if (enabled) {
+      target.style.cursor = "ew-resize";
+      bubbleResizeEdgeCursorActive = true;
+    } else if (bubbleResizeEdgeCursorActive) {
+      target.style.cursor = "";
+      bubbleResizeEdgeCursorActive = false;
+    }
+  };
+
+  const applyPendingNodeResizeWidth = () => {
+    const state = nodeResizeDragState;
+    if (!state) return;
+    state.frame = null;
+    if (state.nextWidth === state.lastAppliedWidth) return;
+    state.lastAppliedWidth = state.nextWidth;
+    applyNodeBubbleWidth(editor, state.node, state.nextWidth, { renderTree: false, persist: false });
+    scheduleNodeResizeHandleSync();
+  };
+
+  const updateNodeResizeWidthFromClientX = (
+    state: NonNullable<typeof nodeResizeDragState>,
+    clientX: number
+  ) => {
+    const deltaX = (clientX - state.startClientX) / getEditorScale();
+    const normalizedWidth = normalizeBubbleWidth(state.startWidth + deltaX) ?? state.startWidth;
+    const nextWidth = Math.max(state.naturalMinWidth, normalizedWidth);
+    if (nextWidth === state.nextWidth) return false;
+    state.nextWidth = nextWidth;
+    return true;
+  };
+
+  const detachNodeResizeDragListeners = () => {
+    window.removeEventListener("pointermove", handleNodeResizePointerMove, true);
+    window.removeEventListener("pointerup", finishNodeResizeDrag, true);
+    window.removeEventListener("pointercancel", finishNodeResizeDrag, true);
+    window.removeEventListener("mousemove", handleNodeResizePointerMove, true);
+    window.removeEventListener("mouseup", finishNodeResizeDrag, true);
+  };
+
+  function finishNodeResizeDrag(event?: PointerEvent | MouseEvent) {
+    const state = nodeResizeDragState;
+    if (!state) return;
+    event?.preventDefault();
+    event?.stopPropagation();
+    detachNodeResizeDragListeners();
+    if (event && Number.isFinite(event.clientX)) {
+      updateNodeResizeWidthFromClientX(state, event.clientX);
+    }
+    if (state.frame !== null) {
+      window.cancelAnimationFrame(state.frame);
+      state.frame = null;
+    }
+    if (state.nextWidth !== state.lastAppliedWidth) {
+      state.lastAppliedWidth = state.nextWidth;
+      applyNodeBubbleWidth(editor, state.node, state.nextWidth, { renderTree: false, persist: false });
+    }
+    applyNodeBubbleWidth(editor, state.node, state.nextWidth, { renderTree: false });
+    nodeResizeDragState = null;
+    setBubbleResizeEdgeCursor(false);
+    editor.render?.();
+    ensureStableRenderTreeNodeIds(editor);
+    syncSelectionFromActiveList();
+    scheduleViewportSync();
+    scheduleSnapshotSync(0);
+    scheduleNodeResizeHandleSync();
+  }
+
+  function handleNodeResizePointerMove(event: PointerEvent | MouseEvent) {
+    const state = nodeResizeDragState;
+    if (!state) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!updateNodeResizeWidthFromClientX(state, event.clientX)) return;
+    if (state.frame !== null) return;
+    state.frame = window.requestAnimationFrame(applyPendingNodeResizeWidth);
+  }
+
+  const startNodeResizeDrag = (event: PointerEvent | MouseEvent, nodeOverride?: any) => {
+    if (nodeResizeDragState) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (event.button !== 0) return;
+    const node = nodeOverride ?? getSingleActiveNodeForResize();
+    if (!node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startWidth = getNodeResizeStartWidth(node);
+    const naturalMinWidth = getNodeNaturalBubbleWidth(node);
+    nodeResizeDragState = {
+      node,
+      startClientX: event.clientX,
+      startWidth,
+      naturalMinWidth,
+      nextWidth: startWidth,
+      lastAppliedWidth: startWidth,
+      frame: null
+    };
+    window.addEventListener("pointermove", handleNodeResizePointerMove, true);
+    window.addEventListener("pointerup", finishNodeResizeDrag, true);
+    window.addEventListener("pointercancel", finishNodeResizeDrag, true);
+    window.addEventListener("mousemove", handleNodeResizePointerMove, true);
+    window.addEventListener("mouseup", finishNodeResizeDrag, true);
+  };
+
+  const handleBubbleResizeEdgeMouseMove = (event: Event) => {
+    if (destroyed) return;
+    if (!(event instanceof MouseEvent)) return;
+    setBubbleResizeEdgeCursor(Boolean(getNodeFromRightBubbleResizeEdge(event)));
+  };
+
+  const handleBubbleResizeEdgeMouseLeave = () => {
+    if (!nodeResizeDragState) {
+      setBubbleResizeEdgeCursor(false);
+    }
+  };
+
+  const handleBubbleResizeEdgeMouseDown = (event: Event) => {
+    if (!(event instanceof MouseEvent)) return;
+    const node = getNodeFromRightBubbleResizeEdge(event);
+    if (!node) return;
+    startNodeResizeDrag(event, node);
+  };
 
   const setNodeTextOpacity = (node: any, opacity: number) => {
     node?._textData?.node?.opacity?.(opacity);
   };
 
   const hideEditingNodeText = () => {
+    setBubbleResizeEdgeCursor(false);
     const currentEditNode = editor.renderer?.textEdit?.getCurrentEditNode?.();
     editingTextNode = currentEditNode ?? editingTextNode;
     setNodeTextOpacity(editingTextNode, 0);
@@ -821,44 +1201,39 @@ export async function createSimpleMindMapEditor(
     scheduleSnapshotSync(0);
   };
 
-  const applyTextEditPreview = ({ node, text }: { node?: unknown; text?: unknown }) => {
-    if (destroyed) return;
-    if (!node || typeof node !== "object" || typeof text !== "string") return;
-    const previewNode = node as any;
-    const currentEditNode = editor.renderer?.textEdit?.getCurrentEditNode?.();
-    if (currentEditNode && currentEditNode !== previewNode) return;
-    if (typeof previewNode.createTextNode !== "function" || typeof previewNode.getNodeRect !== "function") return;
-
-    previewNode._textData = previewNode.createTextNode(text);
-    const rect = previewNode.getNodeRect();
-    previewNode.width = rect.width;
-    previewNode.height = rect.height;
-    previewNode.layout?.();
-    editingTextNode = previewNode;
-    hideEditingNodeText();
-    scheduleViewportSync();
-  };
-
   const emitSelection = (node: unknown) => {
     const selectedNode = toSelectedNode(node);
     selectedNodeId = selectedNode.id;
     events.onNodeSelected?.(selectedNode);
   };
 
+  function syncAfterCanvasTranslate() {
+    scheduleTextEditPositionSync();
+    scheduleNodeResizeHandleSync();
+  }
+
   editor.on("data_change", emitSnapshot);
   editor.on("layout_change", emitSnapshot);
+  editor.on("translate", syncAfterCanvasTranslate);
   editor.on("scrollbar_change", emitPluginViewportState);
   const emitSelectionWithCache = (node: unknown, activeNodeList?: unknown) => {
+    installRuntimeNodeExtensions();
     ensureStableRenderTreeNodeIds(editor);
     const activeNode = readActiveNodeFromEvent(editor, node, activeNodeList);
     selectedRenderNode = activeNode && typeof activeNode === "object" ? activeNode : null;
     emitSelection(activeNode);
+    scheduleNodeResizeHandleSync();
   };
   const syncSelectionFromActiveList = () => {
+    installRuntimeNodeExtensions();
     ensureStableRenderTreeNodeIds(editor);
     const activeNodes = Array.isArray(editor.renderer?.activeNodeList) ? editor.renderer.activeNodeList : [];
     const activeNode = activeNodes[0] ?? null;
-    if (!activeNode) return;
+    if (!activeNode) {
+      selectedRenderNode = null;
+      setBubbleResizeEdgeCursor(false);
+      return;
+    }
     selectedRenderNode = activeNode;
     emitSelection(activeNode);
     scheduleViewportSync();
@@ -867,20 +1242,28 @@ export async function createSimpleMindMapEditor(
     scheduleViewportSync();
     scheduleSnapshotSync(0);
   };
+  const bubbleResizeEdgeTarget = (editor.svg?.node ?? el) as HTMLElement | SVGSVGElement;
+  bubbleResizeEdgeTarget.addEventListener("mousemove", handleBubbleResizeEdgeMouseMove, true);
+  bubbleResizeEdgeTarget.addEventListener("mousedown", handleBubbleResizeEdgeMouseDown, true);
+  bubbleResizeEdgeTarget.addEventListener("mouseleave", handleBubbleResizeEdgeMouseLeave, true);
   editor.on("node_active", emitSelectionWithCache);
   editor.on("node_tree_render_end", syncSelectionFromActiveList);
-  editor.on("node_text_edit_change", applyTextEditPreview);
   editor.on("before_show_text_edit", hideEditingNodeText);
   editor.on("hide_text_edit", syncAfterTextEdit);
   editor.on("node_dragend", syncAfterNodeDrag);
   setScrollbarWrapSize(el.clientWidth, el.clientHeight);
   events.onReady?.();
   ensureStableRenderTreeNodeIds(editor);
+  window.setTimeout(() => {
+    if (destroyed) return;
+    installRuntimeNodeExtensions();
+  }, 0);
   if (editor.renderer?.root) {
     selectedRenderNode = editor.renderer.root;
     applyInitialReadableView(editor);
     activateNode(editor, editor.renderer.root);
     emitSelection(editor.renderer.root);
+    scheduleNodeResizeHandleSync();
   }
 
   return {
@@ -898,6 +1281,7 @@ export async function createSimpleMindMapEditor(
       const activeNodes = Array.isArray(editor.renderer?.activeNodeList) ? editor.renderer.activeNodeList : [];
       selectedRenderNode = activeNodes[0] ?? selectedRenderNode;
       selectedNodeId = nodeId;
+      scheduleNodeResizeHandleSync();
       return nextNode;
     },
     setLayout: (layout) => {
@@ -908,7 +1292,9 @@ export async function createSimpleMindMapEditor(
     },
     applyTextFormat: (patch) => {
       if (destroyed) return null;
-      return applySelectedTextFormat(editor, patch);
+      const nextNode = applySelectedTextFormat(editor, patch);
+      scheduleNodeResizeHandleSync();
+      return nextNode;
     },
     exec: (command, payload) => {
       if (destroyed) return;
@@ -967,14 +1353,26 @@ export async function createSimpleMindMapEditor(
         window.cancelAnimationFrame(viewportSyncFrame);
         viewportSyncFrame = null;
       }
+      if (nodeResizeDragState?.frame !== null && nodeResizeDragState?.frame !== undefined) {
+        window.cancelAnimationFrame(nodeResizeDragState.frame);
+      }
+      detachNodeResizeDragListeners();
+      bubbleResizeEdgeTarget.removeEventListener("mousemove", handleBubbleResizeEdgeMouseMove, true);
+      bubbleResizeEdgeTarget.removeEventListener("mousedown", handleBubbleResizeEdgeMouseDown, true);
+      bubbleResizeEdgeTarget.removeEventListener("mouseleave", handleBubbleResizeEdgeMouseLeave, true);
+      setBubbleResizeEdgeCursor(false);
       editor.off("data_change", emitSnapshot);
       editor.off("layout_change", emitSnapshot);
       editor.off("scrollbar_change", emitPluginViewportState);
       editor.off("node_active", emitSelectionWithCache);
       editor.off("node_tree_render_end", syncSelectionFromActiveList);
-      editor.off("node_text_edit_change", applyTextEditPreview);
+      if (textEditPositionSyncFrame !== null) {
+        window.cancelAnimationFrame(textEditPositionSyncFrame);
+        textEditPositionSyncFrame = null;
+      }
       editor.off("before_show_text_edit", hideEditingNodeText);
       editor.off("hide_text_edit", syncAfterTextEdit);
+      editor.off("translate", syncAfterCanvasTranslate);
       editor.off("node_dragend", syncAfterNodeDrag);
       restoreEditingNodeText();
       editor.destroy();

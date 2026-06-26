@@ -9,10 +9,12 @@ import {
   Bot,
   ChevronLeft,
   ChevronRight,
+  FileDown,
   Highlighter,
   Italic,
   List,
   ListOrdered,
+  Loader2,
   Redo2,
   Save,
   SkipForward,
@@ -139,6 +141,7 @@ declare global {
       load: (request: LoadRequest) => Promise<KnowledgeDocumentRecord | null>;
       listStatuses: (request: StatusRequest) => Promise<KnowledgeDocumentStatus[]>;
       save: (input: KnowledgeDocumentSaveInput) => Promise<KnowledgeDocumentRecord>;
+      exportDocx: (request: { title: string; snapshot: KnowledgeDocumentSnapshot }) => Promise<{ canceled: boolean; filePath: string }>;
     };
   }
 }
@@ -571,11 +574,14 @@ export function KnowledgeDocumentWorkspace({
   const [formatBrush, setFormatBrush] = React.useState<DocumentFormatBrushState | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
+  const [isExportingDocx, setIsExportingDocx] = React.useState(false);
   const [isEditorReady, setIsEditorReady] = React.useState(false);
   const isFormatPanelOpen = detailPaneMode === "format";
+  const [formatPanelSlot, setFormatPanelSlot] = React.useState<HTMLElement | null>(null);
   const [storageMode, setStorageMode] = React.useState<StorageMode>("none");
   const [savedAt, setSavedAt] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
+  const [exportMessage, setExportMessage] = React.useState("");
   const [documentViewportState, setDocumentViewportState] =
     React.useState<ViewportScrollState>(EMPTY_VIEWPORT_SCROLL_STATE);
   const [assistantDraft, setAssistantDraft] = React.useState("");
@@ -609,6 +615,37 @@ export function KnowledgeDocumentWorkspace({
     currentNavigationIndex >= 0 &&
     currentNavigationIndex < navigationItems.length - 1 &&
     Boolean(onNodeSelect);
+
+  React.useLayoutEffect(() => {
+    if (!isFormatPanelOpen) {
+      setFormatPanelSlot(null);
+      return;
+    }
+
+    let animationFrame = 0;
+    let attempts = 0;
+    let disposed = false;
+
+    const syncSlot = () => {
+      if (disposed || typeof document === "undefined") return;
+      const nextSlot = document.getElementById("document-format-panel-slot");
+      setFormatPanelSlot((currentSlot) => (currentSlot === nextSlot ? currentSlot : nextSlot));
+
+      if (!nextSlot && attempts < 12 && typeof window !== "undefined") {
+        attempts += 1;
+        animationFrame = window.requestAnimationFrame(syncSlot);
+      }
+    };
+
+    syncSlot();
+
+    return () => {
+      disposed = true;
+      if (animationFrame && typeof window !== "undefined") {
+        window.cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [isFormatPanelOpen]);
 
   const updateFormatState = React.useCallback((nextState: KnowledgeDocumentFormatState) => {
     if (areDocumentFormatStatesEqual(formatStateRef.current, nextState)) return;
@@ -905,6 +942,7 @@ export function KnowledgeDocumentWorkspace({
       });
       setSavedAt(formatSavedAt());
       setError("");
+      setExportMessage("");
     },
     [documentBinding, persistDocument, selectedNode.title]
   );
@@ -921,6 +959,7 @@ export function KnowledgeDocumentWorkspace({
     documentDirtyRef.current = false;
     setSavedAt(null);
     setError("");
+    setExportMessage("");
 
     const sequence = loadSequenceRef.current + 1;
     loadSequenceRef.current = sequence;
@@ -1175,6 +1214,30 @@ export function KnowledgeDocumentWorkspace({
     return flushPendingSave(false);
   }, [documentBinding, flushPendingSave, selectedNode.title, snapshot]);
 
+  const exportDocx = React.useCallback(async () => {
+    if (!documentBinding || !snapshot || isExportingDocx || !window.aistudyKnowledgeDocuments?.exportDocx) return;
+    setIsExportingDocx(true);
+    setExportMessage("");
+    setError("");
+    try {
+      const currentEditor = editorRef.current;
+      const nextSnapshot = currentEditor ? await currentEditor.getSnapshotAsync() : latestSnapshotRef.current ?? snapshot;
+      if (!nextSnapshot) return;
+      latestSnapshotRef.current = nextSnapshot;
+      const result = await window.aistudyKnowledgeDocuments.exportDocx({
+        title: selectedNode.title || "未命名",
+        snapshot: nextSnapshot
+      });
+      if (!result.canceled) {
+        setExportMessage(result.filePath ? `已导出 Word：${result.filePath}` : "已导出 Word");
+      }
+    } catch (error) {
+      setError(getErrorMessage(error, "Word 导出失败"));
+    } finally {
+      setIsExportingDocx(false);
+    }
+  }, [documentBinding, isExportingDocx, selectedNode.title, snapshot]);
+
   const storageText = storageMode === "mysql" ? "已连接" : storageMode === "local" ? "本地副本" : "未保存";
 
   const loadDocumentForNavigation = React.useCallback(
@@ -1415,10 +1478,6 @@ export function KnowledgeDocumentWorkspace({
     };
   }, []);
 
-  const formatPanelSlot = isFormatPanelOpen && typeof document !== "undefined"
-    ? document.getElementById("document-format-panel-slot")
-    : null;
-
   return (
     <div className="document-workspace">
       <div className="document-local-toolbar" aria-label="文档编辑工具栏">
@@ -1497,6 +1556,10 @@ export function KnowledgeDocumentWorkspace({
         <button type="button" title="导入文档" onClick={() => setIsImporterOpen(true)} disabled={!canUseDocument || isSaving}>
           <Upload size={15} />
           <span>导入</span>
+        </button>
+        <button type="button" title="导出 Word" onClick={() => void exportDocx()} disabled={!canUseDocument || isSaving || isExportingDocx}>
+          {isExportingDocx ? <Loader2 className="spin-icon" size={15} /> : <FileDown size={15} />}
+          <span>{isExportingDocx ? "导出中" : "导出"}</span>
         </button>
         <button type="button" title="保存文档" onClick={saveNow} disabled={!canUseDocument || isSaving}>
           <Save size={15} />
@@ -1591,6 +1654,7 @@ export function KnowledgeDocumentWorkspace({
         {skipBlankPages ? <span>跳过空白页</span> : null}
         {isNavigatingDocument ? <span>切换中</span> : null}
         {savedAt ? <span>已保存 {savedAt}</span> : null}
+        {exportMessage ? <span>{exportMessage}</span> : null}
         {error ? <span className="mindmap-error">{error}</span> : null}
       </div>
     </div>

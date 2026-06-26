@@ -74,3 +74,7 @@ export async function writeLocalSnapshot<T>(key: string, kind: LocalSnapshotKind
   };
   await runStoreRequest<IDBValidKey>("readwrite", (store) => store.put(record));
 }
+
+export async function deleteLocalSnapshot(key: string): Promise<void> {
+  await runStoreRequest<undefined>("readwrite", (store) => store.delete(key));
+}
