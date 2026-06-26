@@ -48,12 +48,21 @@ type BilibiliVideo = {
   };
 };
 
+type CollectionStep = {
+  id: "locate" | "read-video" | "read-up" | "list-videos" | "prepare-document";
+  name: string;
+  status: "pending" | "running" | "done" | "blocked" | "skipped";
+  message: string;
+};
+
 type BilibiliCollectResult = {
   status: "ready" | "partial" | "blocked";
   message: string;
   up: BilibiliUp | null;
   videos: BilibiliVideo[];
   blockers: string[];
+  steps: CollectionStep[];
+  primaryBvid: string;
   collectedAt: string;
 };
 
@@ -193,9 +202,11 @@ function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSna
   };
 }
 
-function getStepClass(active: boolean, done: boolean) {
-  if (done) return "collection-step done";
-  if (active) return "collection-step active";
+function getCollectionStepClass(status: CollectionStep["status"]) {
+  if (status === "done") return "collection-step done";
+  if (status === "running") return "collection-step active";
+  if (status === "blocked") return "collection-step blocked";
+  if (status === "skipped") return "collection-step skipped";
   return "collection-step";
 }
 
@@ -227,6 +238,15 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
     () => (selectedVideo ? createVideoDocumentSnapshot(selectedVideo) : null),
     [selectedVideo]
   );
+  const collectionSteps = React.useMemo<CollectionStep[]>(() => result?.steps?.length
+    ? result.steps
+    : [
+        { id: "locate", name: "定位视频", status: isCollecting ? "running" : "pending", message: "" },
+        { id: "read-up", name: "确认 UP", status: "pending", message: "" },
+        { id: "list-videos", name: "读取候选", status: "pending", message: "" },
+        { id: "read-video", name: "读取内容", status: "pending", message: "" },
+        { id: "prepare-document", name: "生成 Word", status: "pending", message: "" }
+      ], [isCollecting, result]);
 
   React.useEffect(() => {
     if (!targetCourseId && activeCourseId) setTargetCourseId(activeCourseId);
@@ -290,7 +310,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
       });
       if (!nextResult) throw new Error("信息采集服务未就绪");
       setResult(nextResult);
-      setSelectedBvid(nextResult.videos[0]?.bvid ?? "");
+      setSelectedBvid(nextResult.primaryBvid || nextResult.videos[0]?.bvid || "");
       setMessage(nextResult.message);
       if (nextResult.up?.name && !upName.trim()) setUpName(nextResult.up.name);
       if (nextResult.videos[0]?.bvid && !bvid.trim()) setBvid(nextResult.videos[0].bvid);
@@ -397,10 +417,11 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
         </header>
 
         <div className="collection-steps" aria-label="采集流程">
-          <span className={getStepClass(isCollecting, Boolean(result?.up))}>查 UP</span>
-          <span className={getStepClass(Boolean(result?.videos.length), Boolean(selectedVideo))}>选视频</span>
-          <span className={getStepClass(Boolean(selectedVideo), Boolean(documentSnapshot))}>写 Word</span>
-          <span className={getStepClass(Boolean(targetNodeId), false)}>入库</span>
+          {collectionSteps.map((step) => (
+            <span className={getCollectionStepClass(step.status)} key={step.id} title={step.message}>
+              {step.name}
+            </span>
+          ))}
         </div>
 
         {message ? <p className="status-message success">{message}</p> : null}
@@ -412,8 +433,8 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
             <input value={upName} onChange={(event) => setUpName(event.target.value)} placeholder="输入 UP 主名称" />
           </label>
           <label className="collection-field">
-            <span>BV 号</span>
-            <input value={bvid} onChange={(event) => setBvid(event.target.value)} placeholder="可选，精准定位视频" />
+            <span>视频</span>
+            <input value={bvid} onChange={(event) => setBvid(event.target.value)} placeholder="BV / 链接 / 标题关键词" />
           </label>
           <button className="primary-button" type="button" onClick={() => void collect()} disabled={isCollecting || (!upName.trim() && !bvid.trim())}>
             {isCollecting ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}

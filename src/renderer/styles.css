@@ -3685,7 +3685,7 @@ h3 {
 
 .collection-steps {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3711,6 +3711,18 @@ h3 {
   border-color: #c7ead8;
   background: #f2fbf6;
   color: #047857;
+}
+
+.collection-step.blocked {
+  border-color: #f2c5c5;
+  background: #fff7f7;
+  color: #b42318;
+}
+
+.collection-step.skipped {
+  border-color: #e5e7eb;
+  background: #f8fafc;
+  color: var(--text-muted);
 }
 
 .collection-task-panel {

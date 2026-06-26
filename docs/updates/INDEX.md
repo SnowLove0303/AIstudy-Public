@@ -4,14 +4,22 @@
 
 ## 最新版本
 
-- 版本号：0.1.69
-- 更新时间：2026-06-27 01:54:11
-- 功能更新：Fix Chrome port saved login state persistence; accept Bilibili API success code
+- 版本号：0.1.70
+- 更新时间：2026-06-27 02:25:30
+- 功能更新：标准化信息采集页 Bilibili 视频定位链路
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：main
-- 提交：559d0d3
+- 提交：5347788
 
 ## 更新记录
+
+### 0.1.70 - 2026-06-27 02:25:30
+
+- 标准化信息采集页 Bilibili 视频定位链路
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：main
+- 提交：5347788
+
 
 ### 0.1.69 - 2026-06-27 01:54:11
 

@@ -674,12 +674,21 @@ type InformationBilibiliVideo = {
   };
 };
 
+type InformationWorkflowStep = {
+  id: "locate" | "read-video" | "read-up" | "list-videos" | "prepare-document";
+  name: string;
+  status: "pending" | "running" | "done" | "blocked" | "skipped";
+  message: string;
+};
+
 type InformationBilibiliCollectResult = {
   status: "ready" | "partial" | "blocked";
   message: string;
   up: InformationBilibiliUp | null;
   videos: InformationBilibiliVideo[];
   blockers: string[];
+  steps: InformationWorkflowStep[];
+  primaryBvid: string;
   collectedAt: string;
 };
 
@@ -1185,10 +1194,77 @@ function stripHtmlText(value: unknown) {
     .trim();
 }
 
+const BILIBILI_WBI_MIXIN_KEY_TABLE = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+  27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+  37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+  22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
+] as const;
+
+let bilibiliWbiMixinKeyCache: { key: string; expiresAt: number } | null = null;
+
 function normalizeBilibiliBvid(value: unknown) {
   const text = typeof value === "string" ? value.trim() : "";
   const match = text.match(/BV[0-9A-Za-z]{8,16}/);
   return match?.[0] ?? "";
+}
+
+function normalizeBilibiliShortLinkCandidates(value: string) {
+  const text = value.trim();
+  if (!text || normalizeBilibiliBvid(text)) return [];
+  if (/^https?:\/\//i.test(text)) return [text];
+  if (/^[0-9A-Za-z_-]{6,40}$/.test(text)) {
+    return [`https://b23.tv/${encodeURIComponent(text)}`, `https://bili2233.cn/${encodeURIComponent(text)}`];
+  }
+  return [];
+}
+
+async function resolveBilibiliBvidFromShortLink(value: string, cookieHeader: string) {
+  for (const url of normalizeBilibiliShortLinkCandidates(value)) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: {
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          ...(cookieHeader ? { "cookie": cookieHeader } : {})
+        }
+      });
+      const redirectedBvid = normalizeBilibiliBvid(response.url);
+      if (redirectedBvid) return redirectedBvid;
+      const body = await response.text().catch(() => "");
+      const bodyBvid = normalizeBilibiliBvid(body);
+      if (bodyBvid) return bodyBvid;
+    } catch {
+      // Short-link resolution is opportunistic; unresolved values continue as search clues.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return "";
+}
+
+function normalizeBilibiliApiMessage(value: unknown, fallback: string) {
+  const message = getNonEmptyString(value, fallback);
+  if (/request was banned|请求过于频繁|访问频繁|412|Precondition Failed/i.test(message)) {
+    return "B站限制了本次访问，请在端口管理打开 B站并保持登录后重试。";
+  }
+  if (/账号未登录|not login|-101/i.test(message)) {
+    return "B站登录态没有带上，请先在端口管理打开 B站并保持登录。";
+  }
+  return message;
+}
+
+function createInformationWorkflowStep(
+  id: InformationWorkflowStep["id"],
+  name: string,
+  status: InformationWorkflowStep["status"],
+  message: string
+): InformationWorkflowStep {
+  return { id, name, status, message };
 }
 
 function normalizePositiveNumber(value: unknown, fallback = 0) {
@@ -1281,12 +1357,74 @@ async function fetchBilibiliJson<T>(url: string, referer: string, cookieHeader =
       }
     });
     if (!response.ok) {
-      throw new Error(`B站返回 ${response.status}`);
+      let message = `B站返回 ${response.status}`;
+      try {
+        const body = await response.json() as Record<string, unknown>;
+        message = normalizeBilibiliApiMessage(body.message, message);
+      } catch {
+        message = normalizeBilibiliApiMessage(message, message);
+      }
+      throw new Error(message);
     }
     return await response.json() as T;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function getBilibiliWbiImageKey(value: unknown) {
+  const url = typeof value === "string" ? value : "";
+  const fileName = url.split("/").pop() ?? "";
+  return fileName.split(".")[0] ?? "";
+}
+
+function createBilibiliWbiMixinKey(imgKey: string, subKey: string) {
+  const source = `${imgKey}${subKey}`;
+  return BILIBILI_WBI_MIXIN_KEY_TABLE.map((index) => source[index] ?? "").join("").slice(0, 32);
+}
+
+async function getBilibiliWbiMixinKey(cookieHeader: string) {
+  const now = Date.now();
+  if (bilibiliWbiMixinKeyCache && bilibiliWbiMixinKeyCache.expiresAt > now) {
+    return bilibiliWbiMixinKeyCache.key;
+  }
+
+  const nav = await fetchBilibiliJson<Record<string, unknown>>("https://api.bilibili.com/x/web-interface/nav", "https://www.bilibili.com/", cookieHeader);
+  const data = readNestedRecord(nav, "data");
+  const wbiImage = data ? readNestedRecord(data, "wbi_img") : null;
+  const imgKey = getBilibiliWbiImageKey(wbiImage?.img_url);
+  const subKey = getBilibiliWbiImageKey(wbiImage?.sub_url);
+  const mixinKey = createBilibiliWbiMixinKey(imgKey, subKey);
+  if (!mixinKey) {
+    throw new Error("B站列表签名没有准备好。");
+  }
+  bilibiliWbiMixinKeyCache = { key: mixinKey, expiresAt: now + 10 * 60 * 1000 };
+  return mixinKey;
+}
+
+function createBilibiliWbiSignedQuery(params: Record<string, string | number | boolean>, mixinKey: string) {
+  const signedParams = {
+    ...params,
+    wts: Math.floor(Date.now() / 1000)
+  };
+  const query = Object.entries(signedParams)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value).replace(/[!'()*]/g, ""))}`)
+    .join("&");
+  const wRid = createHash("md5").update(`${query}${mixinKey}`).digest("hex");
+  return `${query}&w_rid=${wRid}`;
+}
+
+async function fetchBilibiliWbiJson<T>(
+  baseUrl: string,
+  params: Record<string, string | number | boolean>,
+  referer: string,
+  cookieHeader: string,
+  timeoutMs = 10000
+) {
+  const mixinKey = await getBilibiliWbiMixinKey(cookieHeader);
+  const query = createBilibiliWbiSignedQuery(params, mixinKey);
+  return fetchBilibiliJson<T>(`${baseUrl}?${query}`, referer, cookieHeader, timeoutMs);
 }
 
 function normalizeBilibiliVideoFromView(data: Record<string, unknown>): InformationBilibiliVideo {
@@ -1347,6 +1485,37 @@ function normalizeBilibiliVideoFromSpace(item: Record<string, unknown>, up: Info
       status: "missing",
       text: "",
       message: "列表记录未包含字幕，需要选择视频后再检测。"
+    }
+  };
+}
+
+function normalizeBilibiliVideoFromSearch(item: Record<string, unknown>): InformationBilibiliVideo {
+  const bvid = getNonEmptyString(item.bvid);
+  const author = stripHtmlText(item.author) || stripHtmlText(item.author_name) || "未知 UP";
+  return {
+    bvid,
+    aid: normalizePositiveNumber(item.aid, 0),
+    cid: 0,
+    title: stripHtmlText(item.title) || "未命名视频",
+    url: normalizeBilibiliUrl(getNonEmptyString(item.arcurl, "")) || `https://www.bilibili.com/video/${bvid}/`,
+    author,
+    mid: normalizePositiveNumber(item.mid, 0),
+    publishedAt: normalizeBilibiliTimestamp(item.pubdate),
+    durationSeconds: 0,
+    description: stripHtmlText(item.description) || "",
+    coverUrl: normalizeBilibiliUrl(getNonEmptyString(item.pic, "")),
+    stats: {
+      view: normalizePositiveNumber(item.play, 0),
+      like: 0,
+      favorite: 0,
+      coin: 0,
+      reply: normalizePositiveNumber(item.review, 0),
+      share: 0
+    },
+    transcript: {
+      status: "missing",
+      text: "",
+      message: "搜索候选未包含字幕，需要选择视频后再检测。"
     }
   };
 }
@@ -1415,23 +1584,40 @@ async function resolveBilibiliUpByName(upName: string, cookieHeader: string): Pr
   };
 }
 
+async function searchBilibiliVideosByKeyword(keyword: string, upName: string, cookieHeader: string) {
+  const cleanKeyword = keyword.trim();
+  if (!cleanKeyword) return [];
+  const searchKeyword = upName.trim() ? `${upName.trim()} ${cleanKeyword}` : cleanKeyword;
+  const searchUrl = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(searchKeyword)}`;
+  const result = await fetchBilibiliJson<Record<string, unknown>>(searchUrl, "https://search.bilibili.com/", cookieHeader);
+  if (normalizeNumber(result.code, -1) !== 0) {
+    throw new Error(normalizeBilibiliApiMessage(result.message, "视频搜索暂时没有读取到"));
+  }
+  const data = readNestedRecord(result, "data");
+  const items = Array.isArray(data?.result) ? data.result : [];
+  const videos = items
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    .map(normalizeBilibiliVideoFromSearch)
+    .filter((video) => video.bvid);
+  if (!upName.trim()) return videos;
+  return videos.filter((video) => video.author === upName.trim());
+}
+
 async function fetchBilibiliVideoByBvid(bvid: string, cookieHeader: string): Promise<InformationBilibiliVideo> {
   const url = `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`;
   const result = await fetchBilibiliJson<Record<string, unknown>>(url, `https://www.bilibili.com/video/${bvid}/`, cookieHeader);
   if (normalizeNumber(result.code, -1) !== 0) {
-    throw new Error(getNonEmptyString(result.message, "视频信息没有读取到"));
+    throw new Error(normalizeBilibiliApiMessage(result.message, "视频信息没有读取到"));
   }
   const data = readNestedRecord(result, "data");
   if (!data) throw new Error("视频信息没有读取到");
   return fetchBilibiliVideoTranscript(normalizeBilibiliVideoFromView(data), cookieHeader);
 }
 
-async function fetchBilibiliUpVideos(up: InformationBilibiliUp, cookieHeader: string, pageSize: number) {
-  const url = `https://api.bilibili.com/x/space/arc/search?mid=${up.mid}&ps=${pageSize}&pn=1&order=pubdate`;
-  const result = await fetchBilibiliJson<Record<string, unknown>>(url, up.spaceUrl, cookieHeader);
+function normalizeBilibiliVideosFromUpResult(result: Record<string, unknown>, up: InformationBilibiliUp) {
   const code = normalizeNumber(result.code, -1);
   if (code !== 0) {
-    throw new Error(getNonEmptyString(result.message, "UP 视频列表暂时没有读取到"));
+    throw new Error(normalizeBilibiliApiMessage(result.message, "UP 视频列表暂时没有读取到"));
   }
   const data = readNestedRecord(result, "data");
   const list = data ? readNestedRecord(data, "list") : null;
@@ -1441,53 +1627,219 @@ async function fetchBilibiliUpVideos(up: InformationBilibiliUp, cookieHeader: st
     .map((item) => normalizeBilibiliVideoFromSpace(item, up));
 }
 
+async function fetchBilibiliUpVideos(up: InformationBilibiliUp, cookieHeader: string, pageSize: number) {
+  const wbiParams = {
+    mid: up.mid,
+    ps: pageSize,
+    tid: 0,
+    pn: 1,
+    keyword: "",
+    order: "pubdate",
+    platform: "web",
+    web_location: 1550101,
+    order_avoided: true
+  };
+  try {
+    const result = await fetchBilibiliWbiJson<Record<string, unknown>>("https://api.bilibili.com/x/space/wbi/arc/search", wbiParams, up.spaceUrl, cookieHeader);
+    return normalizeBilibiliVideosFromUpResult(result, up);
+  } catch (wbiError) {
+    const url = `https://api.bilibili.com/x/space/arc/search?mid=${up.mid}&ps=${pageSize}&pn=1&order=pubdate`;
+    try {
+      const result = await fetchBilibiliJson<Record<string, unknown>>(url, up.spaceUrl, cookieHeader);
+      return normalizeBilibiliVideosFromUpResult(result, up);
+    } catch (legacyError) {
+      const error = legacyError instanceof Error ? legacyError : wbiError;
+      throw error instanceof Error ? error : new Error("UP 视频列表暂时没有读取到");
+    }
+  }
+}
+
+function matchesBilibiliVideoClue(video: InformationBilibiliVideo, clue: string) {
+  const normalizedClue = clue.trim().toLowerCase();
+  if (!normalizedClue) return true;
+  return [video.bvid, video.title, video.description, video.author]
+    .some((value) => value.toLowerCase().includes(normalizedClue));
+}
+
+function dedupeBilibiliVideos(videos: InformationBilibiliVideo[]) {
+  const seen = new Set<string>();
+  const result: InformationBilibiliVideo[] = [];
+  for (const video of videos) {
+    if (!video.bvid || seen.has(video.bvid)) continue;
+    seen.add(video.bvid);
+    result.push(video);
+  }
+  return result;
+}
+
+async function hydratePrimaryBilibiliVideo(videos: InformationBilibiliVideo[], cookieHeader: string) {
+  const primary = videos[0];
+  if (!primary?.bvid) return videos;
+  try {
+    const fullVideo = await fetchBilibiliVideoByBvid(primary.bvid, cookieHeader);
+    return dedupeBilibiliVideos([fullVideo, ...videos.slice(1)]);
+  } catch {
+    return videos;
+  }
+}
+
 async function collectBilibiliInformation(input: unknown): Promise<InformationBilibiliCollectResult> {
   const request = input && typeof input === "object" ? input as InformationBilibiliCollectRequest : {};
   const upName = typeof request.upName === "string" ? request.upName.trim().slice(0, 80) : "";
-  const requestedBvid = normalizeBilibiliBvid(request.bvid);
+  const rawVideoInput = typeof request.bvid === "string" ? request.bvid.trim() : "";
+  let requestedBvid = normalizeBilibiliBvid(request.bvid);
   const requestedMid = normalizePositiveNumber(request.mid, 0);
   const pageSize = Math.min(50, Math.max(5, normalizePositiveNumber(request.pageSize, 20)));
   const blockers: string[] = [];
-  const cookieHeader = await getBilibiliCookieHeader();
+  const steps: InformationWorkflowStep[] = [
+    createInformationWorkflowStep("locate", "定位视频", "pending", "等待输入。"),
+    createInformationWorkflowStep("read-up", "确认 UP", "pending", "等待定位。"),
+    createInformationWorkflowStep("list-videos", "读取候选", "pending", "等待 UP。"),
+    createInformationWorkflowStep("read-video", "读取内容", "pending", "等待视频。"),
+    createInformationWorkflowStep("prepare-document", "生成 Word", "pending", "等待内容。")
+  ];
+  const updateStep = (
+    id: InformationWorkflowStep["id"],
+    status: InformationWorkflowStep["status"],
+    message: string
+  ) => {
+    const index = steps.findIndex((step) => step.id === id);
+    if (index >= 0) steps[index] = { ...steps[index], status, message };
+  };
   let up: InformationBilibiliUp | null = requestedMid
     ? { mid: requestedMid, name: upName || `UID ${requestedMid}`, face: "", spaceUrl: `https://space.bilibili.com/${requestedMid}/video` }
     : null;
   let selectedVideo: InformationBilibiliVideo | null = null;
   let videos: InformationBilibiliVideo[] = [];
+  const createResult = (status: InformationBilibiliCollectResult["status"], message: string) => ({
+    status,
+    message,
+    up,
+    videos,
+    blockers,
+    steps,
+    primaryBvid: videos[0]?.bvid ?? "",
+    collectedAt: new Date().toISOString()
+  });
 
+  if (!upName && !rawVideoInput && !requestedMid) {
+    updateStep("locate", "blocked", "需要输入 UP、BV、链接或视频线索。");
+    updateStep("prepare-document", "blocked", "没有可用内容。");
+    blockers.push("需要输入 UP、BV、链接或视频线索。");
+    return createResult("blocked", "视频没有定位到。");
+  }
+
+  const cookieHeader = await getBilibiliCookieHeader();
+  updateStep("locate", "running", "正在解析输入。");
+  if (rawVideoInput && !requestedBvid) {
+    const shortLinkBvid = await resolveBilibiliBvidFromShortLink(rawVideoInput, cookieHeader);
+    if (shortLinkBvid) {
+      requestedBvid = shortLinkBvid;
+      updateStep("locate", "done", `已解析短链：${shortLinkBvid}`);
+    }
+  }
   if (requestedBvid) {
+    updateStep("locate", "done", `已识别 BV：${requestedBvid}`);
+    updateStep("read-up", "skipped", "精准视频会从视频信息里确认 UP。");
+    updateStep("list-videos", "skipped", "精准视频采集不读取 UP 列表。");
+    updateStep("read-video", "running", "正在读取视频信息和字幕。");
     try {
       selectedVideo = await fetchBilibiliVideoByBvid(requestedBvid, cookieHeader);
+      videos = [selectedVideo];
       up = {
         mid: selectedVideo.mid,
         name: selectedVideo.author,
         face: "",
         spaceUrl: `https://space.bilibili.com/${selectedVideo.mid}/video`
       };
+      updateStep("read-up", "done", `已确认 UP：${selectedVideo.author}`);
+      updateStep("read-video", "done", "已读取视频信息。");
+      updateStep("prepare-document", "done", "Word 预览已生成。");
     } catch (error) {
       blockers.push(error instanceof Error ? error.message : "指定视频没有读取到。");
+      updateStep("read-video", "blocked", blockers[blockers.length - 1]);
+      updateStep("prepare-document", "blocked", "没有可用内容。");
     }
+    const status: InformationBilibiliCollectResult["status"] = selectedVideo
+      ? blockers.length > 0 ? "partial" : "ready"
+      : "blocked";
+    return createResult(
+      status,
+      status === "ready"
+        ? "已完成精准视频采集。"
+        : status === "partial"
+          ? "已拿到视频，部分信息需要后续处理。"
+          : "视频没有读取到。"
+    );
   }
 
+  updateStep("locate", rawVideoInput ? "done" : "skipped", rawVideoInput ? "已作为视频线索处理。" : "未提供视频线索，按 UP 最新视频处理。");
+
   if (!up && upName) {
+    updateStep("read-up", "running", "正在确认 UP。");
     try {
       up = await resolveBilibiliUpByName(upName, cookieHeader);
-      if (!up) blockers.push("没有确认到这个 UP 主，可以先打开 B站端口完成登录后再试。");
+      if (up) {
+        updateStep("read-up", "done", `已确认 UP：${up.name}`);
+      } else {
+        blockers.push("没有确认到这个 UP 主，可以先打开 B站端口完成登录后再试。");
+        updateStep("read-up", "blocked", blockers[blockers.length - 1]);
+      }
     } catch {
       blockers.push("UP 主搜索受到 B站访问限制，可以先打开 B站端口完成登录后再试。");
+      updateStep("read-up", "blocked", blockers[blockers.length - 1]);
     }
+  } else if (up) {
+    updateStep("read-up", "done", `已确认 UP：${up.name}`);
+  } else {
+    updateStep("read-up", "skipped", "未提供 UP。");
   }
 
   if (up) {
+    updateStep("list-videos", "running", "正在读取 UP 视频候选。");
     try {
       videos = await fetchBilibiliUpVideos(up, cookieHeader, pageSize);
+      updateStep("list-videos", videos.length ? "done" : "blocked", videos.length ? `已读取 ${videos.length} 条候选。` : "UP 暂无可用视频候选。");
     } catch (error) {
       blockers.push(error instanceof Error ? error.message : "UP 视频列表暂时没有读取到。");
+      updateStep("list-videos", "blocked", blockers[blockers.length - 1]);
     }
   }
 
-  if (selectedVideo && !videos.some((video) => video.bvid === selectedVideo?.bvid)) {
-    videos = [selectedVideo, ...videos];
+  if (rawVideoInput) {
+    const listMatches = videos.filter((video) => matchesBilibiliVideoClue(video, rawVideoInput));
+    if (listMatches.length > 0) {
+      videos = dedupeBilibiliVideos([...listMatches, ...videos]);
+      updateStep("locate", "done", `已按线索定位到 ${listMatches.length} 个候选。`);
+    } else {
+      try {
+        const searchMatches = (await searchBilibiliVideosByKeyword(rawVideoInput, up?.name ?? upName, cookieHeader))
+          .filter((video) => matchesBilibiliVideoClue(video, rawVideoInput));
+        if (searchMatches.length > 0) {
+          videos = dedupeBilibiliVideos([...searchMatches, ...videos]);
+          updateStep("locate", "done", `已通过搜索定位到 ${searchMatches.length} 个候选。`);
+        } else if (videos.length > 0) {
+          blockers.push("没有按该视频线索定位到唯一视频，已返回该 UP 最新视频候选。");
+          updateStep("locate", "skipped", "线索没有唯一命中，已保留 UP 候选列表。");
+        } else {
+          blockers.push("没有按该视频线索定位到视频。");
+          updateStep("locate", "blocked", blockers[blockers.length - 1]);
+        }
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : "视频线索搜索没有完成。");
+        updateStep("locate", videos.length ? "skipped" : "blocked", videos.length ? "线索搜索失败，已保留 UP 候选列表。" : blockers[blockers.length - 1]);
+      }
+    }
+  }
+
+  if (videos.length > 0) {
+    updateStep("read-video", "running", "正在读取首个候选的完整内容。");
+    videos = await hydratePrimaryBilibiliVideo(videos, cookieHeader);
+    updateStep("read-video", "done", "已读取首个候选内容。");
+    updateStep("prepare-document", "done", "Word 预览已生成。");
+  } else {
+    updateStep("read-video", "blocked", "没有可读取的视频。");
+    updateStep("prepare-document", "blocked", "没有可用内容。");
   }
 
   const status: InformationBilibiliCollectResult["status"] = videos.length > 0
@@ -1504,6 +1856,8 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
     up,
     videos,
     blockers,
+    steps,
+    primaryBvid: videos[0]?.bvid ?? "",
     collectedAt: new Date().toISOString()
   };
 }
