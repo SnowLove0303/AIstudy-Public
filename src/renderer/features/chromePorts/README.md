@@ -12,7 +12,7 @@ Current files:
 
 - Renderer UI must not launch Chrome directly.
 - Port probing, profile paths, CDP checks, and login-state detection are owned by Electron main.
-- Saved status is metadata only; cookies and secrets are not stored by this module.
+- Saved status is metadata only; cookies and secrets are not stored by this module. Metadata is written to the local runtime JSON and the fixed MySQL `chrome_port_states` table when MySQL is available.
 - Port failures affect browser-assisted features only and must not block course, mind-map, or document editing.
 - Current platform ids are `doubao`, `chatgpt`, `bilibili`, `zhihu`, `zhaopin`, and `zhipin`.
 

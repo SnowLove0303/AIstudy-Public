@@ -41,6 +41,7 @@
 | Word 快照表 | `knowledge_document_snapshots` |
 | 资产表 | `knowledge_assets` |
 | 资产关联表 | `knowledge_asset_links` |
+| Chrome 端口状态表 | `chrome_port_states` |
 | 错误日志表 | `app_error_logs` |
 
 即使旧配置里还保留 `database` 或 `*Table` 字段，当前公开版运行时也不会读取这些字段。

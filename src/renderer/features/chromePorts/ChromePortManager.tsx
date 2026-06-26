@@ -49,6 +49,7 @@ function mergeStatus(statuses: ChromePortStatus[], next: ChromePortStatus) {
 
 function getPortStateClass(port: ChromePortStatus) {
   if (port.authenticated) return "chrome-port-state connected";
+  if (port.saved) return "chrome-port-state pending";
   if (port.connected) return "chrome-port-state pending";
   return "chrome-port-state disconnected";
 }
@@ -175,7 +176,7 @@ export function ChromePortManager() {
               </div>
 
               <div className={getPortStateClass(port)}>
-                {port.authenticated ? <CheckCircle2 size={16} /> : port.connected ? <Loader2 className="spin-icon" size={16} /> : <XCircle size={16} />}
+                {port.authenticated || port.saved ? <CheckCircle2 size={16} /> : port.connected ? <Loader2 className="spin-icon" size={16} /> : <XCircle size={16} />}
                 <span>{port.statusText}</span>
               </div>
 

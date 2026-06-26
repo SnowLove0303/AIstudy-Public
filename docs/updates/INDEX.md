@@ -4,14 +4,23 @@
 
 ## 最新版本
 
-- 版本号：0.1.68
-- 更新时间：2026-06-26 16:41:19
-- 功能更新：新增 GitHub 仓库同步检查并同步 MCP 与配置契约
+- 版本号：0.1.69
+- 更新时间：2026-06-27 01:54:11
+- 功能更新：Fix Chrome port saved login state persistence; accept Bilibili API success code
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
-- 分支：codex/mcp-control-panel
-- 提交：77c9fa5
+- 分支：main
+- 提交：559d0d3
 
 ## 更新记录
+
+### 0.1.69 - 2026-06-27 01:54:11
+
+- Fix Chrome port saved login state persistence
+- accept Bilibili API success code
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：main
+- 提交：559d0d3
+
 
 ### 0.1.68 - 2026-06-26 16:41:19
 

@@ -281,6 +281,7 @@ type MysqlConfig = {
   knowledgeDocumentSnapshotTable: string;
   assetTable: string;
   knowledgeAssetLinkTable: string;
+  chromePortStateTable: string;
   errorLogTable: string;
 };
 
@@ -314,6 +315,7 @@ type MysqlRuntime = {
   knowledgeDocumentSnapshotTable: string;
   assetTable: string;
   knowledgeAssetLinkTable: string;
+  chromePortStateTable: string;
   errorLogTable: string;
 };
 
@@ -328,6 +330,7 @@ const PUBLIC_MYSQL_TABLES = {
   documentSnapshots: "knowledge_document_snapshots",
   assets: "knowledge_assets",
   assetLinks: "knowledge_asset_links",
+  chromePortStates: "chrome_port_states",
   errorLogs: "app_error_logs"
 } as const;
 
@@ -337,6 +340,15 @@ type AppErrorLogRow = RowDataPacket & {
   userMessage: string;
   errorCode: string;
   createdAt: Date | string;
+};
+
+type ChromePortSavedRow = RowDataPacket & {
+  platformId: string;
+  port: number;
+  profileDir: string;
+  savedAt: Date | string;
+  authenticatedAt: Date | string;
+  detectedUrl: string;
 };
 
 type MindMapRow = RowDataPacket & {
@@ -690,6 +702,7 @@ let mainWindow: BrowserWindow | null = null;
 let mysqlRuntime: MysqlRuntime | null = null;
 let mysqlRuntimePromise: Promise<MysqlRuntime> | null = null;
 const beforeCloseResolvers = new Map<string, () => void>();
+const CHROME_PORT_MYSQL_STATE_TIMEOUT_MS = 1500;
 const chromePortDefinitions: ChromePortDefinition[] = [
   {
     id: "doubao",
@@ -866,7 +879,31 @@ function normalizeChromePortSavedStore(value: unknown): ChromePortSavedStore {
   return { version: 1, ports };
 }
 
-async function readChromePortSavedStore() {
+function getChromePortSavedEntryTime(entry: ChromePortSavedEntry | undefined) {
+  if (!entry) return 0;
+  return Math.max(
+    Date.parse(entry.authenticatedAt || ""),
+    Date.parse(entry.savedAt || ""),
+    0
+  );
+}
+
+function mergeChromePortSavedStores(...stores: ChromePortSavedStore[]) {
+  const merged: ChromePortSavedStore = { version: 1, ports: {} };
+  for (const store of stores) {
+    for (const platform of chromePortDefinitions) {
+      const next = store.ports[platform.id];
+      if (!next) continue;
+      const current = merged.ports[platform.id];
+      merged.ports[platform.id] = getChromePortSavedEntryTime(next) >= getChromePortSavedEntryTime(current)
+        ? next
+        : current;
+    }
+  }
+  return merged;
+}
+
+async function readLocalChromePortSavedStore() {
   try {
     const raw = await fs.readFile(getChromePortStatePath(), "utf8");
     return normalizeChromePortSavedStore(JSON.parse(raw));
@@ -875,10 +912,113 @@ async function readChromePortSavedStore() {
   }
 }
 
-async function writeChromePortSavedStore(store: ChromePortSavedStore) {
+async function getMysqlRuntimeForChromePortState(): Promise<MysqlRuntime | null> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeoutPromise = new Promise<null>((resolve) => {
+      timeout = setTimeout(() => resolve(null), CHROME_PORT_MYSQL_STATE_TIMEOUT_MS);
+    });
+    return await Promise.race([getMysqlRuntime(), timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+async function readMysqlChromePortSavedStore(): Promise<ChromePortSavedStore> {
+  try {
+    const runtime = await getMysqlRuntimeForChromePortState();
+    if (!runtime) {
+      return { version: 1, ports: {} };
+    }
+    const [rows] = await runtime.pool.execute<ChromePortSavedRow[]>(
+      `SELECT platform_id AS platformId,
+              port,
+              profile_dir AS profileDir,
+              saved_at AS savedAt,
+              authenticated_at AS authenticatedAt,
+              detected_url AS detectedUrl
+       FROM ${runtime.chromePortStateTable}`
+    );
+    const ports: ChromePortSavedStore["ports"] = {};
+    for (const row of rows) {
+      const platform = getChromePortDefinition(row.platformId);
+      if (!platform || Number(row.port) !== platform.port) continue;
+      ports[platform.id] = {
+        platformId: platform.id,
+        port: platform.port,
+        profileDir: typeof row.profileDir === "string" && row.profileDir ? row.profileDir : getChromePortProfileDir(platform),
+        savedAt: toIsoTimestamp(row.savedAt),
+        authenticatedAt: toIsoTimestamp(row.authenticatedAt),
+        detectedUrl: typeof row.detectedUrl === "string" ? row.detectedUrl : ""
+      };
+    }
+    return { version: 1, ports };
+  } catch (error) {
+    console.warn("Chrome port MySQL state read failed. Falling back to local state.", error);
+    return { version: 1, ports: {} };
+  }
+}
+
+async function readChromePortSavedStore() {
+  const localStore = await readLocalChromePortSavedStore();
+  const mysqlStore = await readMysqlChromePortSavedStore();
+  const mergedStore = mergeChromePortSavedStores(localStore, mysqlStore);
+  if (JSON.stringify(mergedStore) !== JSON.stringify(localStore)) {
+    await writeLocalChromePortSavedStore(mergedStore).catch((error) => {
+      console.warn("Chrome port local state restore failed.", error);
+    });
+  }
+  return mergedStore;
+}
+
+async function writeLocalChromePortSavedStore(store: ChromePortSavedStore) {
   const filePath = getChromePortStatePath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+}
+
+async function writeMysqlChromePortSavedStore(store: ChromePortSavedStore) {
+  try {
+    const runtime = await getMysqlRuntimeForChromePortState();
+    if (!runtime) {
+      return;
+    }
+    const now = new Date();
+    for (const platform of chromePortDefinitions) {
+      const entry = store.ports[platform.id];
+      if (!entry) continue;
+      await runtime.pool.execute(
+        `INSERT INTO ${runtime.chromePortStateTable}
+          (platform_id, port, profile_dir, saved_at, authenticated_at, detected_url, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          port = VALUES(port),
+          profile_dir = VALUES(profile_dir),
+          saved_at = VALUES(saved_at),
+          authenticated_at = VALUES(authenticated_at),
+          detected_url = VALUES(detected_url),
+          updated_at = VALUES(updated_at)`,
+        [
+          entry.platformId,
+          entry.port,
+          entry.profileDir,
+          toMysqlDate(entry.savedAt || new Date().toISOString()),
+          toMysqlDate(entry.authenticatedAt || entry.savedAt || new Date().toISOString()),
+          entry.detectedUrl,
+          now
+        ]
+      );
+    }
+  } catch (error) {
+    console.warn("Chrome port MySQL state write failed. Local state was kept.", error);
+  }
+}
+
+async function writeChromePortSavedStore(store: ChromePortSavedStore) {
+  await writeLocalChromePortSavedStore(store);
+  await writeMysqlChromePortSavedStore(store);
 }
 
 async function saveAuthenticatedChromePort(platform: ChromePortDefinition, probe: ChromePortLoginProbe) {
@@ -3190,9 +3330,9 @@ async function getChromeRegistryCandidates() {
   return candidates;
 }
 
-async function getChromePortStatus(platform: ChromePortDefinition): Promise<ChromePortStatus> {
+async function getChromePortStatus(platform: ChromePortDefinition, savedStoreInput?: ChromePortSavedStore): Promise<ChromePortStatus> {
   const connected = await canConnectToLocalPort(platform.port);
-  const savedStore = await readChromePortSavedStore();
+  const savedStore = savedStoreInput ?? await readChromePortSavedStore();
   const probe = await probeChromePortLogin(platform, connected);
   const savedEntry = probe.authenticated
     ? (await saveAuthenticatedChromePort(platform, probe)) ?? savedStore.ports[platform.id]
@@ -3202,7 +3342,9 @@ async function getChromePortStatus(platform: ChromePortDefinition): Promise<Chro
     ? "已登录并保存"
     : connected
       ? probe.pageDetected
-        ? "待登录确认"
+        ? saved
+          ? "已保存，待重新确认"
+          : "待登录确认"
         : "端口已连接"
       : saved
         ? "已保存，未启动"
@@ -3223,8 +3365,9 @@ async function getChromePortStatus(platform: ChromePortDefinition): Promise<Chro
   };
 }
 
-function getChromePortStatuses() {
-  return Promise.all(chromePortDefinitions.map((platform) => getChromePortStatus(platform)));
+async function getChromePortStatuses() {
+  const savedStore = await readChromePortSavedStore();
+  return Promise.all(chromePortDefinitions.map((platform) => getChromePortStatus(platform, savedStore)));
 }
 
 async function openChromePortPage(platformId: unknown, url?: unknown): Promise<ChromePortOpenResult> {
@@ -3478,6 +3621,7 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
     knowledgeDocumentSnapshotTable: PUBLIC_MYSQL_TABLES.documentSnapshots,
     assetTable: PUBLIC_MYSQL_TABLES.assets,
     knowledgeAssetLinkTable: PUBLIC_MYSQL_TABLES.assetLinks,
+    chromePortStateTable: PUBLIC_MYSQL_TABLES.chromePortStates,
     errorLogTable: PUBLIC_MYSQL_TABLES.errorLogs
   };
 
@@ -3491,6 +3635,7 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
   validateMysqlIdentifier(config.knowledgeDocumentSnapshotTable, "MySQL knowledge document snapshot table");
   validateMysqlIdentifier(config.assetTable, "MySQL asset table");
   validateMysqlIdentifier(config.knowledgeAssetLinkTable, "MySQL knowledge asset link table");
+  validateMysqlIdentifier(config.chromePortStateTable, "MySQL Chrome port state table");
   validateMysqlIdentifier(config.errorLogTable, "MySQL error log table");
   return config;
 }
@@ -3930,6 +4075,22 @@ async function ensureKnowledgeAssetTables(pool: Pool, assetTable: string, assetL
   await migrateKnowledgeAssetTables(pool, assetTable, assetLinkTable);
 }
 
+async function ensureChromePortStateTable(pool: Pool, chromePortStateTable: string) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${chromePortStateTable} (
+      platform_id VARCHAR(40) NOT NULL,
+      port INT NOT NULL,
+      profile_dir VARCHAR(1024) NOT NULL,
+      saved_at DATETIME(3) NOT NULL,
+      authenticated_at DATETIME(3) NOT NULL,
+      detected_url VARCHAR(2048) NOT NULL,
+      updated_at DATETIME(3) NOT NULL,
+      PRIMARY KEY (platform_id),
+      KEY idx_chrome_port_updated (updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+}
+
 async function ensureErrorLogTable(pool: Pool, errorLogTable: string) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${errorLogTable} (
@@ -4023,6 +4184,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
   );
   const assetTable = escapeMysqlIdentifier(config.assetTable, "MySQL asset table");
   const knowledgeAssetLinkTable = escapeMysqlIdentifier(config.knowledgeAssetLinkTable, "MySQL knowledge asset link table");
+  const chromePortStateTable = escapeMysqlIdentifier(config.chromePortStateTable, "MySQL Chrome port state table");
   const errorLogTable = escapeMysqlIdentifier(config.errorLogTable, "MySQL error log table");
   await ensureCourseTable(pool, courseTable);
   await migrateCourseTable(pool, courseTable);
@@ -4031,6 +4193,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
   await ensureMindMapTables(pool, mindMapTable, mindMapSnapshotTable, mindMapNodeTable);
   await ensureKnowledgeDocumentTables(pool, knowledgeDocumentTable, knowledgeDocumentSnapshotTable);
   await ensureKnowledgeAssetTables(pool, assetTable, knowledgeAssetLinkTable);
+  await ensureChromePortStateTable(pool, chromePortStateTable);
   await ensureErrorLogTable(pool, errorLogTable);
 
   mysqlRuntime = {
@@ -4044,6 +4207,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     knowledgeDocumentSnapshotTable,
     assetTable,
     knowledgeAssetLinkTable,
+    chromePortStateTable,
     errorLogTable
   };
   return mysqlRuntime;
