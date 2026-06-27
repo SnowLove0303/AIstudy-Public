@@ -14,6 +14,7 @@ import {
   Folder,
   GitBranch,
   Globe2,
+  GraduationCap,
   Keyboard,
   Pause,
   Play,
@@ -192,7 +193,7 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
 }
 
 type CourseDialogMode = "create" | "edit";
-type AppSection = "knowledge" | "collection" | "assistant" | "chromePorts";
+type AppSection = "knowledge" | "collection" | "exam" | "assistant" | "chromePorts";
 type DetailPaneMode = "catalog" | "format";
 type SettingsPage = "runtime" | "mcp" | "shortcuts" | "updates" | "errorLogs";
 
@@ -1188,6 +1189,16 @@ function App() {
             <ClipboardList size={19} strokeWidth={1.9} />
           </button>
           <button
+            className={activeSection === "exam" ? "nav-button active" : "nav-button"}
+            title="考试"
+            aria-label="考试"
+            aria-current={activeSection === "exam" ? "page" : undefined}
+            type="button"
+            onClick={() => setActiveSection("exam")}
+          >
+            <GraduationCap size={19} strokeWidth={1.9} />
+          </button>
+          <button
             className={activeSection === "chromePorts" ? "nav-button active" : "nav-button"}
             title="Chrome 端口管理"
             aria-label="Chrome 端口管理"
@@ -1358,6 +1369,8 @@ function App() {
         />
       ) : activeSection === "collection" ? (
         <InformationCollectionPanel courses={courses} activeCourseId={activeCourseId} />
+      ) : activeSection === "exam" ? (
+        <main className="exam-page" aria-label="考试" />
       ) : (
         <ChromePortManager />
       )}
