@@ -57,6 +57,18 @@ declare global {
     aistudyLifecycle?: {
       onBeforeClose: (callback: () => Promise<unknown> | unknown) => () => void;
     };
+    aistudyClipboard?: {
+      writeText: (text: string) => Promise<boolean>;
+    };
+    aistudyCourseLocators?: {
+      createPath: (input: {
+        courseId: string;
+        courseName: string;
+        courseDescription: string;
+        sectionId: string | null;
+        sectionName: string;
+      }) => Promise<string>;
+    };
   }
 }
 
@@ -866,6 +878,7 @@ function App() {
   const [draftDescription, setDraftDescription] = React.useState("");
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [mindMapOutline, setMindMapOutline] = React.useState<MindMapOutlineItem[]>([]);
+  const [activeMindMapId, setActiveMindMapId] = React.useState<string | null>(null);
   const [selectedMindMapNode, setSelectedMindMapNode] = React.useState<MindMapSelectedNode>({ id: null, title: "" });
   const [workspaceEditorMode, setWorkspaceEditorMode] = React.useState<WorkspaceEditorMode>("mindmap");
   const [modeChangeRequest, setModeChangeRequest] = React.useState<WorkspaceModeChangeRequest | null>(null);
@@ -990,6 +1003,7 @@ function App() {
 
   React.useEffect(() => {
     setMindMapOutline([]);
+    setActiveMindMapId(null);
     setSelectedMindMapNode({ id: null, title: "" });
     setWorkspaceEditorMode("mindmap");
     setModeChangeRequest(null);
@@ -999,6 +1013,7 @@ function App() {
 
   const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
   const sectionIds = React.useMemo(() => new Set(courseSections.map((section) => section.id)), [courseSections]);
+  const sectionNameById = React.useMemo(() => new Map(courseSections.map((section) => [section.id, section.name])), [courseSections]);
 
   function openCreateDialog(sectionId: string | null = activeCourse?.sectionId ?? null) {
     const validSectionId = sectionId && sectionIds.has(sectionId) ? sectionId : null;
@@ -1106,6 +1121,43 @@ function App() {
     const confirmed = window.confirm(`确定删除“${item.title}”及其分支和文档内容吗？`);
     if (!confirmed) return;
     setNodeDeletionRequest({ nodeId: item.nodeId, nonce: Date.now() });
+  }
+
+  async function copyCatalogNodeDocumentPath(item: MindMapOutlineItem) {
+    if (!activeCourse || !item.nodeId) return;
+    const sectionName = activeCourse.sectionId ? sectionNameById.get(activeCourse.sectionId) ?? "" : "";
+    const locatorPath = await window.aistudyCourseLocators?.createPath?.({
+      courseId: activeCourse.id,
+      courseName: activeCourse.name,
+      courseDescription: activeCourse.description,
+      sectionId: activeCourse.sectionId,
+      sectionName
+    });
+    if (!locatorPath) {
+      throw new Error("文档路径生成没有完成。");
+    }
+
+    const readArgs = activeMindMapId
+      ? { courseId: activeCourse.id, mindMapId: activeMindMapId, nodeId: item.nodeId }
+      : { courseId: activeCourse.id, nodeId: item.nodeId };
+    const pathText = [
+      "AIstudy MCP 文档路径",
+      `locatorPath: ${locatorPath}`,
+      `courseId: ${activeCourse.id}`,
+      activeMindMapId ? `mindMapId: ${activeMindMapId}` : "",
+      `nodeId: ${item.nodeId}`,
+      `nodeTitle: ${item.title.replace(/\s+/g, " ").trim()}`,
+      "tool: read_node_document",
+      `arguments: ${JSON.stringify(readArgs)}`
+    ].filter(Boolean).join("\n");
+
+    if (window.aistudyClipboard?.writeText) {
+      await window.aistudyClipboard.writeText(pathText);
+    } else if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(pathText);
+    } else {
+      throw new Error("文档路径复制没有完成。");
+    }
   }
 
   return (
@@ -1240,6 +1292,7 @@ function App() {
               nodeDeletionRequest={nodeDeletionRequest}
               onEditorModeChange={setWorkspaceEditorMode}
               onOutlineChanged={setMindMapOutline}
+              onMindMapIdChanged={setActiveMindMapId}
               onNodeSelectedChanged={setSelectedMindMapNode}
               isCatalogPaneCollapsed={isCatalogPaneCollapsed}
               documentDetailPaneMode={detailPaneMode}
@@ -1285,6 +1338,7 @@ function App() {
                 selectedNodeId={selectedMindMapNode.id}
                 resetKey={activeCourseId ?? ""}
                 onNodeSelect={selectCatalogNode}
+                onNodeCopyDocumentPath={copyCatalogNodeDocumentPath}
                 onNodeDelete={deleteCatalogNode}
               />
             </nav>

@@ -81,6 +81,7 @@ type MindMapWorkspaceProps = {
   nodeDeletionRequest: WorkspaceNodeDeletionRequest | null;
   onEditorModeChange: (mode: WorkspaceEditorMode) => void;
   onOutlineChanged?: (outline: MindMapOutlineItem[]) => void;
+  onMindMapIdChanged?: (mapId: string | null) => void;
   onNodeSelectedChanged?: (node: MindMapSelectedNode) => void;
   isCatalogPaneCollapsed?: boolean;
   documentDetailPaneMode?: "catalog" | "format";
@@ -512,6 +513,7 @@ export function MindMapWorkspace({
   nodeDeletionRequest,
   onEditorModeChange,
   onOutlineChanged,
+  onMindMapIdChanged,
   onNodeSelectedChanged,
   isCatalogPaneCollapsed,
   documentDetailPaneMode = "catalog",
@@ -564,6 +566,10 @@ export function MindMapWorkspace({
   React.useEffect(() => {
     editorModeRef.current = editorMode;
   }, [editorMode]);
+
+  React.useEffect(() => {
+    onMindMapIdChanged?.(mapId);
+  }, [mapId, onMindMapIdChanged]);
 
   React.useEffect(() => {
     shortcutSettingsRef.current = shortcutSettings;

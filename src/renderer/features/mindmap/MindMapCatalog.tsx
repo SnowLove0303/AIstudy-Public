@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight, Trash2 } from "lucide-react";
+import { ChevronRight, Copy, Trash2 } from "lucide-react";
 import type { MindMapOutlineItem } from "./mindMapTypes";
 
 type MindMapCatalogProps = {
@@ -8,12 +8,14 @@ type MindMapCatalogProps = {
   resetKey: string;
   onNodeSelect?: (item: MindMapOutlineItem) => void;
   onNodeDelete?: (item: MindMapOutlineItem) => void;
+  onNodeCopyDocumentPath?: (item: MindMapOutlineItem) => Promise<void> | void;
 };
 
 type CatalogContextMenuState = {
   item: MindMapOutlineItem;
   x: number;
   y: number;
+  copied: boolean;
 };
 
 type CatalogRenderOptions = {
@@ -100,7 +102,7 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
   );
 }
 
-export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect, onNodeDelete }: MindMapCatalogProps) {
+export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect, onNodeDelete, onNodeCopyDocumentPath }: MindMapCatalogProps) {
   const [collapsedPaths, setCollapsedPaths] = React.useState<Set<string>>(() => collectDefaultCollapsedPaths(items));
   const [contextMenu, setContextMenu] = React.useState<CatalogContextMenuState | null>(null);
   const knownCollapsiblePathsRef = React.useRef<Set<string>>(collectCollapsiblePaths(items));
@@ -174,20 +176,38 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect, 
 
   const openContextMenu = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>, item: MindMapOutlineItem) => {
-      if (!onNodeDelete || !item.nodeId || !item.parentNodeId) return;
+      const canCopy = Boolean(onNodeCopyDocumentPath && item.nodeId);
+      const canDelete = Boolean(onNodeDelete && item.nodeId && item.parentNodeId);
+      if (!canCopy && !canDelete) return;
       event.preventDefault();
       event.stopPropagation();
       onNodeSelect?.(item);
       const width = 178;
-      const height = 42;
+      const height = 12 + (canCopy ? 30 : 0) + (canDelete ? 30 : 0);
       setContextMenu({
         item,
         x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
-        y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8))
+        y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+        copied: false
       });
     },
-    [onNodeDelete, onNodeSelect]
+    [onNodeCopyDocumentPath, onNodeDelete, onNodeSelect]
   );
+
+  const runCopyDocumentPath = React.useCallback(async () => {
+    if (!contextMenu || !onNodeCopyDocumentPath) return;
+    const item = contextMenu.item;
+    try {
+      await onNodeCopyDocumentPath(item);
+      setContextMenu((current) => current && current.item.path === item.path ? { ...current, copied: true } : current);
+      window.setTimeout(() => {
+        setContextMenu((current) => current && current.item.path === item.path ? null : current);
+      }, 700);
+    } catch {
+      setContextMenu(null);
+      window.alert("文档路径复制没有完成，请稍后再试。");
+    }
+  }, [contextMenu, onNodeCopyDocumentPath]);
 
   const runDelete = React.useCallback(() => {
     if (!contextMenu) return;
@@ -208,14 +228,24 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, onNodeSelect, 
       {contextMenu ? (
         <div
           className="catalog-context-menu"
+          role="menu"
+          aria-label={`${contextMenu.item.title} 操作`}
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <button type="button" onClick={runDelete}>
-            <Trash2 size={14} />
-            <span>删除</span>
-          </button>
+          {contextMenu.item.nodeId && onNodeCopyDocumentPath ? (
+            <button type="button" role="menuitem" onClick={() => void runCopyDocumentPath()}>
+              <Copy size={14} />
+              <span>{contextMenu.copied ? "已复制文档路径" : "复制文档路径"}</span>
+            </button>
+          ) : null}
+          {contextMenu.item.nodeId && contextMenu.item.parentNodeId && onNodeDelete ? (
+            <button type="button" role="menuitem" onClick={runDelete}>
+              <Trash2 size={14} />
+              <span>删除</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
     </>

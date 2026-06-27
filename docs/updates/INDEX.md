@@ -4,14 +4,22 @@
 
 ## 最新版本
 
-- 版本号：0.1.71
-- 更新时间：2026-06-27 16:51:48
-- 功能更新：Word 导出按 AIstudy 文档快照格式生成
+- 版本号：0.1.72
+- 更新时间：2026-06-27 17:23:02
+- 功能更新：右侧目录支持复制 MCP 文档定位路径
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：main
-- 提交：b68e131
+- 提交：e969fbf
 
 ## 更新记录
+
+### 0.1.72 - 2026-06-27 17:23:02
+
+- 右侧目录支持复制 MCP 文档定位路径
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：main
+- 提交：e969fbf
+
 
 ### 0.1.71 - 2026-06-27 16:51:48
 
