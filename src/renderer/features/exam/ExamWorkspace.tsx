@@ -151,6 +151,9 @@ export function ExamWorkspace({ activeCourseId, activeCourseName, activeMindMapI
     [activeCourseId, activeCourseName]
   );
   const jsonFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const paperNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const questionStemInputRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const shouldFocusPaperNameRef = React.useRef(false);
   const [store, setStore] = React.useState<ExamStore>(() => createEmptyExamStore());
   const [isHydrated, setIsHydrated] = React.useState(false);
   const [saveState, setSaveState] = React.useState<SaveState>("idle");
@@ -213,14 +216,32 @@ export function ExamWorkspace({ activeCourseId, activeCourseName, activeMindMapI
   React.useEffect(() => {
     if (!isHydrated) return;
     const scopeChanged = selectedScopeIdRef.current !== scope.courseId;
-    if (!scopeChanged && selectedPaperId) return;
-    selectedScopeIdRef.current = scope.courseId;
-    if (scopeChanged) setSession(null);
-    const nextPaper = scopedStore.papers[0] ?? null;
-    setSelectedPaperId(nextPaper?.id ?? "");
-    setPaperDraft(nextPaper ? clonePaper(nextPaper) : createPaperDraft(scope));
-    setSelectedAttemptId(scopedStore.attempts[0]?.id ?? "");
+    if (scopeChanged) {
+      selectedScopeIdRef.current = scope.courseId;
+      setSession(null);
+      const nextPaper = scopedStore.papers[0] ?? null;
+      setSelectedPaperId(nextPaper?.id ?? "");
+      setPaperDraft(nextPaper ? clonePaper(nextPaper) : createPaperDraft(scope));
+      setSelectedAttemptId(scopedStore.attempts[0]?.id ?? "");
+      return;
+    }
+    if (selectedPaperId && !scopedStore.papers.some((paper) => paper.id === selectedPaperId)) {
+      const nextPaper = scopedStore.papers[0] ?? null;
+      setSelectedPaperId(nextPaper?.id ?? "");
+      setPaperDraft(nextPaper ? clonePaper(nextPaper) : createPaperDraft(scope));
+    }
   }, [isHydrated, scope, scopedStore.attempts, scopedStore.papers, selectedPaperId]);
+
+  React.useEffect(() => {
+    if (!shouldFocusPaperNameRef.current) return;
+    shouldFocusPaperNameRef.current = false;
+    window.requestAnimationFrame(() => paperNameInputRef.current?.focus());
+  }, [paperDraft.id]);
+
+  React.useEffect(() => {
+    if (!questionDraft) return;
+    window.requestAnimationFrame(() => questionStemInputRef.current?.focus());
+  }, [questionDraft?.id]);
 
   const categories = React.useMemo(() => getAvailableCategories(scopedStore.questions), [scopedStore.questions]);
   const filteredQuestions = React.useMemo(() => {
@@ -369,9 +390,11 @@ export function ExamWorkspace({ activeCourseId, activeCourseName, activeMindMapI
 
   function startNewPaper() {
     const draft = createPaperDraft(scope);
+    shouldFocusPaperNameRef.current = true;
     setPaperDraft(draft);
     setSelectedPaperId("");
-    setNotice("");
+    setPaperQuestionSearch("");
+    setNotice("已新建试卷，填写名称后保存");
   }
 
   function editPaper(paper: ExamPaper) {
@@ -404,17 +427,52 @@ export function ExamWorkspace({ activeCourseId, activeCourseName, activeMindMapI
     commitStore(nextStore, "试卷已删除");
     const nextPaper = getScopedExamStore(nextStore, scope).papers[0];
     setSelectedPaperId(nextPaper?.id ?? "");
-    setPaperDraft(nextPaper ? clonePaper(nextPaper) : createPaperDraft());
+    setPaperDraft(nextPaper ? clonePaper(nextPaper) : createPaperDraft(scope));
   }
 
   function addQuestionToPaper(questionId: string) {
-    setPaperDraft((current) => current.questionIds.includes(questionId)
-      ? current
-      : { ...current, questionIds: [...current.questionIds, questionId] });
+    const question = getQuestionById(scopedStore, questionId);
+    if (!question) return;
+    if (paperDraft.questionIds.includes(questionId)) {
+      setNotice("题目已在试卷中");
+      return;
+    }
+    const nextDraft = { ...paperDraft, questionIds: [...paperDraft.questionIds, questionId] };
+    setPaperDraft(nextDraft);
+    if (nextDraft.name.trim()) {
+      const nextPaper = {
+        ...nextDraft,
+        courseId: scope.courseId,
+        courseName: scope.courseName,
+        name: nextDraft.name.trim(),
+        description: nextDraft.description.trim()
+      };
+      const nextStore = upsertPaper(store, nextPaper);
+      commitStore(nextStore, `已添加「${question.stem.slice(0, 18)}」并保存试卷`);
+      setSelectedPaperId(nextPaper.id);
+      setPaperDraft(clonePaper(nextPaper));
+    } else {
+      setNotice(`已添加「${question.stem.slice(0, 18)}」，填写试卷名称后保存`);
+    }
   }
 
   function removeQuestionFromPaper(questionId: string) {
-    setPaperDraft((current) => ({ ...current, questionIds: current.questionIds.filter((id) => id !== questionId) }));
+    const nextDraft = { ...paperDraft, questionIds: paperDraft.questionIds.filter((id) => id !== questionId) };
+    setPaperDraft(nextDraft);
+    if (nextDraft.name.trim()) {
+      const nextPaper = {
+        ...nextDraft,
+        courseId: scope.courseId,
+        courseName: scope.courseName,
+        name: nextDraft.name.trim(),
+        description: nextDraft.description.trim()
+      };
+      commitStore(upsertPaper(store, nextPaper), "已移除题目并保存试卷");
+      setSelectedPaperId(nextPaper.id);
+      setPaperDraft(clonePaper(nextPaper));
+    } else {
+      setNotice("已移除题目，填写试卷名称后保存");
+    }
   }
 
   function startExam() {
@@ -539,6 +597,7 @@ export function ExamWorkspace({ activeCourseId, activeCourseName, activeMindMapI
             availablePaperQuestions={availablePaperQuestions}
             onPaperDraftChange={setPaperDraft}
             onPaperSearchChange={setPaperQuestionSearch}
+            paperNameInputRef={paperNameInputRef}
             onNewPaper={startNewPaper}
             onEditPaper={editPaper}
             onDeletePaper={removePaper}
@@ -578,6 +637,7 @@ export function ExamWorkspace({ activeCourseId, activeCourseName, activeMindMapI
           onTypeChange={changeQuestionType}
           onClose={closeQuestionEditor}
           onSave={saveQuestionDraft}
+          stemInputRef={questionStemInputRef}
         />
       ) : null}
       <input
@@ -695,13 +755,15 @@ function QuestionEditorDialog({
   onChange,
   onTypeChange,
   onClose,
-  onSave
+  onSave,
+  stemInputRef
 }: {
   draft: ExamQuestion;
   onChange: (draft: ExamQuestion) => void;
   onTypeChange: (type: ExamQuestionType) => void;
   onClose: () => void;
   onSave: () => void;
+  stemInputRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const keywordText = draft.keywords.join("，");
   const answerText = draft.answer.join(" ");
@@ -718,7 +780,7 @@ function QuestionEditorDialog({
         <div className="exam-form-grid">
           <label className="wide">
             <span>题干</span>
-            <textarea value={draft.stem} onChange={(event) => onChange({ ...draft, stem: event.target.value })} />
+            <textarea ref={stemInputRef} value={draft.stem} onChange={(event) => onChange({ ...draft, stem: event.target.value })} />
           </label>
           <label>
             <span>题型</span>
@@ -796,6 +858,7 @@ function PaperBuilderView({
   availablePaperQuestions,
   onPaperDraftChange,
   onPaperSearchChange,
+  paperNameInputRef,
   onNewPaper,
   onEditPaper,
   onDeletePaper,
@@ -809,6 +872,7 @@ function PaperBuilderView({
   availablePaperQuestions: ExamQuestion[];
   onPaperDraftChange: (paper: ExamPaper) => void;
   onPaperSearchChange: (value: string) => void;
+  paperNameInputRef: React.RefObject<HTMLInputElement | null>;
   onNewPaper: () => void;
   onEditPaper: (paper: ExamPaper) => void;
   onDeletePaper: (paper: ExamPaper) => void;
@@ -848,7 +912,7 @@ function PaperBuilderView({
         <div className="exam-paper-form">
           <label>
             <span>名称</span>
-            <input value={paperDraft.name} onChange={(event) => onPaperDraftChange({ ...paperDraft, name: event.target.value })} />
+            <input ref={paperNameInputRef} value={paperDraft.name} onChange={(event) => onPaperDraftChange({ ...paperDraft, name: event.target.value })} />
           </label>
           <label>
             <span>时长</span>
