@@ -18,7 +18,10 @@
 - 教材作用域是 `courseId + mindMapId`。
 - 教材资产由主进程保存，MySQL 表是 `textbook_assets`。
 - 节点教材笔记由主进程保存，MySQL 表是 `textbook_notes`。
-- MySQL 不可用时，本地兜底文件位于 `state/textbooks/{courseId}__{mindMapId}.json`。
+- MySQL 是正式事实源，本地 JSON 只作为断连缓存，不作为第二套事实源。
+- MySQL 不可用时，本地兜底文件位于 `state/textbooks/{courseId}__{mindMapId}.json`，待同步作用域记录在 `state/textbook-pending-scopes.json`，已经被数据库接管的作用域记录在 `state/textbook-database-backed-scopes.json`。
+- MySQL 可用时读取、保存和 PDF 字节读取都走 DB-first StorageProvider，并把数据库结果回写本地缓存；只有数据库不可用或该作用域被标记为 dirty 时，本地缓存才会参与恢复。
+- 旧版本已经存在的本地教材缓存，如果该作用域尚未被数据库接管且数据库为空，会自动提拔到 MySQL；接管后如果数据库已有内容或缓存未 dirty，不允许旧 JSON 覆盖数据库。
 - PDF 阅读走 `aistudy-pdf` 特权协议，不把 PDF 二进制塞进导图或 Word 快照。
 - 当前资产记录保存 PDF 文件路径；跨机器迁移前必须重新确认路径相对化和资产复制策略。
 - 笔记快照沿用 `aistudy-word`/canvas-editor 结构，载入 Word 文档时走现有 `aistudyKnowledgeDocuments` API。

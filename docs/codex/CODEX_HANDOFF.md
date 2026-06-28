@@ -22,11 +22,11 @@
 - 最新免安装运行版：`release\win-unpacked\AIstudy.exe`
 - 最新更新摘要见：`docs/updates/INDEX.md`
 - 当前主要分支：`main`
-- 当前本地 HEAD 与远端 `origin/main` 一致，提交为 `1209a84 fix: isolate textbook page bindings`；`git rev-list --left-right --count "HEAD...@{u}"` 为 `0 0`。
+- 本轮 StorageProvider 收口开始前，本地 HEAD 与远端 `origin/main` 一致，提交为 `ecc9ff3 fix: harden public installer mysql runtime`；`git rev-list --left-right --count "HEAD...@{u}"` 为 `0 0`。
 - 当前公开版已经具备课程/分区、思维导图、节点 Word 文档、教材 PDF 与节点笔记、题库考试、信息采集、AI 助手、Chrome 固定端口、MCP 设置页、Tailscale 内网访问、远程权限细分、远程调用监控、导图/文档 MCP 读写工具、更新管理、错误日志、数据库更新保护、左右侧栏折叠、导图快捷键设置、右键文字排版浮层和右侧文档格式面板。
-- 最近一轮更新集中在纯净公开版默认隔离本机数据目录、AIstudy 管理 MySQL 自动发现、打包源运行数据排除守卫、重复安装时 MySQL 端口解析幂等修复，以及未连接数据库时的课程侧栏状态提示。
+- 最近一轮更新集中在纯净公开版默认隔离本机数据目录、AIstudy 管理 MySQL 自动发现、打包源运行数据排除守卫、重复安装时 MySQL 端口解析幂等修复、未连接数据库时的课程侧栏状态提示，以及课程/分区/教材向 DB-first StorageProvider 的首轮收口。
 
-当前接手时工作区不是干净状态。`git status --short --branch` 显示 `main...origin/main`，并已有 `electron/main.ts`、`package.json`、`package-lock.json`、`scripts/package/close-and-dist.ps1`、`docs/updates/INDEX.md`、`docs/codex/CODEX_HANDOFF.md` 修改，均与纯净公开版数据隔离、AIstudy 管理 MySQL 自动发现和打包排除运行数据相关。接手者必须先确认这些改动归属，不要回滚或覆盖。
+接手时必须先执行 `git status --short --branch` 判断工作区状态。若已有未提交改动，先确认归属，不要用 `git reset --hard` 或 checkout 回滚用户或其他线程的改动。纯净发行版、数据库自动发现和 StorageProvider 收口都会触碰 `electron/main.ts`、打包脚本和文档，后续接手必须先看真实 diff 再继续。
 
 本轮功能遍历确认的主功能目录为 `assistant`、`chromePorts`、`collection`、`course`、`documents`、`exam`、`importer`、`mcp`、`mindmap`、`textbook`。其中 `textbook` 已真实接入主界面、preload、主进程、MySQL 和本地兜底，并已补齐模块 README。
 
@@ -115,7 +115,7 @@ AISTUDY_PUBLIC_RUNTIME_ROOT
 
 ```text
 config                 MySQL 配置
-state                  courses.json、pending 队列、教材本地兜底等
+state                  courses.json、pending 队列、教材本地缓存、待同步标记和数据库接管标记等
 runtime                Chrome profile、端口状态、信息采集运行目录
 assets                 大文件和后续素材
 updates                更新安装包下载
@@ -147,6 +147,8 @@ AIstudyPublicData/config/mysql.config.json
 MySQL 配置优先级从低到高是 AIstudy 管理服务 `%ProgramData%\AIstudy\mysql\my.ini`、`%ProgramData%\AIstudy\mysql.config.json`、`%ProgramData%\AIstudy\AIstudyPublicData\config\mysql.config.json`、`%ProgramData%\AIstudy\AIstudyUserData\mysql.config.json`、exe 旁边 `mysql.config.json`、数据根 `config/mysql.config.json`、Electron `userData/mysql.config.json`，最后由 `AISTUDY_PUBLIC_MYSQL_*` 环境变量覆盖连接四项。数据库名和表名仍固定，不从配置覆盖。
 
 纯净发行版原则：课程分区属于数据库正式数据，不应依赖打包目录里的本地 `courses.json` 镜像来呈现。`npm run dist:oneclick` 会在最终 NSIS 重打包前移除 `win-unpacked` 中的 `AIstudyPublicData`、`AIstudyUserData` 和运行期状态，并用守卫阻断 `courses.json`、`course-pending-operations.json`、`chrome-ports.json`、`mysql.config.json` 等文件进入安装源。安装后应自动检索本机可用的公开版数据库配置或 AIstudy 管理的本机数据库服务，并建立到固定 `aistudy_public` 的连接；如果数据库不可用，UI 必须明确这是本机镜像/本机模式，而不能让用户误以为数据库仍然连接。
+
+DB-first StorageProvider 基线：知识库相关模块必须以数据库为正式事实源，`electron/storageProvider.ts` 只允许把本地 JSON 作为断连兜底缓存。模块接入时要声明并接入同一套能力：自动发现 MySQL 配置或 AIstudy 管理服务、自动连接固定 `aistudy_public`、自动初始化缺失数据表、数据库读写、缓存回写、断连 pending/dirty 标记、恢复后重放或提拔缓存。数据库读取成功后必须刷新本地缓存，包括空数据库结果，避免旧 JSON 在纯净安装或重连后成为第二套事实源。后续课程、导图、文档、教材、考试和资产继续拆模块时，不要让每个模块私自实现一套连接、建表、兜底和同步逻辑。
 
 ## 4. 核心架构
 
@@ -285,6 +287,7 @@ textbook_notes
 
 - MySQL 是正式索引源。
 - 本地 `courses.json` 只是轻量镜像和降级副本，不能作为纯净发行版的初始数据源。
+- `courses:load` 走 DB-first StorageProvider：MySQL 读取成功后会把数据库结果写回 `courses.json` 缓存，即使数据库当前为空也不能继续保留旧镜像。
 - 分区、课程排序、折叠状态等入口索引原则上都应落在数据库里；纯净安装包里的初始分区/课程状态应为空，由安装后的本机数据库连接或用户真实数据恢复。
 - MySQL 写失败时，课程/分区命令进入 pending 队列，后续恢复时重放。
 - pending 队列支持 `course:create/rename/move/reorder/delete` 和 `section:create/rename/reorder/toggle/toggle-all/delete`；重放失败会保留剩余队列、递增 `retryCount` 并记录 `lastError`，不能直接丢弃。
@@ -313,7 +316,9 @@ textbook_notes
 - 教材 PDF 通过 `aistudy-pdf` 特权协议和独立 PDF 窗口打开，阅读器使用 `pdfjs-dist`。
 - PDF 阅读器按当前页附近懒渲染并缓存页面，支持页码、缩放、页数回写和独立窗口。
 - 教材笔记绑定到节点和页段，可保存 canvas-editor 富文本快照，关闭前会进入统一保存 drain，并可合并进对应节点 Word 文档。
-- 教材本地和 MySQL 双写采用 `updatedAt` 合并策略，资产按 `asset.id` 合并，笔记按 `textbookId + nodeId` 合并；旧版 `mindMapId === courseId` 作用域会自动迁移到真实导图作用域。
+- 教材读取、保存和 PDF 字节读取都走 DB-first StorageProvider。MySQL 可用时以 `textbook_assets`、`textbook_notes` 为准并回写本地缓存；本地 JSON 只在 MySQL 不可用或显式 dirty 时参与恢复。
+- 教材断连保存会写入本地缓存并在 `state/textbook-pending-scopes.json` 标记作用域；重连后按 `updatedAt` 提拔到 MySQL，资产按 `asset.id` 合并，笔记按 `textbookId + nodeId` 合并。`state/textbook-database-backed-scopes.json` 记录已经被数据库接管的作用域，避免数据库后续为空时被旧 JSON 反向覆盖。若作用域尚未被数据库接管、数据库为空且旧本地缓存有内容，会先把本地缓存迁入数据库，避免升级时丢旧数据；若数据库已有内容或作用域已被接管且缓存未 dirty，则不让旧 JSON 覆盖数据库。
+- 旧版 `mindMapId === courseId` 教材作用域会自动迁移到真实导图作用域。
 - 当前教材文件路径仍保存在资产记录中，后续如果做跨机器迁移，要检查路径相对化和资产复制策略。
 
 考试：

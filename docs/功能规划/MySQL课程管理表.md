@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS `course_management_courses` (
 
 - Electron 主进程负责所有 MySQL 操作，渲染层不持有数据库凭据。
 - `courses:load` 从分区表和课程表读取全部数据，分区按 `sort_order` 升序、`updated_at` 倒序返回；课程按 `section_id`、`sort_order` 升序、`updated_at` 倒序返回。
+- `courses:load` 已纳入 DB-first StorageProvider。MySQL 读取成功后必须把数据库结果写回本地 `courses.json` 缓存，包括空数据库结果，避免旧本地镜像在重连或纯净安装后继续呈现。
 - 新功能必须优先使用命令式 IPC：`courses:create/rename/move/reorder/delete/select` 和 `course-sections:create/rename/toggle/reorder/delete`。
 - `courses:save` 仅作为旧接口兼容保留，不再作为新功能的默认写入方式。
 - 课程可以归属某个分区，也可以保持 `section_id = NULL` 作为「未分区」课程。
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS `course_management_courses` (
 ## 故障恢复策略
 
 - MySQL 读取失败时，主进程回退读取本地 `courses.json`，不阻断课程侧栏渲染。
+- 只有 MySQL 不可用时，`courses.json` 才能作为降级缓存；MySQL 可用时不得把本地 JSON 与数据库做权威合并。
 - 纯净新装时，本地回退镜像必须是空状态；安装后应自动发现公开版固定数据库配置或 AIstudy 管理的本机数据库服务并连接固定 `aistudy_public`。
 - 如果数据库不可用但本地镜像被使用，UI 必须明确这是本机镜像/本机模式，避免用户误判为数据库仍然连接。
 - MySQL 写入失败时，课程/分区命令先落本地 `courses.json`，再追加轻量操作到 `course-pending-operations.json`。

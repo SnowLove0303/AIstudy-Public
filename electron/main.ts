@@ -14,6 +14,7 @@ import { AISTUDY_CORE_CONTRACT } from "./coreContract.js";
 import { classifyAppError, createAppError, getAppErrorDefinition } from "./appErrors.js";
 import { exportKnowledgeDocumentDocx } from "./documentExport.js";
 import { ensureExamTables, readExamStoreFromMysql, writeExamStoreToMysql, type ExamMysqlRuntime } from "./examStore.js";
+import { readDbFirstStore, writeDbFirstStore, type DbFirstStorageProvider } from "./storageProvider.js";
 import {
   createTextbookAssetFromFile,
   ensureTextbookTables,
@@ -5817,62 +5818,77 @@ async function getUpdateManagerInfo(): Promise<UpdateManagerInfo> {
   };
 }
 
-async function readCourseStore(): Promise<CourseStore> {
-  try {
-    const runtime = await getMysqlRuntime();
-    await replayPendingCourseOperations(runtime);
-    const { pool, courseTable, courseSectionTable } = runtime;
-    const [sectionRows] = await pool.execute<CourseSectionRow[]>(
-      `SELECT id, name, sort_order AS sortOrder, collapsed, created_at AS createdAt, updated_at AS updatedAt
-       FROM ${courseSectionTable}
-       WHERE deleted_at IS NULL
-       ORDER BY sort_order ASC, updated_at DESC`
-    );
-    const [rows] = await pool.execute<CourseRow[]>(
-      `SELECT id, name, description, section_id AS sectionId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
-       FROM ${courseTable}
-       WHERE deleted_at IS NULL
-       ORDER BY COALESCE(section_id, ''), sort_order ASC, updated_at DESC`
-    );
-    const sections = sectionRows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      sortOrder: Number(row.sortOrder) || 0,
-      collapsed: Boolean(Number(row.collapsed)),
-      createdAt: toIsoTimestamp(row.createdAt),
-      updatedAt: toIsoTimestamp(row.updatedAt)
-    }));
-    const sectionIds = new Set(sections.map((section) => section.id));
-    const courses = rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      sectionId: row.sectionId && sectionIds.has(row.sectionId) ? row.sectionId : null,
-      sortOrder: Number(row.sortOrder) || 0,
-      createdAt: toIsoTimestamp(row.createdAt),
-      updatedAt: toIsoTimestamp(row.updatedAt)
-    }));
-    let mirroredActiveCourseId: string | null = null;
-    try {
-      const localMirror = await readLocalCourseStore();
-      if (localMirror.activeCourseId && courses.some((course) => course.id === localMirror.activeCourseId)) {
-        mirroredActiveCourseId = localMirror.activeCourseId;
-      }
-    } catch (error) {
-      console.warn("Course local mirror read failed.", error);
-    }
-    const store = { sections, courses, activeCourseId: mirroredActiveCourseId ?? courses[0]?.id ?? null };
-    if (courses.length > 0) {
-      void writeLocalCourseStore(store).catch((error) => {
-        console.warn("Course local mirror write failed.", error);
-      });
-    }
+async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore> {
+  const runtime = await getMysqlRuntime();
+  await replayPendingCourseOperations(runtime);
+  const { pool, courseTable, courseSectionTable } = runtime;
+  const [sectionRows] = await pool.execute<CourseSectionRow[]>(
+    `SELECT id, name, sort_order AS sortOrder, collapsed, created_at AS createdAt, updated_at AS updatedAt
+     FROM ${courseSectionTable}
+     WHERE deleted_at IS NULL
+     ORDER BY sort_order ASC, updated_at DESC`
+  );
+  const [rows] = await pool.execute<CourseRow[]>(
+    `SELECT id, name, description, section_id AS sectionId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+     FROM ${courseTable}
+     WHERE deleted_at IS NULL
+     ORDER BY COALESCE(section_id, ''), sort_order ASC, updated_at DESC`
+  );
+  const sections = sectionRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    sortOrder: Number(row.sortOrder) || 0,
+    collapsed: Boolean(Number(row.collapsed)),
+    createdAt: toIsoTimestamp(row.createdAt),
+    updatedAt: toIsoTimestamp(row.updatedAt)
+  }));
+  const sectionIds = new Set(sections.map((section) => section.id));
+  const courses = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    sectionId: row.sectionId && sectionIds.has(row.sectionId) ? row.sectionId : null,
+    sortOrder: Number(row.sortOrder) || 0,
+    createdAt: toIsoTimestamp(row.createdAt),
+    updatedAt: toIsoTimestamp(row.updatedAt)
+  }));
+  const activeCourseId = cache.activeCourseId && courses.some((course) => course.id === cache.activeCourseId)
+    ? cache.activeCourseId
+    : courses[0]?.id ?? null;
+  return normalizeCourseStore({ sections, courses, activeCourseId });
+}
 
-    return store;
+async function writeCourseStoreToMysql(store: CourseStore): Promise<CourseStore> {
+  const normalized = normalizeCourseStore(store);
+  const { pool, courseTable, courseSectionTable } = await getMysqlRuntime();
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await replaceCourseSectionRows(connection, courseSectionTable, normalized.sections);
+    await replaceCourseRows(connection, courseTable, normalized.courses);
+    await connection.commit();
+    return normalized;
   } catch (error) {
-    console.warn("Course MySQL read failed. Falling back to local course store.", error);
-    return await readLocalCourseStore();
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
+}
+
+function createCourseStorageProvider(): DbFirstStorageProvider<CourseStore> {
+  return {
+    name: "Course store",
+    readCache: readLocalCourseStore,
+    writeCache: writeLocalCourseStore,
+    readDatabase: readCourseStoreFromMysql,
+    writeDatabase: writeCourseStoreToMysql
+  };
+}
+
+async function readCourseStore(): Promise<CourseStore> {
+  return (await readDbFirstStore(createCourseStorageProvider())).value;
 }
 
 async function replaceCourseSectionRows(connection: PoolConnection, sectionTable: string, sections: CourseSectionRecord[]) {
@@ -5951,29 +5967,7 @@ async function replaceCourseRows(connection: PoolConnection, courseTable: string
 
 async function writeCourseStore(store: CourseStore) {
   const normalized = normalizeCourseStore(store);
-  try {
-    const { pool, courseTable, courseSectionTable } = await getMysqlRuntime();
-    const connection = await pool.getConnection();
-
-    try {
-      await connection.beginTransaction();
-      await replaceCourseSectionRows(connection, courseSectionTable, normalized.sections);
-      await replaceCourseRows(connection, courseTable, normalized.courses);
-      await connection.commit();
-      void writeLocalCourseStore(normalized).catch((error) => {
-        console.warn("Course local mirror write failed after MySQL save.", error);
-      });
-      return normalized;
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
-  } catch (error) {
-    console.warn("Course MySQL write failed. Saving to local course store.", error);
-    return await writeLocalCourseStore(normalized);
-  }
+  return (await writeDbFirstStore(createCourseStorageProvider(), normalized)).value;
 }
 
 function errorToMessage(error: unknown) {
@@ -8928,8 +8922,124 @@ function getTextbookStoreFilePath(courseId: string, mindMapId: string) {
   return getAistudyDataPath("state", "textbooks", `${courseId}__${mindMapId}.json`);
 }
 
+function getTextbookPendingScopesFilePath() {
+  return getAistudyDataPath("state", "textbook-pending-scopes.json");
+}
+
+function getTextbookDatabaseBackedScopesFilePath() {
+  return getAistudyDataPath("state", "textbook-database-backed-scopes.json");
+}
+
 function getLegacyTextbookScope(scope: { courseId: string; mindMapId: string }) {
   return scope.mindMapId === scope.courseId ? null : { courseId: scope.courseId, mindMapId: scope.courseId };
+}
+
+function getTextbookScopeKey(scope: { courseId: string; mindMapId: string }) {
+  return `${scope.courseId}\u0000${scope.mindMapId}`;
+}
+
+function normalizeTextbookScopeRecords(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => {
+      const courseId = getNonEmptyString(item.courseId);
+      const mindMapId = getNonEmptyString(item.mindMapId);
+      if (!courseId || !mindMapId) return null;
+      const updatedAt = typeof item.updatedAt === "string" ? toIsoTimestamp(item.updatedAt) : new Date().toISOString();
+      return { courseId, mindMapId, updatedAt };
+    })
+    .filter((item): item is { courseId: string; mindMapId: string; updatedAt: string } => {
+      if (!item) return false;
+      const key = getTextbookScopeKey(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function normalizeTextbookPendingScopes(value: unknown) {
+  return normalizeTextbookScopeRecords(value);
+}
+
+function normalizeTextbookDatabaseBackedScopes(value: unknown) {
+  return normalizeTextbookScopeRecords(value);
+}
+
+async function readTextbookPendingScopes() {
+  try {
+    const raw = await fs.readFile(getTextbookPendingScopesFilePath(), "utf8");
+    return normalizeTextbookPendingScopes(parseJsonText(raw));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    await quarantineUnreadableFile(getTextbookPendingScopesFilePath(), error);
+    return [];
+  }
+}
+
+async function writeTextbookPendingScopes(scopes: Array<{ courseId: string; mindMapId: string; updatedAt: string }>) {
+  await writeJsonAtomic(getTextbookPendingScopesFilePath(), normalizeTextbookPendingScopes(scopes));
+}
+
+async function readTextbookDatabaseBackedScopes() {
+  try {
+    const raw = await fs.readFile(getTextbookDatabaseBackedScopesFilePath(), "utf8");
+    return normalizeTextbookDatabaseBackedScopes(parseJsonText(raw));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    await quarantineUnreadableFile(getTextbookDatabaseBackedScopesFilePath(), error);
+    return [];
+  }
+}
+
+async function writeTextbookDatabaseBackedScopes(scopes: Array<{ courseId: string; mindMapId: string; updatedAt: string }>) {
+  await writeJsonAtomic(getTextbookDatabaseBackedScopesFilePath(), normalizeTextbookDatabaseBackedScopes(scopes));
+}
+
+async function isTextbookScopeDatabaseBacked(scope: { courseId: string; mindMapId: string }) {
+  const key = getTextbookScopeKey(scope);
+  const scopes = await readTextbookDatabaseBackedScopes();
+  return scopes.some((item) => getTextbookScopeKey(item) === key);
+}
+
+async function markTextbookScopeDatabaseBacked(scope: { courseId: string; mindMapId: string }) {
+  const scopes = await readTextbookDatabaseBackedScopes();
+  const key = getTextbookScopeKey(scope);
+  const updatedAt = new Date().toISOString();
+  await writeTextbookDatabaseBackedScopes([
+    ...scopes.filter((item) => getTextbookScopeKey(item) !== key),
+    { courseId: scope.courseId, mindMapId: scope.mindMapId, updatedAt }
+  ]);
+}
+
+async function isTextbookScopeDirty(scope: { courseId: string; mindMapId: string }) {
+  const key = getTextbookScopeKey(scope);
+  const scopes = await readTextbookPendingScopes();
+  return scopes.some((item) => getTextbookScopeKey(item) === key);
+}
+
+async function markTextbookScopeDirty(scope: { courseId: string; mindMapId: string }) {
+  const scopes = await readTextbookPendingScopes();
+  const key = getTextbookScopeKey(scope);
+  const updatedAt = new Date().toISOString();
+  await writeTextbookPendingScopes([
+    ...scopes.filter((item) => getTextbookScopeKey(item) !== key),
+    { courseId: scope.courseId, mindMapId: scope.mindMapId, updatedAt }
+  ]);
+}
+
+async function clearTextbookScopeDirty(scope: { courseId: string; mindMapId: string }) {
+  const key = getTextbookScopeKey(scope);
+  const scopes = await readTextbookPendingScopes();
+  const nextScopes = scopes.filter((item) => getTextbookScopeKey(item) !== key);
+  if (nextScopes.length !== scopes.length) {
+    await writeTextbookPendingScopes(nextScopes);
+  }
 }
 
 function reScopeTextbookStore(store: TextbookStore, scope: { courseId: string; mindMapId: string }) {
@@ -9019,53 +9129,100 @@ async function writeLocalTextbookStore(courseId: string, mindMapId: string, stor
   return normalized;
 }
 
+async function readTextbookStoreFromDatabaseFirst(
+  scope: { courseId: string; mindMapId: string },
+  cache: TextbookStore
+): Promise<TextbookStore> {
+  const runtime = await getMysqlRuntime();
+  const remoteStore = await readTextbookStoreFromMysql(runtime, scope);
+  const cacheIsDirty = await isTextbookScopeDirty(scope);
+  const scopeIsDatabaseBacked = await isTextbookScopeDatabaseBacked(scope);
+  if (cacheIsDirty && textbookStoreHasContent(cache)) {
+    const mergedStore = mergeTextbookStores(remoteStore, cache, scope);
+    try {
+      const syncedStore = await writeTextbookStoreToMysql(runtime, mergedStore, scope);
+      await clearTextbookScopeDirty(scope);
+      await markTextbookScopeDatabaseBacked(scope);
+      return syncedStore;
+    } catch (error) {
+      console.warn("Textbook cache promotion to MySQL unavailable, using merged store.", error);
+      return mergedStore;
+    }
+  }
+
+  if (!scopeIsDatabaseBacked && !textbookStoreHasContent(remoteStore) && textbookStoreHasContent(cache)) {
+    try {
+      const syncedStore = await writeTextbookStoreToMysql(runtime, cache, scope);
+      await clearTextbookScopeDirty(scope);
+      await markTextbookScopeDatabaseBacked(scope);
+      return syncedStore;
+    } catch (error) {
+      console.warn("Textbook local cache promotion to MySQL unavailable, keeping cache dirty.", error);
+      await markTextbookScopeDirty(scope);
+      return cache;
+    }
+  }
+
+  await clearTextbookScopeDirty(scope);
+
+  if (textbookStoreHasContent(remoteStore)) {
+    await markTextbookScopeDatabaseBacked(scope);
+    return remoteStore;
+  }
+
+  const legacyScope = getLegacyTextbookScope(scope);
+  if (legacyScope) {
+    const legacyRemoteStore = await readTextbookStoreFromMysql(runtime, legacyScope);
+    const legacyLocalStore = await readLocalTextbookStore(legacyScope.courseId, legacyScope.mindMapId);
+    const legacyStore = textbookStoreHasContent(legacyRemoteStore) ? legacyRemoteStore : legacyLocalStore;
+    if (textbookStoreHasContent(legacyStore)) {
+      const migratedStore = reScopeTextbookStore(legacyStore, scope);
+      try {
+        const syncedStore = await writeTextbookStoreToMysql(runtime, migratedStore, scope);
+        await clearTextbookScopeDirty(scope);
+        await markTextbookScopeDatabaseBacked(scope);
+        return syncedStore;
+      } catch (error) {
+        console.warn("Textbook legacy scope migration could not reach MySQL, using migrated cache.", error);
+        await markTextbookScopeDirty(scope);
+        return migratedStore;
+      }
+    }
+  }
+
+  await markTextbookScopeDatabaseBacked(scope);
+  return remoteStore;
+}
+
+function createTextbookStorageProvider(scope: { courseId: string; mindMapId: string }): DbFirstStorageProvider<TextbookStore> {
+  return {
+    name: "Textbook store",
+    readCache: () => readLocalTextbookStore(scope.courseId, scope.mindMapId),
+    writeCache: (store) => writeLocalTextbookStore(scope.courseId, scope.mindMapId, store),
+    readDatabase: (cache) => readTextbookStoreFromDatabaseFirst(scope, cache),
+    writeDatabase: async (store) => {
+      const runtime = await getMysqlRuntime();
+      return await writeTextbookStoreToMysql(runtime, store, scope);
+    }
+  };
+}
+
 async function loadTextbookStore(input: unknown): Promise<TextbookStore> {
   const scope = normalizeTextbookScope(input);
-  const localStore = await readLocalTextbookStore(scope.courseId, scope.mindMapId);
   const legacyScope = getLegacyTextbookScope(scope);
   const migrateLegacyStore = async (store: TextbookStore) => {
     const migratedStore = reScopeTextbookStore(store, scope);
     await writeLocalTextbookStore(scope.courseId, scope.mindMapId, migratedStore);
     return migratedStore;
   };
-  try {
-    const runtime = await getMysqlRuntime();
-    const remoteStore = await readTextbookStoreFromMysql(runtime, scope);
-    const mergedStore = mergeTextbookStores(remoteStore, localStore, scope);
-    if (textbookStoreHasContent(mergedStore)) {
-      await writeLocalTextbookStore(scope.courseId, scope.mindMapId, mergedStore);
-      if (!textbookStoreHasContent(localStore)) return mergedStore;
-      try {
-        const syncedStore = await writeTextbookStoreToMysql(runtime, mergedStore, scope);
-        await writeLocalTextbookStore(scope.courseId, scope.mindMapId, syncedStore);
-        return syncedStore;
-      } catch (error) {
-        console.warn("Textbook MySQL merge sync unavailable, using merged local snapshot.", error);
-        return mergedStore;
-      }
+  const result = await readDbFirstStore(createTextbookStorageProvider(scope));
+  if (!result.databaseAvailable && !textbookStoreHasContent(result.value) && legacyScope) {
+    const legacyLocalStore = await readLocalTextbookStore(legacyScope.courseId, legacyScope.mindMapId);
+    if (textbookStoreHasContent(legacyLocalStore)) {
+      return migrateLegacyStore(legacyLocalStore);
     }
-    if (legacyScope) {
-      const legacyRemoteStore = await readTextbookStoreFromMysql(runtime, legacyScope);
-      const legacyLocalStore = await readLocalTextbookStore(legacyScope.courseId, legacyScope.mindMapId);
-      const legacyStore = textbookStoreHasContent(legacyRemoteStore) ? legacyRemoteStore : legacyLocalStore;
-      if (textbookStoreHasContent(legacyStore)) {
-        const migratedStore = reScopeTextbookStore(legacyStore, scope);
-        const syncedStore = await writeTextbookStoreToMysql(runtime, migratedStore, scope);
-        await writeLocalTextbookStore(scope.courseId, scope.mindMapId, syncedStore);
-        return syncedStore;
-      }
-    }
-    return remoteStore;
-  } catch (error) {
-    console.warn("Textbook MySQL store unavailable, using local snapshot.", error);
-    if (!textbookStoreHasContent(localStore) && legacyScope) {
-      const legacyLocalStore = await readLocalTextbookStore(legacyScope.courseId, legacyScope.mindMapId);
-      if (textbookStoreHasContent(legacyLocalStore)) {
-        return migrateLegacyStore(legacyLocalStore);
-      }
-    }
-    return localStore;
   }
+  return result.value;
 }
 
 async function saveTextbookStore(input: unknown): Promise<TextbookStore> {
@@ -9075,20 +9232,26 @@ async function saveTextbookStore(input: unknown): Promise<TextbookStore> {
   const scope = normalizeTextbookScope(request);
   const deletedNoteKeys = normalizeDeletedTextbookNoteKeys(request.deletedNoteKeys);
   const normalized = removeDeletedTextbookNotes(normalizeTextbookStore(request.store, scope), deletedNoteKeys, scope);
-  const localStore = await readLocalTextbookStore(scope.courseId, scope.mindMapId);
-  const mergedLocalStore = removeDeletedTextbookNotes(mergeTextbookStores(localStore, normalized, scope), deletedNoteKeys, scope);
-  await writeLocalTextbookStore(scope.courseId, scope.mindMapId, mergedLocalStore);
-  try {
-    const runtime = await getMysqlRuntime();
-    const remoteCurrentStore = await readTextbookStoreFromMysql(runtime, scope);
-    const storeToSync = removeDeletedTextbookNotes(mergeTextbookStores(remoteCurrentStore, mergedLocalStore, scope), deletedNoteKeys, scope);
-    const remoteStore = await writeTextbookStoreToMysql(runtime, storeToSync, scope);
-    await writeLocalTextbookStore(scope.courseId, scope.mindMapId, remoteStore);
-    return remoteStore;
-  } catch (error) {
-    console.warn("Textbook MySQL save unavailable, local snapshot kept.", error);
-    return mergedLocalStore;
+  const provider = createTextbookStorageProvider(scope);
+  const result = await writeDbFirstStore(
+    {
+      ...provider,
+      writeDatabase: async (store) => {
+        const runtime = await getMysqlRuntime();
+        const remoteCurrentStore = await readTextbookStoreFromMysql(runtime, scope);
+        const storeToSync = removeDeletedTextbookNotes(mergeTextbookStores(remoteCurrentStore, store, scope), deletedNoteKeys, scope);
+        return await writeTextbookStoreToMysql(runtime, storeToSync, scope);
+      }
+    },
+    normalized
+  );
+  if (result.databaseAvailable) {
+    await clearTextbookScopeDirty(scope);
+    await markTextbookScopeDatabaseBacked(scope);
+  } else {
+    await markTextbookScopeDirty(scope);
   }
+  return result.value;
 }
 
 async function chooseTextbookPdf(event: IpcMainInvokeEvent, input: unknown): Promise<TextbookAsset | null> {
@@ -9112,21 +9275,8 @@ async function readTextbookPdfBytes(input: unknown): Promise<ArrayBuffer> {
   const request = input && typeof input === "object" ? input as { assetId?: unknown; courseId?: unknown; mindMapId?: unknown } : {};
   const scope = normalizeTextbookScope(request);
   const assetId = normalizeId(request.assetId, "Textbook asset id");
-  const localStore = await readLocalTextbookStore(scope.courseId, scope.mindMapId);
-  let asset = localStore.assets.find((item) => item.id === assetId) ?? null;
-
-  if (!asset) {
-    try {
-      const runtime = await getMysqlRuntime();
-      const remoteStore = await readTextbookStoreFromMysql(runtime, scope);
-      asset = remoteStore.assets.find((item) => item.id === assetId) ?? null;
-      if (asset) {
-        await writeLocalTextbookStore(scope.courseId, scope.mindMapId, mergeTextbookStores(remoteStore, localStore, scope));
-      }
-    } catch {
-      asset = null;
-    }
-  }
+  const store = await loadTextbookStore(scope);
+  const asset = store.assets.find((item) => item.id === assetId) ?? null;
 
   const filePath = asset?.filePath || resolveTextbookAssetPath(assetId);
   if (!asset || !filePath || path.extname(filePath).toLowerCase() !== ".pdf") {
