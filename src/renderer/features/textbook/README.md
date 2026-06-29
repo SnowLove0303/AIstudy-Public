@@ -25,6 +25,7 @@
 - PDF 阅读走 `aistudy-pdf` 特权协议，不把 PDF 二进制塞进导图或 Word 快照。
 - 当前资产记录保存 PDF 文件路径；跨机器迁移前必须重新确认路径相对化和资产复制策略。
 - 笔记快照沿用 `aistudy-word`/canvas-editor 结构，载入 Word 文档时走现有 `aistudyKnowledgeDocuments` API。
+- 教材笔记支持 canvas-editor 原生上下标元素和常用数学字符模板，`D_f`、`R_f`、`x^2` 等应保存为富文本快照结构，不退化成普通字符串。
 
 ## 文件
 

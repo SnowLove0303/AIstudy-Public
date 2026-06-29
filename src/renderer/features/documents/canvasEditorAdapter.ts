@@ -4,6 +4,7 @@ import type {
   KnowledgeDocumentContent,
   KnowledgeDocumentEditorHandle,
   KnowledgeDocumentFormatState,
+  KnowledgeDocumentInlineElement,
   KnowledgeDocumentListType,
   KnowledgeDocumentSnapshot
 } from "./knowledgeDocumentTypes";
@@ -338,6 +339,17 @@ function inheritDocumentInputStyle(content: IEditorData, range: CanvasRange) {
     },
     changed: true
   };
+}
+
+function toCanvasInlineElements(elements: KnowledgeDocumentInlineElement[]): IElement[] {
+  return elements
+    .map((element) => {
+      const value = toElementText(element.value);
+      if (!value) return null;
+      const type = element.type && element.type !== "text" ? element.type : undefined;
+      return { value, ...(type ? { type } : {}) } as IElement;
+    })
+    .filter((element): element is IElement => Boolean(element));
 }
 
 function restoreRange(editor: CanvasEditorInstance, range: CanvasRange, mainLength: number) {
@@ -1062,6 +1074,11 @@ export async function createCanvasDocumentEditor(
         return;
       }
       runFormatCommand(() => editor.command.executeList(type === "ul" ? ListType.UL : ListType.OL, type === "ul" ? ListStyle.DISC : ListStyle.DECIMAL));
+    },
+    insertInlineElements: (elements) => {
+      const canvasElements = toCanvasInlineElements(elements);
+      if (canvasElements.length === 0) return;
+      runFormatCommand(() => editor.command.executeInsertElementList(canvasElements));
     },
     cancelBlankListOnEnter,
     insertTable: (rows, cols) => {

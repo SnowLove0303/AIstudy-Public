@@ -3354,6 +3354,7 @@ h3 {
 }
 
 .textbook-note-editor {
+  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
@@ -3385,6 +3386,60 @@ h3 {
   border-color: rgba(31, 111, 209, 0.32);
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+.textbook-math-tools {
+  display: inline-flex;
+  align-items: center;
+}
+
+.textbook-math-panel {
+  position: absolute;
+  top: 43px;
+  right: 10px;
+  z-index: 12;
+  display: grid;
+  gap: 8px;
+  width: min(300px, calc(100% - 20px));
+  padding: 10px;
+  border: 1px solid rgba(123, 145, 169, 0.22);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(23, 31, 45, 0.14);
+}
+
+.textbook-math-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 6px;
+}
+
+.textbook-math-section + .textbook-math-section {
+  padding-top: 8px;
+  border-top: 1px solid rgba(123, 145, 169, 0.14);
+}
+
+.textbook-math-panel button {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(123, 145, 169, 0.16);
+  border-radius: 7px;
+  background: #fbfcfd;
+  color: var(--text-primary);
+  font-family: "Times New Roman", "Cambria Math", "Microsoft YaHei", serif;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.textbook-math-panel button:hover {
+  border-color: rgba(31, 111, 209, 0.32);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.textbook-math-panel sub,
+.textbook-math-panel sup {
+  font-size: 0.7em;
 }
 
 .textbook-note-editor-host {

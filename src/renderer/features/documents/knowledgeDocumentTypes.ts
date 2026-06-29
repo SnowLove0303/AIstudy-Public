@@ -62,6 +62,10 @@ export type KnowledgeDocumentCommand =
 export type KnowledgeDocumentAlignment = "left" | "center" | "right" | "alignment" | "justify";
 export type KnowledgeDocumentTitleLevel = "paragraph" | "first" | "second" | "third" | "fourth" | "fifth" | "sixth";
 export type KnowledgeDocumentListType = "none" | "ul" | "ol";
+export type KnowledgeDocumentInlineElement = {
+  value: string;
+  type?: "text" | "superscript" | "subscript";
+};
 
 export type KnowledgeDocumentFormatState = {
   fontFamily: string;
@@ -90,6 +94,7 @@ export type KnowledgeDocumentEditorHandle = {
   setTitleLevel: (level: KnowledgeDocumentTitleLevel) => void;
   setAlignment: (alignment: KnowledgeDocumentAlignment) => void;
   setList: (type: KnowledgeDocumentListType) => void;
+  insertInlineElements: (elements: KnowledgeDocumentInlineElement[]) => void;
   cancelBlankListOnEnter: () => boolean;
   insertTable: (rows: number, cols: number) => void;
   startFormatPainter: (reusable: boolean) => boolean;
