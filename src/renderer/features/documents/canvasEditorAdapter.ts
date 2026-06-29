@@ -2,6 +2,7 @@ import type { IEditorData, IElement, IRangeStyle } from "@hufe921/canvas-editor"
 import type {
   KnowledgeDocumentAlignment,
   KnowledgeDocumentColumnCount,
+  KnowledgeDocumentColumnLayout,
   KnowledgeDocumentContent,
   KnowledgeDocumentEditorHandle,
   KnowledgeDocumentFormatState,
@@ -313,6 +314,55 @@ function getColumnBlockContentValues(element: KnowledgeDocumentColumnBlockElemen
   const contentCells = cells.filter((cell) => !cell.disabled);
 
   return Array.from({ length: columns }, (_, index) => getColumnCellElements(contentCells[index]));
+}
+
+function elementListStartsWithLineBreak(elements: IElement[]) {
+  const firstText = elements.map((element) => toElementText(element.value)).find((value) => value.length > 0) ?? "";
+  return firstText.startsWith("\n") || firstText.startsWith(ZERO_WIDTH_BREAK);
+}
+
+function elementListEndsWithLineBreak(elements: IElement[]) {
+  const lastText = [...elements].reverse().map((element) => toElementText(element.value)).find((value) => value.length > 0) ?? "";
+  return lastText.endsWith("\n") || lastText.endsWith(ZERO_WIDTH_BREAK);
+}
+
+function createColumnMergeBreakElement(previousColumn: IElement[]): IElement {
+  const styleSource = [...previousColumn].reverse().find(isTextElement);
+  return styleSource ? ({ ...cleanColumnCellElement(styleSource), value: "\n" } as IElement) : ({ value: "\n" } as IElement);
+}
+
+function mergeColumnBlockToElements(element: KnowledgeDocumentColumnBlockElement): IElement[] {
+  const columns = normalizeDocumentColumnCount(element.aistudyColumnCount);
+  const columnValues = getColumnBlockContentValues(element, columns);
+  const merged: IElement[] = [];
+
+  for (const values of columnValues) {
+    const column = values;
+    if (!column.some((item) => !isBlankTextElement(item))) continue;
+    if (merged.length > 0 && !elementListEndsWithLineBreak(merged) && !elementListStartsWithLineBreak(column)) {
+      merged.push(createColumnMergeBreakElement(merged));
+    }
+    merged.push(...column);
+  }
+
+  return merged;
+}
+
+function mergeColumnBlocksInElementList(elements: IElement[]) {
+  let changed = false;
+  const merged: IElement[] = [];
+  for (const element of elements) {
+    if (!isDocumentColumnBlockElement(element)) {
+      merged.push(element);
+      continue;
+    }
+    changed = true;
+    merged.push(...mergeColumnBlockToElements(element));
+  }
+  return {
+    changed,
+    elements: merged.length > 0 ? merged : [{ value: "" } as IElement]
+  };
 }
 
 function splitElementByLineBreaks(element: IElement): IElement[] {
@@ -743,8 +793,34 @@ export async function createCanvasDocumentEditor(
       main: content.main.map((element) => (isDocumentColumnBlockElement(element) ? normalizeColumnBlockElement(element) : element))
     };
   };
-  const convertDocumentToColumnBlock = (columns: KnowledgeDocumentColumnCount) => {
+  const applyColumnLayout = (columns: KnowledgeDocumentColumnLayout) => {
     const content = normalizeLiveEditorData(editor.command.getValue(DOCUMENT_GET_VALUE_OPTIONS).data as KnowledgeDocumentContent);
+    const mergedColumns = mergeColumnBlocksInElementList(content.main);
+    if (columns === 1) {
+      if (!mergedColumns.changed) return;
+      editor.command.executeSetValue(
+        {
+          ...content,
+          main: normalizeElementList(mergedColumns.elements as KnowledgeDocumentContent["main"])
+        },
+        { isSetCursor: true }
+      );
+      return;
+    }
+
+    if (mergedColumns.changed) {
+      const main = mergedColumns.elements.filter((element) => !isBlankTextElement(element));
+      const columnValues = splitElementsIntoColumns(main, columns);
+      editor.command.executeSetValue(
+        {
+          ...content,
+          main: [createColumnBlockFromValues(columns, columnValues)]
+        },
+        { isSetCursor: true }
+      );
+      return;
+    }
+
     const main = content.main.filter((element) => !isBlankTextElement(element));
     if (!canConvertMainToColumnBlock(main)) {
       editor.command.executeInsertElementList([createColumnBlockElement(columns)]);
@@ -1306,7 +1382,10 @@ export async function createCanvasDocumentEditor(
       runFormatCommand(() => editor.command.executeInsertTable(rows, cols));
     },
     insertColumnBlock: (columns) => {
-      runFormatCommand(() => convertDocumentToColumnBlock(columns));
+      runFormatCommand(() => applyColumnLayout(columns));
+    },
+    setColumnLayout: (columns) => {
+      runFormatCommand(() => applyColumnLayout(columns));
     },
     startFormatPainter: (reusable) => {
       if (!restoreRememberedRange()) return false;

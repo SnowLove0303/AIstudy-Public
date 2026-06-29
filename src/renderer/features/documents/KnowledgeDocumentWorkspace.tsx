@@ -9,6 +9,7 @@ import {
   Bot,
   ChevronLeft,
   ChevronRight,
+  Columns,
   Columns2,
   Columns3,
   FileDown,
@@ -46,6 +47,7 @@ import {
 import type {
   KnowledgeDocumentEditorHandle,
   KnowledgeDocumentColumnCount,
+  KnowledgeDocumentColumnLayout,
   KnowledgeDocumentFormatState,
   KnowledgeDocumentRecord,
   KnowledgeDocumentSaveInput,
@@ -338,6 +340,7 @@ type DocumentFormatPanelProps = {
   onList: (type: DocumentListType) => void;
   onInsertTable: () => void;
   onInsertColumnBlock: (columns: KnowledgeDocumentColumnCount) => void;
+  onSetColumnLayout: (columns: KnowledgeDocumentColumnLayout) => void;
   onStartSingleUseFormatBrush: () => void;
   onToggleReusableFormatBrush: () => void;
 };
@@ -358,6 +361,7 @@ function DocumentFormatPanel({
   onList,
   onInsertTable,
   onInsertColumnBlock,
+  onSetColumnLayout,
   onStartSingleUseFormatBrush,
   onToggleReusableFormatBrush
 }: DocumentFormatPanelProps) {
@@ -508,6 +512,10 @@ function DocumentFormatPanel({
           <button type="button" title="表格" onClick={onInsertTable} disabled={disabled}>
             <Table2 size={14} />
             <span>表格</span>
+          </button>
+          <button type="button" title="单栏" onClick={() => onSetColumnLayout(1)} disabled={disabled}>
+            <Columns size={14} />
+            <span>单栏</span>
           </button>
           <button type="button" title="双栏" onClick={() => onInsertColumnBlock(2)} disabled={disabled}>
             <Columns2 size={14} />
@@ -1599,6 +1607,7 @@ export function KnowledgeDocumentWorkspace({
           onList={(type) => editorRef.current?.setList(type)}
           onInsertTable={() => editorRef.current?.insertTable(3, 3)}
           onInsertColumnBlock={(columns) => editorRef.current?.insertColumnBlock(columns)}
+          onSetColumnLayout={(columns) => editorRef.current?.setColumnLayout(columns)}
           onStartSingleUseFormatBrush={startSingleUseFormatBrush}
           onToggleReusableFormatBrush={toggleReusableFormatBrush}
         />,

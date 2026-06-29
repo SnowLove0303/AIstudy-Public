@@ -31,6 +31,22 @@ function createSnapshot(main) {
   };
 }
 
+function readCellText(cell) {
+  return Array.isArray(cell?.value) ? cell.value.map((element) => String(element?.value ?? "")).join("") : "";
+}
+
+function mergeColumnBlockTextForPolicy(block) {
+  const cells = block.trList?.[0]?.tdList?.filter((cell) => !cell.disabled) ?? [];
+  let text = "";
+  for (const cell of cells) {
+    const value = readCellText(cell);
+    if (!value.trim()) continue;
+    if (text && !text.endsWith("\n") && !value.startsWith("\n")) text += "\n";
+    text += value;
+  }
+  return text;
+}
+
 async function readDocumentXml(snapshot) {
   const buffer = await createKnowledgeDocumentDocxBuffer({ title: "document-columns-qa", snapshot });
   const zip = await JSZip.loadAsync(buffer);
@@ -98,6 +114,29 @@ assert(normalizedColumnBlock.borderType === "empty", "MCP snapshot normalization
 assert(Array.isArray(normalizedColumnBlock.trList?.[0]?.tdList), "MCP snapshot normalization should preserve table cells");
 assert(normalizedColumnBlock.trList[0].tdList[2].borderTypes?.includes("left"), "MCP snapshot normalization should preserve the center divider cell border");
 assert(normalizedColumnBlock.trList[0].tdList[1].disabled === true, "MCP snapshot normalization should preserve column spacer cells");
+assert(
+  mergeColumnBlockTextForPolicy(normalizedColumnBlock) === "左栏内容\n右栏内容",
+  "column close policy should merge content columns in reading order and skip spacer cells"
+);
+
+const noExtraBreakColumnBlock = {
+  ...normalizedColumnBlock,
+  trList: [
+    {
+      height: 42,
+      tdList: [
+        { colspan: 1, rowspan: 1, value: [{ value: "左栏内容\n" }] },
+        { colspan: 1, rowspan: 1, value: [], disabled: true, deletable: false },
+        { colspan: 1, rowspan: 1, value: [], disabled: true, deletable: false, borderTypes: ["left"] },
+        { colspan: 1, rowspan: 1, value: [{ value: "右栏内容" }] }
+      ]
+    }
+  ]
+};
+assert(
+  mergeColumnBlockTextForPolicy(noExtraBreakColumnBlock) === "左栏内容\n右栏内容",
+  "column close policy should not add duplicate line breaks between columns"
+);
 
 const normalTableXml = await readDocumentXml(createSnapshot([
   {
