@@ -352,6 +352,139 @@ function toCanvasInlineElements(elements: KnowledgeDocumentInlineElement[]): IEl
     .filter((element): element is IElement => Boolean(element));
 }
 
+function appendTextElement(elements: IElement[], value: string, type?: "superscript" | "subscript") {
+  if (!value) return;
+  elements.push({ value, ...(type ? { type } : {}) } as IElement);
+}
+
+function parseLatexInline(value: string): IElement[] {
+  const normalized = value
+    .replace(/\\left|\\right/g, "")
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}")
+    .replace(/\\mid/g, "|")
+    .replace(/\\mathbb\{R\}/g, "ℝ")
+    .replace(/\\mathbb\{N\}/g, "ℕ")
+    .replace(/\\mathbb\{Z\}/g, "ℤ")
+    .replace(/\\mathbb\{Q\}/g, "ℚ")
+    .replace(/\\neq|\\ne/g, "≠")
+    .replace(/\\geq/g, "≥")
+    .replace(/\\leq/g, "≤")
+    .replace(/\\infty/g, "∞")
+    .replace(/\\in/g, "∈")
+    .replace(/\\to|\\rightarrow/g, "→")
+    .replace(/\\cup/g, "∪")
+    .replace(/\\cap/g, "∩")
+    .replace(/\\sqrt\{([^{}]+)\}/g, "√$1")
+    .replace(/\\[,;! ]/g, " ")
+    .replace(/\\/g, "");
+  return parseAsciiMathInline(normalized);
+}
+
+function parseAsciiMathInline(value: string): IElement[] {
+  const elements: IElement[] = [];
+  const pattern = /([A-Za-z])([_^])(\{[^{}]{1,12}\}|[-+]?\d{1,3}|[A-Za-z])/g;
+  let cursor = 0;
+  let matched = false;
+  for (const match of value.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    appendTextElement(elements, value.slice(cursor, index));
+    appendTextElement(elements, match[1]);
+    appendTextElement(elements, match[3].replace(/^\{|\}$/g, ""), match[2] === "_" ? "subscript" : "superscript");
+    cursor = index + match[0].length;
+    matched = true;
+  }
+  appendTextElement(elements, value.slice(cursor));
+  return matched ? elements : [{ value } as IElement];
+}
+
+function parseMathMlNode(node: Element, inheritedType?: "superscript" | "subscript"): IElement[] {
+  const tagName = node.tagName.toLowerCase();
+  if (tagName === "annotation") {
+    return [];
+  }
+  if (tagName === "msub" || tagName === "msup") {
+    const children = Array.from(node.children);
+    return [
+      ...parseDomMathElements(children[0], inheritedType),
+      ...parseDomMathElements(children[1], tagName === "msub" ? "subscript" : "superscript")
+    ];
+  }
+  if (tagName === "msubsup") {
+    const children = Array.from(node.children);
+    return [
+      ...parseDomMathElements(children[0], inheritedType),
+      ...parseDomMathElements(children[1], "subscript"),
+      ...parseDomMathElements(children[2], "superscript")
+    ];
+  }
+  if (tagName === "mfrac") {
+    const children = Array.from(node.children);
+    return [
+      { value: "(" } as IElement,
+      ...parseDomMathElements(children[0], inheritedType),
+      { value: ")/(" } as IElement,
+      ...parseDomMathElements(children[1], inheritedType),
+      { value: ")" } as IElement
+    ];
+  }
+  if (tagName === "msqrt") {
+    return [{ value: "√" } as IElement, ...Array.from(node.childNodes).flatMap((child) => parseDomMathElements(child, inheritedType))];
+  }
+  return Array.from(node.childNodes).flatMap((child) => parseDomMathElements(child, inheritedType));
+}
+
+function parseDomMathElements(node: Node | undefined, inheritedType?: "superscript" | "subscript"): IElement[] {
+  if (!node) return [];
+  if (node.nodeType === Node.TEXT_NODE) {
+    const value = node.textContent ?? "";
+    return value ? [{ value, ...(inheritedType ? { type: inheritedType } : {}) } as IElement] : [];
+  }
+  if (!(node instanceof Element)) return [];
+
+  const tagName = node.tagName.toLowerCase();
+  if (tagName === "script" || tagName === "style") return [];
+  if (tagName === "br") return [{ value: "\n" } as IElement];
+
+  if (node.classList.contains("katex")) {
+    const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
+    const latex = annotation?.textContent?.trim();
+    if (latex) return parseLatexInline(latex);
+    const math = node.querySelector("math");
+    return math ? parseMathMlNode(math) : [];
+  }
+
+  if (tagName === "math") return parseMathMlNode(node);
+  if (tagName === "sup") return Array.from(node.childNodes).flatMap((child) => parseDomMathElements(child, "superscript"));
+  if (tagName === "sub") return Array.from(node.childNodes).flatMap((child) => parseDomMathElements(child, "subscript"));
+
+  const childElements = Array.from(node.childNodes).flatMap((child) => parseDomMathElements(child, inheritedType));
+  if (/^(p|div|li|section|article|h[1-6])$/.test(tagName) && childElements.length > 0) {
+    const last = childElements[childElements.length - 1];
+    if (!toElementText(last.value).endsWith("\n")) childElements.push({ value: "\n" } as IElement);
+  }
+  return childElements;
+}
+
+function clipboardHasMathHtml(html: string) {
+  return /<(math|sup|sub)\b/i.test(html) || /class=["'][^"']*katex/i.test(html) || /application\/x-tex/i.test(html);
+}
+
+function parseClipboardMathElements(data: DataTransfer | null): IElement[] | null {
+  if (!data) return null;
+  const html = data.getData("text/html");
+  if (html && clipboardHasMathHtml(html)) {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const elements = parseDomMathElements(document.body).filter((element) => toElementText(element.value).length > 0);
+    if (elements.some((element) => element.type === "superscript" || element.type === "subscript")) return elements;
+  }
+
+  const text = data.getData("text/plain");
+  if (!/[A-Za-z][_^](?:\{[^{}]{1,12}\}|[-+]?\d{1,3}|[A-Za-z])/.test(text)) return null;
+  const elements = parseAsciiMathInline(text);
+  return elements.some((element) => element.type === "superscript" || element.type === "subscript") ? elements : null;
+}
+
 function restoreRange(editor: CanvasEditorInstance, range: CanvasRange, mainLength: number) {
   const maxIndex = Math.max(0, mainLength - 1);
   editor.command.executeSetRange(
@@ -726,6 +859,14 @@ export async function createCanvasDocumentEditor(
     rememberRange();
     scheduleSnapshot();
   };
+  const handlePaste = (event: ClipboardEvent) => {
+    markUserEdited();
+    const elements = parseClipboardMathElements(event.clipboardData);
+    if (!elements) return;
+    event.preventDefault();
+    event.stopPropagation();
+    runFormatCommand(() => editor.command.executeInsertElementList(elements));
+  };
   const normalizeOrderedLists = (content: IEditorData) => {
     let changed = false;
     let activeListId: string | null = null;
@@ -971,7 +1112,7 @@ export async function createCanvasDocumentEditor(
   container.addEventListener(FAST_SELECTION_CHANGE_EVENT, handleFastSelectionRangeChange);
   container.addEventListener("beforeinput", handleBeforeInput, true);
   container.addEventListener("keydown", handleKeyDown, true);
-  container.addEventListener("paste", markUserEdited, true);
+  container.addEventListener("paste", handlePaste, true);
   container.addEventListener("cut", markUserEdited, true);
   container.addEventListener("drop", markUserEdited, true);
   container.addEventListener("compositionstart", markUserEdited, true);
@@ -1116,7 +1257,7 @@ export async function createCanvasDocumentEditor(
       container.removeEventListener(FAST_SELECTION_CHANGE_EVENT, handleFastSelectionRangeChange);
       container.removeEventListener("beforeinput", handleBeforeInput, true);
       container.removeEventListener("keydown", handleKeyDown, true);
-      container.removeEventListener("paste", markUserEdited, true);
+      container.removeEventListener("paste", handlePaste, true);
       container.removeEventListener("cut", markUserEdited, true);
       container.removeEventListener("drop", markUserEdited, true);
       container.removeEventListener("compositionstart", markUserEdited, true);
