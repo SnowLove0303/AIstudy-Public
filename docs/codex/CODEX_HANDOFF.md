@@ -116,7 +116,7 @@ AISTUDY_PUBLIC_RUNTIME_ROOT
 ```text
 config                 MySQL 配置
 state                  courses.json、pending 队列、教材本地缓存、待同步标记和数据库接管标记等
-runtime                Chrome profile、端口状态、信息采集运行目录
+runtime                端口状态、信息采集运行目录
 assets                 大文件和后续素材
 updates                更新安装包下载
 backups                备份
@@ -146,7 +146,7 @@ AIstudyPublicData/config/mysql.config.json
 
 MySQL 配置优先级从低到高是 AIstudy 管理服务 `%ProgramData%\AIstudy\mysql\my.ini`、`%ProgramData%\AIstudy\mysql.config.json`、`%ProgramData%\AIstudy\AIstudyPublicData\config\mysql.config.json`、`%ProgramData%\AIstudy\AIstudyUserData\mysql.config.json`、exe 旁边 `mysql.config.json`、数据根 `config/mysql.config.json`、Electron `userData/mysql.config.json`，最后由 `AISTUDY_PUBLIC_MYSQL_*` 环境变量覆盖连接四项。数据库名和表名仍固定，不从配置覆盖。
 
-纯净发行版原则：课程分区属于数据库正式数据，不应依赖打包目录里的本地 `courses.json` 镜像来呈现。`npm run dist:oneclick` 会在最终 NSIS 重打包前移除 `win-unpacked` 中的 `AIstudyPublicData`、`AIstudyUserData` 和运行期状态，并用守卫阻断 `courses.json`、`course-pending-operations.json`、`chrome-ports.json`、`mysql.config.json` 等文件进入安装源。安装后应自动检索本机可用的公开版数据库配置或 AIstudy 管理的本机数据库服务，并建立到固定 `aistudy_public` 的连接；如果数据库不可用，UI 必须明确这是本机镜像/本机模式，而不能让用户误以为数据库仍然连接。
+纯净发行版原则：课程分区属于数据库正式数据，不应依赖打包目录里的本地 `courses.json` 镜像来呈现。`npm run dist:oneclick` 会在最终 NSIS 重打包前移除 `win-unpacked` 中的 `AIstudyPublicData`、`AIstudyUserData` 和运行期状态，并用守卫阻断 `courses.json`、`course-pending-operations.json`、`chrome-ports.json`、`mysql.config.json` 等文件进入安装源。安装后应自动检索本机可用的公开版数据库配置或 AIstudy 管理的本机数据库服务，并建立到固定 `aistudy_public` 的连接；如果数据库不可用，UI 必须明确这是本机镜像/本机模式，而不能让用户误以为数据库仍然连接。Chrome 固定端口的真实登录态不属于安装包初始数据，也不应随 `win-unpacked` 清理丢失；生产环境优先放在稳定运行根 `F:\AIstudyPublicCleanData\runtime\chrome-profiles`，JSON/MySQL 只保存端口识别元数据，旧 exe 旁 `AIstudyPublicData\runtime\chrome-profiles` 会在启动端口前非破坏性迁移。
 
 DB-first StorageProvider 基线：知识库相关模块必须以数据库为正式事实源，`electron/storageProvider.ts` 只允许把本地 JSON 作为断连兜底缓存。模块接入时要声明并接入同一套能力：自动发现 MySQL 配置或 AIstudy 管理服务、自动连接固定 `aistudy_public`、自动初始化缺失数据表、数据库读写、缓存回写、断连 pending/dirty 标记、恢复后重放或提拔缓存。数据库读取成功后必须刷新本地缓存，包括空数据库结果，避免旧 JSON 在纯净安装或重连后成为第二套事实源。后续课程、导图、文档、教材、考试和资产继续拆模块时，不要让每个模块私自实现一套连接、建表、兜底和同步逻辑。
 
@@ -446,6 +446,7 @@ Word 文档：
 
 - 固定端口平台包含豆包、ChatGPT、Bilibili、知乎、智联招聘、BOSS 直聘、小红书。
 - 端口页只负责登录、状态检测和打开目标页面；网页内部点击、输入和读取交给 AI 助手、信息采集或外部 MCP 客户端。
+- 固定端口登录态由每个平台独立 Chrome profile 持有。生产包默认使用 `F:\AIstudyPublicCleanData\runtime\chrome-profiles\{platform}-{port}`，避免重新打包、更新安装目录或清理便携运行目录时丢失登录 cookie；`chrome_port_states` 和 `chrome-ports.json` 只保存“已识别登录”的元数据，不保存凭据。
 
 更新：
 
@@ -703,7 +704,7 @@ electron/main.ts
 ## 13. 当前查漏结果
 
 - `src/renderer/features/textbook/` 原本缺 README，本轮已补齐；后续教材功能变化要同步维护该 README。
-- `scripts/mcp/aistudy-mcp-server.mjs` 的 Chrome 端口平台列表缺少 `xiaohongshu`，而 `electron/main.ts`、`electron/mcp/controller.ts` 和 MCP 文档已经包含小红书 `9235`；后续改 MCP 端口能力时要先同步这里。
+- `scripts/mcp/aistudy-mcp-server.mjs` 的 Chrome 端口平台列表已补齐 `xiaohongshu`，并与主进程、MCP controller 和 MCP 文档保持一致；后续改端口平台时仍必须同步 UI、主进程、外部 MCP server 和文档。
 - `docs/deployment-new-machine.md` 已改为当前版本通用安装包示例；具体版本仍必须以 `package.json`、`docs/updates/INDEX.md` 和 `release/AIstudy-Setup-*.exe` 为准。
 - `docs/ARCHITECTURE.md` 的 “Current Implemented Surfaces” 已同步到 `0.1.76`，并补充教材、DB-first 边界、QA 和打包 manifest 规则。
 - `electron/main.ts` 仍承载大量业务服务逻辑，但教材 PDF 批注已经抽到 `electron/textbookAnnotationService.ts`。继续扩展考试、教材、采集或 MCP 时，优先抽到独立 main-side service 文件，再通过 preload 暴露，不要继续扩大主进程巨文件。

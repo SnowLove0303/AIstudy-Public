@@ -915,15 +915,83 @@ function getAistudyDataPath(...segments: string[]) {
 function getChromePortRuntimeRoot() {
   const configuredRoot = process.env.AISTUDY_PUBLIC_RUNTIME_ROOT?.trim() || process.env.AISTUDY_RUNTIME_ROOT?.trim();
   if (configuredRoot) return configuredRoot;
+  if (!isDev && existsSync("F:\\")) {
+    return path.join("F:\\", PUBLIC_CLEAN_DATA_ROOT_NAME, "runtime");
+  }
   return getAistudyDataPath("runtime");
 }
 
+function getLegacyChromePortRuntimeRoot() {
+  if (process.env.AISTUDY_PUBLIC_RUNTIME_ROOT?.trim() || process.env.AISTUDY_RUNTIME_ROOT?.trim() || isDev) {
+    return "";
+  }
+
+  const exeDir = path.dirname(app.getPath("exe"));
+  const exeDirRoot = path.parse(exeDir).root;
+  if (!exeDirRoot || exeDirRoot.toLowerCase().startsWith("c:")) {
+    return "";
+  }
+
+  const legacyRoot = path.join(exeDir, "AIstudyPublicData", "runtime");
+  return path.resolve(legacyRoot).toLowerCase() === path.resolve(getChromePortRuntimeRoot()).toLowerCase() ? "" : legacyRoot;
+}
+
+function getChromePortProfileDirFromRuntimeRoot(runtimeRoot: string, platform: ChromePortDefinition) {
+  return path.join(runtimeRoot, "chrome-profiles", `${platform.id}-${platform.port}`);
+}
+
 function getChromePortProfileDir(platform: ChromePortDefinition) {
-  return path.join(getChromePortRuntimeRoot(), "chrome-profiles", `${platform.id}-${platform.port}`);
+  return getChromePortProfileDirFromRuntimeRoot(getChromePortRuntimeRoot(), platform);
 }
 
 function getChromePortStatePath() {
   return path.join(getChromePortRuntimeRoot(), "chrome-ports.json");
+}
+
+function getLegacyChromePortStatePath() {
+  const legacyRoot = getLegacyChromePortRuntimeRoot();
+  return legacyRoot ? path.join(legacyRoot, "chrome-ports.json") : "";
+}
+
+async function directoryHasEntries(directoryPath: string) {
+  try {
+    const entries = await fs.readdir(directoryPath);
+    return entries.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isSamePath(left: string, right: string) {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+}
+
+function isLikelyChromePortProfileDir(platform: ChromePortDefinition, directoryPath: string) {
+  return path.basename(directoryPath) === `${platform.id}-${platform.port}` && path.basename(path.dirname(directoryPath)) === "chrome-profiles";
+}
+
+async function ensureChromePortProfileDir(platform: ChromePortDefinition, savedEntry?: ChromePortSavedEntry) {
+  const profileDir = getChromePortProfileDir(platform);
+  const targetHasData = await directoryHasEntries(profileDir);
+
+  if (!targetHasData) {
+    const legacyRuntimeRoot = getLegacyChromePortRuntimeRoot();
+    const candidates = [
+      savedEntry?.profileDir,
+      legacyRuntimeRoot ? getChromePortProfileDirFromRuntimeRoot(legacyRuntimeRoot, platform) : ""
+    ].filter((candidate): candidate is string => Boolean(candidate));
+
+    for (const candidate of [...new Set(candidates)]) {
+      if (isSamePath(candidate, profileDir) || !isLikelyChromePortProfileDir(platform, candidate)) continue;
+      if (!(await directoryHasEntries(candidate))) continue;
+      await fs.mkdir(path.dirname(profileDir), { recursive: true });
+      await fs.cp(candidate, profileDir, { recursive: true, force: false, errorOnExist: false });
+      break;
+    }
+  }
+
+  await fs.mkdir(profileDir, { recursive: true });
+  return profileDir;
 }
 
 function normalizeChromePortSavedStore(value: unknown): ChromePortSavedStore {
@@ -976,13 +1044,21 @@ function mergeChromePortSavedStores(...stores: ChromePortSavedStore[]) {
   return merged;
 }
 
-async function readLocalChromePortSavedStore() {
+async function readChromePortSavedStoreFile(filePath: string): Promise<ChromePortSavedStore> {
   try {
-    const raw = await fs.readFile(getChromePortStatePath(), "utf8");
+    const raw = await fs.readFile(filePath, "utf8");
     return normalizeChromePortSavedStore(parseJsonText(raw));
   } catch {
     return { version: 1, ports: {} } satisfies ChromePortSavedStore;
   }
+}
+
+async function readLocalChromePortSavedStore() {
+  const currentStore = await readChromePortSavedStoreFile(getChromePortStatePath());
+  const legacyPath = getLegacyChromePortStatePath();
+  if (!legacyPath) return currentStore;
+  const legacyStore = await readChromePortSavedStoreFile(legacyPath);
+  return mergeChromePortSavedStores(legacyStore, currentStore);
 }
 
 async function getMysqlRuntimeForChromePortState(): Promise<MysqlRuntime | null> {
@@ -3809,8 +3885,8 @@ async function openChromePortPage(platformId: unknown, url?: unknown): Promise<C
     throw new Error("未找到 Chrome，可通过 AISTUDY_CHROME_PATH 指定 chrome.exe 路径");
   }
 
-  const profileDir = getChromePortProfileDir(platform);
-  await fs.mkdir(profileDir, { recursive: true });
+  const savedStore = await readChromePortSavedStore();
+  const profileDir = await ensureChromePortProfileDir(platform, savedStore.ports[platform.id]);
   const child = spawn(
     chromePath,
     [

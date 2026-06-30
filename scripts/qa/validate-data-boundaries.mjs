@@ -109,6 +109,15 @@ for (const directAnnotationImport of [
   }
 }
 
+if (!main.includes("ensureChromePortProfileDir") || !main.includes("AIstudyPublicCleanData")) {
+  fail("Chrome port profiles must use the stable public clean runtime root and migrate legacy exe-adjacent profiles");
+}
+
+const mcpServer = read("scripts/mcp/aistudy-mcp-server.mjs");
+if (!mcpServer.includes("AIstudyPublicCleanData") || !mcpServer.includes("xiaohongshu")) {
+  fail("external MCP chrome ports must share the stable runtime root and full platform list");
+}
+
 if (!process.exitCode) {
   console.log("data boundary policy: ok");
 }

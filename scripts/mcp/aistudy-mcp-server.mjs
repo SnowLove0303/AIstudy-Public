@@ -42,7 +42,8 @@ const chromePortDefinitions = [
   { id: "bilibili", name: "Bilibili", port: 9231, loginUrl: "https://www.bilibili.com/", hostKeyword: "bilibili.com" },
   { id: "zhihu", name: "知乎", port: 9232, loginUrl: "https://www.zhihu.com/", hostKeyword: "zhihu.com" },
   { id: "zhaopin", name: "智联招聘", port: 9233, loginUrl: "https://www.zhaopin.com/", hostKeyword: "zhaopin.com" },
-  { id: "zhipin", name: "BOSS直聘", port: 9234, loginUrl: "https://www.zhipin.com/", hostKeyword: "zhipin.com" }
+  { id: "zhipin", name: "BOSS直聘", port: 9234, loginUrl: "https://www.zhipin.com/", hostKeyword: "zhipin.com" },
+  { id: "xiaohongshu", name: "小红书", port: 9235, loginUrl: "https://www.xiaohongshu.com/explore", hostKeyword: "xiaohongshu.com" }
 ];
 
 const toolDefinitions = [
@@ -306,7 +307,7 @@ const toolDefinitions = [
       type: "object",
       additionalProperties: false,
       properties: {
-        platformId: { type: "string", enum: ["doubao", "chatgpt", "bilibili", "zhihu", "zhaopin", "zhipin"] },
+        platformId: { type: "string", enum: ["doubao", "chatgpt", "bilibili", "zhihu", "zhaopin", "zhipin", "xiaohongshu"] },
         url: { type: "string", maxLength: 2000 }
       },
       required: ["platformId"]
@@ -463,7 +464,7 @@ function createMcpTaskPlan(args = {}) {
   const documentLike = /文档|document|正文|内容/i.test(intent);
   const locatorLike = /路径|定位|locator|handoff|本地/i.test(intent);
   const searchLike = /搜索|查找|节点|node|关键词/i.test(intent) || Boolean(nodeQuery);
-  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|zhaopin|zhipin|打开|browser|port/i.test(intent);
+  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|小红书|xiaohongshu|rednote|zhaopin|zhipin|打开|browser|port/i.test(intent);
   const steps = [
     { order: 1, tool: "mcp_get_started", arguments: {}, purpose: "确认 MCP 状态、全库范围和安全规则。" },
     { order: 2, tool: "read_courses", arguments: {}, purpose: "拿到真实 courseId，避免按显示名称猜参数。" }
@@ -479,7 +480,7 @@ function createMcpTaskPlan(args = {}) {
   }
   if (browserLike) {
     steps.push({ order: order++, tool: "chrome_ports_status", arguments: {}, purpose: "读取 AIstudy 端口管理信息，确认平台、端口、登录状态和当前页面。" });
-    steps.push({ order: order++, tool: "chrome_port_open_page", arguments: { platformId: "<doubao|chatgpt|bilibili|zhihu|zhaopin|zhipin>", url: "<optionalUrl>" }, purpose: "启动或复用目标平台 Chrome，并打开页面。" });
+    steps.push({ order: order++, tool: "chrome_port_open_page", arguments: { platformId: "<doubao|chatgpt|bilibili|zhihu|zhaopin|zhipin|xiaohongshu>", url: "<optionalUrl>" }, purpose: "启动或复用目标平台 Chrome，并打开页面。" });
   } else if (locatorLike) {
     steps.push({ order: order++, tool: "resolve_course_locator", arguments: { courseId: courseId || undefined }, purpose: "生成本地 locatorPath 给其他智能体使用。" });
   } else if (documentLike) {
@@ -563,9 +564,13 @@ async function writeMcpDataChangeEvent(tool, args, data) {
 }
 
 function getChromePortRuntimeRoot() {
-  return process.env.AISTUDY_PUBLIC_RUNTIME_ROOT
-    || process.env.AISTUDY_RUNTIME_ROOT
-    || getDataPath("runtime");
+  if (process.env.AISTUDY_PUBLIC_RUNTIME_ROOT || process.env.AISTUDY_RUNTIME_ROOT) {
+    return process.env.AISTUDY_PUBLIC_RUNTIME_ROOT || process.env.AISTUDY_RUNTIME_ROOT;
+  }
+  if (process.platform === "win32" && existsSync("F:\\")) {
+    return path.join("F:\\", "AIstudyPublicCleanData", "runtime");
+  }
+  return getDataPath("runtime");
 }
 
 function getChromePortProfileDir(platform) {

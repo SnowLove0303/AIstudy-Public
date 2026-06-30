@@ -12,7 +12,8 @@ Current files:
 
 - Renderer UI must not launch Chrome directly.
 - Port probing, profile paths, CDP checks, and login-state detection are owned by Electron main.
-- Saved status is metadata only; cookies and secrets are not stored by this module. Metadata is written to the local runtime JSON and the fixed MySQL `chrome_port_states` table when MySQL is available.
+- Saved status is metadata only; cookies and secrets are not written into JSON or MySQL. Metadata is written to the local runtime JSON and the fixed MySQL `chrome_port_states` table when MySQL is available.
+- The real browser login state belongs to the per-platform Chrome profile directory. Production builds use a stable runtime root outside the app installation directory when `F:\` is available (`F:\AIstudyPublicCleanData\runtime\chrome-profiles`) so reinstalling, rebuilding, or cleaning `win-unpacked` does not erase login cookies. If an older build saved a profile under the exe-adjacent `AIstudyPublicData\runtime\chrome-profiles`, Electron main migrates it into the stable runtime root before launching Chrome.
 - Port failures affect browser-assisted features only and must not block course, mind-map, or document editing.
 - Current platform ids are `doubao`, `chatgpt`, `bilibili`, `zhihu`, `zhaopin`, `zhipin`, and `xiaohongshu`.
 

@@ -78,9 +78,9 @@ export const STORAGE_BOUNDARY_MODULES: StorageBoundaryModule[] = [
     mode: "db-first",
     owner: "main",
     mysqlTables: ["chrome_port_states"],
-    cacheFiles: ["AIstudyPublicData/runtime/chrome-ports.json"],
+    cacheFiles: ["AIstudyPublicCleanData/runtime/chrome-ports.json", "AIstudyPublicCleanData/runtime/chrome-profiles/{platform}-{port}"],
     pendingFiles: [],
-    notes: "只保存端口状态元数据，不保存 cookie 或凭据。"
+    notes: "JSON/MySQL 只保存端口状态元数据；浏览器登录态由稳定 Chrome profile 目录持有，不能打进安装包。"
   },
   {
     id: "error-logs",
