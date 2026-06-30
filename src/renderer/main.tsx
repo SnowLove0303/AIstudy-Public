@@ -1074,9 +1074,9 @@ function App() {
     void runCourseStoreCommand(() => courseApi.toggleAllSections(collapsed));
   }
 
-  function toggleCatalogTree(collapsed: boolean) {
+  function requestCatalogTree(mode: MindMapCatalogCollapseRequest["mode"]) {
     catalogCollapseNonceRef.current += 1;
-    setCatalogCollapseRequest({ collapsed, nonce: catalogCollapseNonceRef.current });
+    setCatalogCollapseRequest({ mode, nonce: catalogCollapseNonceRef.current });
   }
 
   function deleteCourseSection(section: CourseSection) {
@@ -1377,11 +1377,19 @@ function App() {
             </div>
             {!(workspaceEditorMode === "word" && detailPaneMode === "format") && mindMapOutline.length > 0 ? (
               <div className="catalog-tree-toolbar" aria-label="目录视图">
-                <button type="button" onClick={() => toggleCatalogTree(false)}>
+                <button
+                  type="button"
+                  title="展开全部；右键只展开父级"
+                  onClick={() => requestCatalogTree("expand-all")}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    requestCatalogTree("expand-branches");
+                  }}
+                >
                   <ChevronsDown size={14} />
                   <span>展开</span>
                 </button>
-                <button type="button" onClick={() => toggleCatalogTree(true)}>
+                <button type="button" onClick={() => requestCatalogTree("collapse-all")}>
                   <ChevronsRight size={14} />
                   <span>收叠</span>
                 </button>

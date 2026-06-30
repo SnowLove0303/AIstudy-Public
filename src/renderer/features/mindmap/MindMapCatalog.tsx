@@ -13,7 +13,7 @@ type MindMapCatalogProps = {
 };
 
 export type MindMapCatalogCollapseRequest = {
-  collapsed: boolean;
+  mode: "collapse-all" | "expand-all" | "expand-branches";
   nonce: number;
 };
 
@@ -50,6 +50,24 @@ function collectDefaultCollapsedPaths(items: MindMapOutlineItem[]) {
   return paths;
 }
 
+function collectLeafParentCollapsedPaths(items: MindMapOutlineItem[], paths = new Set<string>()) {
+  items.forEach((item) => {
+    const hasChildren = item.children.length > 0;
+    if (!hasChildren) return;
+    const hasBranchChild = item.children.some((child) => child.children.length > 0);
+    if (!hasBranchChild) {
+      paths.add(item.path);
+      return;
+    }
+    collectLeafParentCollapsedPaths(item.children, paths);
+  });
+  return paths;
+}
+
+function getCatalogDepthClass(level: number) {
+  return `catalog-node level-${Math.min(Math.max(level, 0), 5)}`;
+}
+
 function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderOptions) {
   return (
     <ol className="catalog-tree">
@@ -61,7 +79,7 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
         return (
           <li key={item.path} className="catalog-tree-item">
             <div
-              className={isSelected ? "catalog-node selected" : "catalog-node"}
+              className={`${getCatalogDepthClass(item.level)}${hasChildren ? " has-children" : " is-leaf"}${isSelected ? " selected" : ""}`}
               style={{ paddingLeft: 8 + item.level * 14 }}
               data-catalog-source={item.source}
               data-catalog-path={item.path}
@@ -151,7 +169,13 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, collapseReques
   React.useEffect(() => {
     if (!collapseRequest || collapseRequest.nonce === collapseRequestNonceRef.current) return;
     collapseRequestNonceRef.current = collapseRequest.nonce;
-    setCollapsedPaths(collapseRequest.collapsed ? collectCollapsiblePaths(items) : new Set());
+    if (collapseRequest.mode === "collapse-all") {
+      setCollapsedPaths(collectCollapsiblePaths(items));
+    } else if (collapseRequest.mode === "expand-branches") {
+      setCollapsedPaths(collectLeafParentCollapsedPaths(items));
+    } else {
+      setCollapsedPaths(new Set());
+    }
     setContextMenu(null);
   }, [collapseRequest, items]);
 

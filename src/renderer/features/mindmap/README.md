@@ -10,7 +10,7 @@ Current files:
 - `MindMapCanvas.tsx`: React mount boundary for the editor adapter.
 - `simpleMindMapAdapter.ts`: the only place that touches the third-party editor instance, including topic bubble right-edge resizing.
 - `mindMapSnapshot.ts`: snapshot protocol, tree normalization, stable node ids, and catalog generation.
-- `MindMapCatalog.tsx`: derived catalog UI.
+- `MindMapCatalog.tsx`: derived catalog UI, local collapse state, and hierarchy readability rules.
 - `MindMapTextFormatToolbar.tsx`: selected-node text formatting controls.
 
 ## Boundaries
@@ -30,11 +30,13 @@ Current files:
 4. Saving writes a full snapshot and lets the main process project nodes into `mind_map_nodes`.
 5. Switching to Word mode flushes pending mind-map changes first.
 6. Right-side catalog deletion removes the selected branch, its descendants, the matching master mind-map branch, and bound local node-document snapshots.
+7. The right-side catalog toolbar supports expand all, collapse all, and a right-click expand mode that opens branch headings while keeping the leaf level hidden.
 
 ## Extension Rules
 
 - Update `mindMapSnapshot.ts` before changing node identity, catalog hierarchy, or snapshot fields.
 - Add third-party editor behavior through the adapter handle, not through workspace components.
 - Catalog state such as expanded/collapsed UI is local UI state and must not become stored domain data.
+- Catalog hierarchy styling is a reading aid only. It must derive from `MindMapOutlineItem.level` and must not mutate node text format or mind-map snapshot data.
 - New exports should use adapter commands and avoid scraping DOM state.
 - Resize handles belong to topic bubbles, not editor text boxes. Dragging the right edge should resize the bubble while the text layout moves with it.

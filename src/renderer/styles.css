@@ -1413,6 +1413,23 @@ select {
   margin-bottom: 16px;
 }
 
+.detail-heading {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.detail-heading > div:first-child {
+  flex: 0 0 auto;
+  min-width: 34px;
+}
+
+.detail-heading h2 {
+  white-space: nowrap;
+  word-break: keep-all;
+  writing-mode: horizontal-tb;
+}
+
 .canvas-toolbar {
   min-width: 0;
   padding: 0 16px;
@@ -1469,6 +1486,7 @@ select {
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
+  margin-left: auto;
   padding: 3px;
   border: 1px solid rgba(123, 145, 169, 0.18);
   border-radius: 8px;
@@ -1720,7 +1738,10 @@ h3 {
 }
 
 .catalog-tree-toolbar {
-  margin-left: auto;
+  order: 2;
+  flex: 1 0 100%;
+  justify-content: flex-start;
+  margin-left: 0;
 }
 
 .course-section-toolbar button,
@@ -4326,14 +4347,15 @@ h3 {
 .catalog-tree {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .catalog-tree .catalog-tree {
-  margin-top: 4px;
+  margin-top: 2px;
+  border-left: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 .catalog-node {
@@ -4341,7 +4363,7 @@ h3 {
   grid-template-columns: 16px 6px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 8px;
-  min-height: 32px;
+  min-height: 30px;
   padding: 0 8px;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -4353,7 +4375,7 @@ h3 {
 .catalog-node:hover,
 .catalog-node:focus-visible {
   border-color: rgba(123, 145, 169, 0.18);
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.76);
   color: var(--text-primary);
 }
 
@@ -4397,6 +4419,14 @@ h3 {
   color: var(--accent);
 }
 
+.catalog-node.has-children {
+  color: #334155;
+}
+
+.catalog-node.is-leaf {
+  color: #64748b;
+}
+
 .catalog-node-mark {
   width: 5px;
   height: 5px;
@@ -4412,8 +4442,8 @@ h3 {
   min-width: 0;
   overflow: hidden;
   color: inherit;
-  font-size: 13px;
-  font-weight: 620;
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4423,6 +4453,64 @@ h3 {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1;
+  font-weight: 650;
+}
+
+.catalog-node.level-0 .catalog-node-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.catalog-node.level-0 .catalog-node-mark {
+  width: 6px;
+  height: 6px;
+  background: #2563eb;
+}
+
+.catalog-node.level-1 .catalog-node-title {
+  color: #1e3a5f;
+  font-size: 13.5px;
+  font-weight: 720;
+}
+
+.catalog-node.level-1 .catalog-node-mark {
+  background: #5b8def;
+}
+
+.catalog-node.level-2 .catalog-node-title {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.catalog-node.level-2 .catalog-node-mark {
+  background: #8aa3c7;
+}
+
+.catalog-node.level-3 .catalog-node-title {
+  color: #475569;
+  font-size: 12.5px;
+  font-weight: 630;
+}
+
+.catalog-node.level-4 .catalog-node-title,
+.catalog-node.level-5 .catalog-node-title {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 580;
+}
+
+.catalog-node.level-4 .catalog-node-mark,
+.catalog-node.level-5 .catalog-node-mark {
+  width: 4px;
+  height: 4px;
+  background: #c3ccd7;
+}
+
+.catalog-node.selected .catalog-node-title {
+  color: inherit;
+  font-weight: 740;
 }
 
 .modal-backdrop {
