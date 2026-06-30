@@ -27,6 +27,7 @@ type CatalogContextMenuState = {
 type CatalogRenderOptions = {
   selectedNodeId: string | null;
   collapsedPaths: ReadonlySet<string>;
+  branchesOnly: boolean;
   onToggle: (path: string) => void;
   onNodeSelect?: (item: MindMapOutlineItem) => void;
   onNodeContextMenu?: (event: React.MouseEvent<HTMLDivElement>, item: MindMapOutlineItem) => void;
@@ -69,9 +70,11 @@ function getCatalogDepthClass(level: number) {
 }
 
 function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderOptions) {
+  const visibleItems = options.branchesOnly ? items.filter((item) => item.children.length > 0) : items;
+
   return (
     <ol className="catalog-tree">
-      {items.map((item) => {
+      {visibleItems.map((item) => {
         const hasChildren = item.children.length > 0;
         const isCollapsed = hasChildren && options.collapsedPaths.has(item.path);
         const isSelected = Boolean(options.selectedNodeId && item.nodeId === options.selectedNodeId);
@@ -128,6 +131,7 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
 
 export function MindMapCatalog({ items, selectedNodeId, resetKey, collapseRequest, onNodeSelect, onNodeDelete, onNodeCopyDocumentPath }: MindMapCatalogProps) {
   const [collapsedPaths, setCollapsedPaths] = React.useState<Set<string>>(() => collectDefaultCollapsedPaths(items));
+  const [branchesOnly, setBranchesOnly] = React.useState(false);
   const [contextMenu, setContextMenu] = React.useState<CatalogContextMenuState | null>(null);
   const knownCollapsiblePathsRef = React.useRef<Set<string>>(collectCollapsiblePaths(items));
   const collapseRequestNonceRef = React.useRef<number | null>(null);
@@ -136,6 +140,7 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, collapseReques
     const validPaths = collectCollapsiblePaths(items);
     knownCollapsiblePathsRef.current = validPaths;
     setCollapsedPaths(collectDefaultCollapsedPaths(items));
+    setBranchesOnly(false);
     setContextMenu(null);
   }, [resetKey]);
 
@@ -171,10 +176,13 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, collapseReques
     collapseRequestNonceRef.current = collapseRequest.nonce;
     if (collapseRequest.mode === "collapse-all") {
       setCollapsedPaths(collectCollapsiblePaths(items));
+      setBranchesOnly(false);
     } else if (collapseRequest.mode === "expand-branches") {
       setCollapsedPaths(collectLeafParentCollapsedPaths(items));
+      setBranchesOnly(true);
     } else {
       setCollapsedPaths(new Set());
+      setBranchesOnly(false);
     }
     setContextMenu(null);
   }, [collapseRequest, items]);
@@ -259,6 +267,7 @@ export function MindMapCatalog({ items, selectedNodeId, resetKey, collapseReques
       {renderCatalogItems(items, {
         selectedNodeId,
         collapsedPaths,
+        branchesOnly,
         onToggle: togglePath,
         onNodeSelect,
         onNodeContextMenu: openContextMenu

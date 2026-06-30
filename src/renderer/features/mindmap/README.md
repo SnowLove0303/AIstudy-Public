@@ -30,7 +30,7 @@ Current files:
 4. Saving writes a full snapshot and lets the main process project nodes into `mind_map_nodes`.
 5. Switching to Word mode flushes pending mind-map changes first.
 6. Right-side catalog deletion removes the selected branch, its descendants, the matching master mind-map branch, and bound local node-document snapshots.
-7. The right-side catalog toolbar supports expand all, collapse all, and a right-click expand mode that opens branch headings while keeping the leaf level hidden.
+7. The right-side catalog toolbar supports expand all, collapse all, and a right-click expand mode that shows only branch headings while keeping leaf items hidden.
 
 ## Extension Rules
 
