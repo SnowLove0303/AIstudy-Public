@@ -21,6 +21,8 @@ export type TextbookAsset = {
   byteSize: number;
   pageCount: number;
   lastPage: number;
+  lastBindingNodeId: string | null;
+  lastZoom: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -45,6 +47,11 @@ export type TextbookStore = {
   version: 1;
   assets: TextbookAsset[];
   notes: TextbookNote[];
+};
+
+export type TextbookStoreWriteOptions = {
+  deletedNoteKeys?: Iterable<string>;
+  replaceScope?: boolean;
 };
 
 export type TextbookPdfAnnotationKind = "highlight" | "text";
@@ -78,6 +85,8 @@ type TextbookAssetRow = RowDataPacket & {
   byteSize: number | string;
   pageCount: number | string;
   lastPage: number | string;
+  lastBindingNodeId: string | null;
+  lastZoom: number | string;
   createdAt: Date | string;
   updatedAt: Date | string;
 };
@@ -118,6 +127,7 @@ type TextbookAnnotationRow = RowDataPacket & {
 };
 
 const TEXTBOOK_STORE_VERSION = 1 as const;
+const DEFAULT_ZOOM = 100;
 const protocolAssetPaths = new Map<string, string>();
 
 function createId(prefix: string) {
@@ -211,6 +221,8 @@ function normalizeAsset(value: unknown, scope?: { courseId: string; mindMapId: s
     byteSize: normalizeInteger(candidate.byteSize, 0, 0, Number.MAX_SAFE_INTEGER),
     pageCount,
     lastPage,
+    lastBindingNodeId: normalizeString(candidate.lastBindingNodeId) || null,
+    lastZoom: normalizeInteger(candidate.lastZoom, DEFAULT_ZOOM, 60, 180),
     createdAt,
     updatedAt: normalizeString(candidate.updatedAt) || createdAt
   };
@@ -374,6 +386,8 @@ export async function createTextbookAssetFromFile(input: {
     byteSize: stat.size,
     pageCount: await estimatePdfPageCount(filePath),
     lastPage: 1,
+    lastBindingNodeId: null,
+    lastZoom: DEFAULT_ZOOM,
     createdAt: timestamp,
     updatedAt: timestamp
   };
@@ -402,6 +416,26 @@ async function markMissingRowsDeleted(
     `UPDATE ${table} SET deleted_at = ? WHERE course_id = ? AND mind_map_id = ? AND ${idColumn} NOT IN (${placeholders}) AND deleted_at IS NULL`,
     [deletedAt, scope.courseId, scope.mindMapId, ...ids]
   );
+}
+
+async function markTextbookNotesDeleted(
+  connection: PoolConnection,
+  table: string,
+  deletedNoteKeys: Iterable<string> | undefined,
+  scope: { courseId: string; mindMapId: string },
+  deletedAt: Date
+) {
+  if (!deletedNoteKeys) return;
+  for (const key of deletedNoteKeys) {
+    const [textbookId = "", nodeId = ""] = key.split("\u0000");
+    if (!textbookId || !nodeId) continue;
+    await connection.execute(
+      `UPDATE ${table}
+       SET deleted_at = ?, updated_at = ?
+       WHERE course_id = ? AND mind_map_id = ? AND textbook_id = ? AND node_id = ? AND deleted_at IS NULL`,
+      [deletedAt, deletedAt, scope.courseId, scope.mindMapId, textbookId, nodeId]
+    );
+  }
 }
 
 function rawMysqlIdentifier(escapedIdentifier: string) {
@@ -458,6 +492,8 @@ export async function ensureTextbookTables(pool: Pool, assetTable: string, noteT
       byte_size BIGINT NOT NULL DEFAULT 0,
       page_count INT NOT NULL DEFAULT 0,
       last_page INT NOT NULL DEFAULT 1,
+      last_binding_node_id VARCHAR(96) NULL,
+      last_zoom INT NOT NULL DEFAULT 100,
       created_at DATETIME(3) NOT NULL,
       updated_at DATETIME(3) NOT NULL,
       deleted_at DATETIME(3) NULL,
@@ -466,6 +502,10 @@ export async function ensureTextbookTables(pool: Pool, assetTable: string, noteT
       KEY idx_textbook_asset_deleted (deleted_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  const assetTableName = rawMysqlIdentifier(assetTable);
+  await addMysqlColumnIfMissing(pool, assetTable, assetTableName, "last_binding_node_id", "`last_binding_node_id` VARCHAR(96) NULL AFTER `last_page`");
+  await addMysqlColumnIfMissing(pool, assetTable, assetTableName, "last_zoom", "`last_zoom` INT NOT NULL DEFAULT 100 AFTER `last_binding_node_id`");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${noteTable} (
@@ -534,7 +574,9 @@ export async function readTextbookStoreFromMysql(
 ): Promise<TextbookStore> {
   const [assetRows] = await runtime.pool.execute<TextbookAssetRow[]>(
     `SELECT id, course_id AS courseId, mind_map_id AS mindMapId, title, file_path AS filePath, file_name AS fileName,
-            byte_size AS byteSize, page_count AS pageCount, last_page AS lastPage, created_at AS createdAt, updated_at AS updatedAt
+            byte_size AS byteSize, page_count AS pageCount, last_page AS lastPage,
+            last_binding_node_id AS lastBindingNodeId, last_zoom AS lastZoom,
+            created_at AS createdAt, updated_at AS updatedAt
      FROM ${runtime.textbookAssetTable}
      WHERE course_id = ? AND mind_map_id = ? AND deleted_at IS NULL
      ORDER BY updated_at DESC`,
@@ -550,6 +592,8 @@ export async function readTextbookStoreFromMysql(
     byteSize: row.byteSize,
     pageCount: row.pageCount,
     lastPage: row.lastPage,
+    lastBindingNodeId: row.lastBindingNodeId,
+    lastZoom: row.lastZoom,
     createdAt: toIsoTimestamp(row.createdAt),
     updatedAt: toIsoTimestamp(row.updatedAt)
   }, scope)).filter((asset): asset is TextbookAsset => Boolean(asset));
@@ -588,25 +632,29 @@ export async function readTextbookStoreFromMysql(
 export async function writeTextbookStoreToMysql(
   runtime: TextbookMysqlRuntime,
   value: unknown,
-  scope: { courseId: string; mindMapId: string }
+  scope: { courseId: string; mindMapId: string },
+  options: TextbookStoreWriteOptions = {}
 ): Promise<TextbookStore> {
   const store = normalizeTextbookStore(value, scope);
   const now = new Date();
   const connection = await runtime.pool.getConnection();
   try {
     await connection.beginTransaction();
-    await markMissingRowsDeleted(connection, runtime.textbookAssetTable, "id", store.assets.map((asset) => asset.id), scope, now);
-    await markMissingRowsDeleted(connection, runtime.textbookNoteTable, "id", store.notes.map((note) => note.id), scope, now);
+    if (options.replaceScope) {
+      await markMissingRowsDeleted(connection, runtime.textbookAssetTable, "id", store.assets.map((asset) => asset.id), scope, now);
+      await markMissingRowsDeleted(connection, runtime.textbookNoteTable, "id", store.notes.map((note) => note.id), scope, now);
+    }
 
     for (const asset of store.assets) {
       await connection.execute(
         `INSERT INTO ${runtime.textbookAssetTable}
-          (id, course_id, mind_map_id, title, file_path, file_name, byte_size, page_count, last_page, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+          (id, course_id, mind_map_id, title, file_path, file_name, byte_size, page_count, last_page, last_binding_node_id, last_zoom, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
          ON DUPLICATE KEY UPDATE
           course_id = VALUES(course_id), mind_map_id = VALUES(mind_map_id),
           title = VALUES(title), file_path = VALUES(file_path), file_name = VALUES(file_name),
           byte_size = VALUES(byte_size), page_count = VALUES(page_count), last_page = VALUES(last_page),
+          last_binding_node_id = VALUES(last_binding_node_id), last_zoom = VALUES(last_zoom),
           updated_at = VALUES(updated_at), deleted_at = NULL`,
         [
           asset.id,
@@ -618,6 +666,8 @@ export async function writeTextbookStoreToMysql(
           asset.byteSize,
           asset.pageCount,
           asset.lastPage,
+          asset.lastBindingNodeId,
+          asset.lastZoom,
           toMysqlDate(asset.createdAt),
           toMysqlDate(asset.updatedAt)
         ]
@@ -652,6 +702,7 @@ export async function writeTextbookStoreToMysql(
       );
     }
 
+    await markTextbookNotesDeleted(connection, runtime.textbookNoteTable, options.deletedNoteKeys, scope, now);
     await connection.commit();
     rememberTextbookAssetPaths(store.assets);
     return store;

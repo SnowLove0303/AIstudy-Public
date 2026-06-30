@@ -202,6 +202,15 @@ type AppSection = "knowledge" | "collection" | "exam" | "assistant" | "chromePor
 type DetailPaneMode = "catalog" | "format";
 type SettingsPage = "runtime" | "mcp" | "shortcuts" | "updates" | "errorLogs";
 
+function normalizeWorkspaceEditorMode(value: unknown): WorkspaceEditorMode {
+  return value === "word" || value === "textbook" ? value : "mindmap";
+}
+
+function getCourseWorkspaceMode(store: CourseStore) {
+  const activeCourse = store.courses.find((course) => course.id === store.activeCourseId) ?? null;
+  return normalizeWorkspaceEditorMode(activeCourse?.lastWorkspaceMode);
+}
+
 declare global {
   interface Window {
     aistudyUpdates?: {
@@ -897,6 +906,7 @@ function App() {
   const [detailPaneMode, setDetailPaneMode] = React.useState<DetailPaneMode>("catalog");
   const [externalContentRevision, setExternalContentRevision] = React.useState(0);
   const catalogCollapseNonceRef = React.useRef(0);
+  const workspaceModePersistRef = React.useRef("");
 
   const openDocumentFormatPane = React.useCallback(() => {
     setDetailPaneMode("format");
@@ -923,6 +933,7 @@ function App() {
     setCourseSections(store.sections ?? []);
     setCourses(store.courses);
     setActiveCourseId(store.activeCourseId);
+    setWorkspaceEditorMode(getCourseWorkspaceMode(store));
     setHasLoadedCourseStore(true);
   }
 
@@ -1009,19 +1020,19 @@ function App() {
     }
   }, [activeCourseId, courses]);
 
+  const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
+  const sectionIds = React.useMemo(() => new Set(courseSections.map((section) => section.id)), [courseSections]);
+  const sectionNameById = React.useMemo(() => new Map(courseSections.map((section) => [section.id, section.name])), [courseSections]);
+
   React.useEffect(() => {
     setMindMapOutline([]);
     setActiveMindMapId(null);
     setSelectedMindMapNode({ id: null, title: "" });
-    setWorkspaceEditorMode("mindmap");
+    setWorkspaceEditorMode(normalizeWorkspaceEditorMode(activeCourse?.lastWorkspaceMode));
     setModeChangeRequest(null);
     setNodeSelectionRequest(null);
     setNodeDeletionRequest(null);
   }, [activeCourseId]);
-
-  const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
-  const sectionIds = React.useMemo(() => new Set(courseSections.map((section) => section.id)), [courseSections]);
-  const sectionNameById = React.useMemo(() => new Map(courseSections.map((section) => [section.id, section.name])), [courseSections]);
 
   function openCreateDialog(sectionId: string | null = activeCourse?.sectionId ?? null) {
     const validSectionId = sectionId && sectionIds.has(sectionId) ? sectionId : null;
@@ -1122,6 +1133,31 @@ function App() {
     if (mode === workspaceEditorMode) return;
     if (mode === "mindmap") setDetailPaneMode("catalog");
     setModeChangeRequest({ mode, nonce: Date.now() });
+  }
+
+  function handleWorkspaceEditorModeChanged(mode: WorkspaceEditorMode) {
+    const nextMode = normalizeWorkspaceEditorMode(mode);
+    setWorkspaceEditorMode(nextMode);
+
+    if (!hasLoadedCourseStore || !activeCourseId || activeCourse?.lastWorkspaceMode === nextMode) return;
+    const signature = `${activeCourseId}:${nextMode}`;
+    if (workspaceModePersistRef.current === signature) return;
+    workspaceModePersistRef.current = signature;
+
+    const updatedAt = new Date().toISOString();
+    const nextCourses = courses.map((course) =>
+      course.id === activeCourseId
+        ? { ...course, lastWorkspaceMode: nextMode, updatedAt }
+        : course
+    );
+    setCourses(nextCourses);
+    void runCourseStoreCommand(() => courseApi.saveStore({
+      sections: courseSections,
+      courses: nextCourses,
+      activeCourseId
+    })).catch(() => {
+      workspaceModePersistRef.current = "";
+    });
   }
 
   function selectCatalogNode(item: MindMapOutlineItem) {
@@ -1322,7 +1358,7 @@ function App() {
               modeChangeRequest={modeChangeRequest}
               nodeSelectionRequest={nodeSelectionRequest}
               nodeDeletionRequest={nodeDeletionRequest}
-              onEditorModeChange={setWorkspaceEditorMode}
+              onEditorModeChange={handleWorkspaceEditorModeChanged}
               onOutlineChanged={setMindMapOutline}
               onMindMapIdChanged={setActiveMindMapId}
               onNodeSelectedChanged={setSelectedMindMapNode}

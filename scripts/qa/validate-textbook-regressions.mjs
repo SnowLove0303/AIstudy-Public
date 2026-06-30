@@ -6,6 +6,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const textbookStorePath = path.join(projectRoot, "dist-electron", "textbookStore.js");
 const storageBoundaryPath = path.join(projectRoot, "dist-electron", "storageBoundary.js");
+const textbookStoreSourcePath = path.join(projectRoot, "electron", "textbookStore.ts");
+const textbookWorkspaceSourcePath = path.join(projectRoot, "src", "renderer", "features", "textbook", "TextbookWorkspace.tsx");
+const rendererMainSourcePath = path.join(projectRoot, "src", "renderer", "main.tsx");
 
 function assert(condition, message) {
   if (!condition) {
@@ -72,6 +75,8 @@ const normalizedStore = textbookStore.normalizeTextbookStore({
       byteSize: 100,
       pageCount: 442,
       lastPage: 18,
+      lastBindingNodeId: "node_contract",
+      lastZoom: 130,
       createdAt: "2026-06-29T00:00:00.000Z",
       updatedAt: "2026-06-29T00:00:00.000Z"
     }
@@ -109,8 +114,44 @@ const normalizedStore = textbookStore.normalizeTextbookStore({
 }, { courseId: scope.courseId, mindMapId: scope.mindMapId });
 
 assert(normalizedStore.assets.length === 1, "textbook assets should normalize");
+assert(normalizedStore.assets[0].lastBindingNodeId === "node_contract", "textbook asset should preserve last bound catalog node");
+assert(normalizedStore.assets[0].lastZoom === 130, "textbook asset should preserve last PDF zoom");
 assert(normalizedStore.notes.length === 1, "duplicate textbook notes should collapse by textbook/node");
 assert(normalizedStore.notes[0].pageStart === 19 && normalizedStore.notes[0].pageEnd === 21, "latest textbook note range should win");
+
+const textbookStoreSource = fs.readFileSync(textbookStoreSourcePath, "utf8");
+assert(
+  /if\s*\(options\.replaceScope\)\s*{[\s\S]*?markMissingRowsDeleted/.test(textbookStoreSource),
+  "textbook MySQL writes must only prune missing rows during explicit replaceScope writes"
+);
+assert(
+  /markTextbookNotesDeleted\(connection,\s*runtime\.textbookNoteTable,\s*options\.deletedNoteKeys/.test(textbookStoreSource),
+  "textbook MySQL writes must delete notes only through explicit deletedNoteKeys"
+);
+
+const textbookWorkspaceSource = fs.readFileSync(textbookWorkspaceSourcePath, "utf8");
+assert(
+  !/if\s*\(!isActiveBindingLoaded\s*\|\|\s*!activeNote\)\s*return noteSnapshot/.test(textbookWorkspaceSource),
+  "first textbook note save must not require an existing active note"
+);
+assert(
+  /const canSaveNote = Boolean\(activeAsset && bindingNodeId && isActiveBindingLoaded\)/.test(textbookWorkspaceSource),
+  "textbook note save button must be enabled for first-time editable notes"
+);
+assert(
+  /lastBindingNodeId/.test(textbookWorkspaceSource) && /lastZoom/.test(textbookWorkspaceSource),
+  "textbook workspace must persist PDF restore state on the asset"
+);
+
+const rendererMainSource = fs.readFileSync(rendererMainSourcePath, "utf8");
+assert(
+  /lastWorkspaceMode/.test(rendererMainSource) && /getCourseWorkspaceMode/.test(rendererMainSource),
+  "knowledge workspace must restore the last editor mode for the active course"
+);
+assert(
+  /courseApi\.saveStore/.test(rendererMainSource) && /handleWorkspaceEditorModeChanged/.test(rendererMainSource),
+  "knowledge workspace mode changes must be written through the course store"
+);
 
 const boundarySummary = storageBoundary.summarizeStorageBoundaries();
 assert(boundarySummary.valid, "storage boundary registry should be valid");

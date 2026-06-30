@@ -10,6 +10,8 @@ export type TextbookAsset = {
   byteSize: number;
   pageCount: number;
   lastPage: number;
+  lastBindingNodeId: string | null;
+  lastZoom: number;
   createdAt: string;
   updatedAt: string;
 };

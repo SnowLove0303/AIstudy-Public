@@ -89,6 +89,7 @@ type CourseRecord = {
   name: string;
   description: string;
   sectionId: string | null;
+  lastWorkspaceMode: "mindmap" | "word" | "textbook";
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -334,6 +335,7 @@ type CourseRow = RowDataPacket & {
   name: string;
   description: string;
   sectionId: string | null;
+  lastWorkspaceMode: string | null;
   sortOrder: number;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -3973,6 +3975,7 @@ function normalizeCourseStore(value: unknown): CourseStore {
         .map((course, index) => ({
           ...course,
           sectionId: typeof course.sectionId === "string" && sectionIds.has(course.sectionId) ? course.sectionId : null,
+          lastWorkspaceMode: normalizeWorkspaceEditorMode(course.lastWorkspaceMode),
           sortOrder: Number.isFinite(course.sortOrder) ? course.sortOrder : index
         }))
     : [];
@@ -3981,6 +3984,10 @@ function normalizeCourseStore(value: unknown): CourseStore {
     : null;
 
   return { sections, courses, activeCourseId };
+}
+
+function normalizeWorkspaceEditorMode(value: unknown): CourseRecord["lastWorkspaceMode"] {
+  return value === "word" || value === "textbook" ? value : "mindmap";
 }
 
 function validateMysqlIdentifier(value: string, label: string) {
@@ -4268,6 +4275,7 @@ async function ensureCourseTable(pool: Pool, courseTable: string) {
       name VARCHAR(120) NOT NULL,
       description TEXT NOT NULL,
       section_id VARCHAR(64) NULL,
+      last_workspace_mode VARCHAR(16) NOT NULL DEFAULT 'mindmap',
       sort_order INT NOT NULL DEFAULT 0,
       created_at DATETIME(3) NOT NULL,
       updated_at DATETIME(3) NOT NULL,
@@ -4338,6 +4346,7 @@ async function addMysqlIndexIfMissing(pool: Pool, table: string, tableName: stri
 async function migrateCourseTable(pool: Pool, courseTable: string) {
   const courseTableName = rawMysqlIdentifier(courseTable);
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "section_id", "`section_id` VARCHAR(64) NULL AFTER `description`");
+  await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "last_workspace_mode", "`last_workspace_mode` VARCHAR(16) NOT NULL DEFAULT 'mindmap' AFTER `section_id`");
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "sort_order", "`sort_order` INT NOT NULL DEFAULT 0 AFTER `section_id`");
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "deleted_at", "`deleted_at` DATETIME(3) NULL AFTER `updated_at`");
   await addMysqlIndexIfMissing(pool, courseTable, courseTableName, "idx_section_order", "KEY idx_section_order (section_id, sort_order)");
@@ -5936,7 +5945,8 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
      ORDER BY sort_order ASC, updated_at DESC`
   );
   const [rows] = await pool.execute<CourseRow[]>(
-    `SELECT id, name, description, section_id AS sectionId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+    `SELECT id, name, description, section_id AS sectionId, last_workspace_mode AS lastWorkspaceMode,
+            sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
      FROM ${courseTable}
      WHERE deleted_at IS NULL
      ORDER BY COALESCE(section_id, ''), sort_order ASC, updated_at DESC`
@@ -5955,6 +5965,7 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
     name: row.name,
     description: row.description,
     sectionId: row.sectionId && sectionIds.has(row.sectionId) ? row.sectionId : null,
+    lastWorkspaceMode: normalizeWorkspaceEditorMode(row.lastWorkspaceMode),
     sortOrder: Number(row.sortOrder) || 0,
     createdAt: toIsoTimestamp(row.createdAt),
     updatedAt: toIsoTimestamp(row.updatedAt)
@@ -6047,12 +6058,13 @@ async function replaceCourseRows(connection: PoolConnection, courseTable: string
   );
 
   const sql = `
-    INSERT INTO ${courseTable} (id, name, description, section_id, sort_order, created_at, updated_at, deleted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    INSERT INTO ${courseTable} (id, name, description, section_id, last_workspace_mode, sort_order, created_at, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
     ON DUPLICATE KEY UPDATE
       name = VALUES(name),
       description = VALUES(description),
       section_id = VALUES(section_id),
+      last_workspace_mode = VALUES(last_workspace_mode),
       sort_order = VALUES(sort_order),
       created_at = VALUES(created_at),
       updated_at = VALUES(updated_at),
@@ -6065,6 +6077,7 @@ async function replaceCourseRows(connection: PoolConnection, courseTable: string
       course.name,
       course.description,
       course.sectionId,
+      course.lastWorkspaceMode,
       course.sortOrder,
       toMysqlDate(course.createdAt),
       toMysqlDate(course.updatedAt)
@@ -6091,6 +6104,7 @@ function pendingCourseFromPayload(operation: PendingCourseOperation) {
     name: normalizeCourseName(record.name),
     description: normalizeCourseDescription(record.description),
     sectionId: sectionId ? normalizeId(sectionId, "Course section id") : null,
+    lastWorkspaceMode: normalizeWorkspaceEditorMode(record.lastWorkspaceMode),
     sortOrder: numberFromRecord(record, "sortOrder"),
     createdAt,
     updatedAt
@@ -6116,17 +6130,27 @@ async function applyPendingCourseOperation(connection: PoolConnection, runtime: 
     case "course:create": {
       const course = pendingCourseFromPayload(operation);
       await connection.execute(
-        `INSERT INTO ${runtime.courseTable} (id, name, description, section_id, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+        `INSERT INTO ${runtime.courseTable} (id, name, description, section_id, last_workspace_mode, sort_order, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
          ON DUPLICATE KEY UPDATE
            name = VALUES(name),
            description = VALUES(description),
            section_id = VALUES(section_id),
+           last_workspace_mode = VALUES(last_workspace_mode),
            sort_order = VALUES(sort_order),
            created_at = VALUES(created_at),
            updated_at = VALUES(updated_at),
            deleted_at = NULL`,
-        [course.id, course.name, course.description, course.sectionId, course.sortOrder, toMysqlDate(course.createdAt), toMysqlDate(course.updatedAt)]
+        [
+          course.id,
+          course.name,
+          course.description,
+          course.sectionId,
+          course.lastWorkspaceMode,
+          course.sortOrder,
+          toMysqlDate(course.createdAt),
+          toMysqlDate(course.updatedAt)
+        ]
       );
       return;
     }
@@ -6670,6 +6694,7 @@ async function createCourseCommand(input: CourseCreateRequest): Promise<CourseSt
     name,
     description,
     sectionId,
+    lastWorkspaceMode: "mindmap",
     sortOrder: getNextCourseSortOrder(current.courses, sectionId),
     createdAt: now,
     updatedAt: now
@@ -6681,9 +6706,18 @@ async function createCourseCommand(input: CourseCreateRequest): Promise<CourseSt
     try {
       await connection.beginTransaction();
       await connection.execute(
-        `INSERT INTO ${courseTable} (id, name, description, section_id, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-        [course.id, course.name, course.description, course.sectionId, course.sortOrder, toMysqlDate(course.createdAt), toMysqlDate(course.updatedAt)]
+        `INSERT INTO ${courseTable} (id, name, description, section_id, last_workspace_mode, sort_order, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        [
+          course.id,
+          course.name,
+          course.description,
+          course.sectionId,
+          course.lastWorkspaceMode,
+          course.sortOrder,
+          toMysqlDate(course.createdAt),
+          toMysqlDate(course.updatedAt)
+        ]
       );
       await createInitialMindMapForCourse(connection, {
         courseId: course.id,
@@ -9352,7 +9386,7 @@ async function saveTextbookStore(input: unknown): Promise<TextbookStore> {
         const runtime = await getMysqlRuntime();
         const remoteCurrentStore = await readTextbookStoreFromMysql(runtime, scope);
         const storeToSync = removeDeletedTextbookNotes(mergeTextbookStores(remoteCurrentStore, store, scope), deletedNoteKeys, scope);
-        return await writeTextbookStoreToMysql(runtime, storeToSync, scope);
+        return await writeTextbookStoreToMysql(runtime, storeToSync, scope, { deletedNoteKeys });
       }
     },
     normalized

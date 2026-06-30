@@ -16,15 +16,17 @@
 ## 数据边界
 
 - 教材作用域是 `courseId + mindMapId`。
-- 教材资产由主进程保存，MySQL 表是 `textbook_assets`。
+- 教材资产由主进程保存，MySQL 表是 `textbook_assets`；资产记录同时保存上次页码、上次目录节点和缩放，用于重启后恢复 PDF 阅读状态。
 - 节点教材笔记由主进程保存，MySQL 表是 `textbook_notes`。
 - MySQL 是正式事实源，本地 JSON 只作为断连缓存，不作为第二套事实源。
 - MySQL 不可用时，本地兜底文件位于 `state/textbooks/{courseId}__{mindMapId}.json`，待同步作用域记录在 `state/textbook-pending-scopes.json`，已经被数据库接管的作用域记录在 `state/textbook-database-backed-scopes.json`。
 - MySQL 可用时读取、保存和 PDF 字节读取都走 DB-first StorageProvider，并把数据库结果回写本地缓存；只有数据库不可用或该作用域被标记为 dirty 时，本地缓存才会参与恢复。
+- 教材保存是增量安全写：资产、页码、缩放和笔记 upsert 到数据库；只有用户明确取消绑定时才通过删除键软删对应笔记，避免局部保存或重启关闭时把同一知识库下其它教材/笔记误删。
 - 旧版本已经存在的本地教材缓存，如果该作用域尚未被数据库接管且数据库为空，会自动提拔到 MySQL；接管后如果数据库已有内容或缓存未 dirty，不允许旧 JSON 覆盖数据库。
 - PDF 阅读走 `aistudy-pdf` 特权协议，不把 PDF 二进制塞进导图或 Word 快照。
 - 当前资产记录保存 PDF 文件路径；跨机器迁移前必须重新确认路径相对化和资产复制策略。
 - 笔记快照沿用 `aistudy-word`/canvas-editor 结构，载入 Word 文档时走现有 `aistudyKnowledgeDocuments` API。
+- 教材笔记第一次输入即可自动保存；关闭前 drain 会读取编辑器当前快照并保存，未绑定的新笔记不再因为还没有历史记录而丢失。
 - 教材笔记支持 canvas-editor 原生上下标元素和常用数学字符模板，`D_f`、`R_f`、`x^2` 等应保存为富文本快照结构，不退化成普通字符串。
 - 从 ChatGPT/KaTeX/MathML/HTML/纯文本粘贴到教材笔记的数学内容走 `features/mathInput` 共享清洗，`f:Xarrow Y`、`R_f ⊂ Y`、`X=ℝ`、`[0,+∞)` 等应在粘贴和重开后保持稳定。
 

@@ -48,6 +48,7 @@ function requireCourseSectionApi() {
 
 export const courseApi = {
   load: () => requireCourseApi().load(),
+  saveStore: (store: CourseStore) => requireCourseApi().save(store),
   createCourse: (input: CourseCreateInput) => requireCourseApi().create(input),
   renameCourse: (input: CourseRenameInput) => requireCourseApi().rename(input),
   moveCourse: (input: CourseMoveInput) => requireCourseApi().move(input),

@@ -81,6 +81,10 @@ function clampPage(value: number, asset: TextbookAsset | null) {
   return Math.max(1, Math.min(maxPage, Math.round(Number.isFinite(value) ? value : 1)));
 }
 
+function clampZoom(value: number) {
+  return Math.max(60, Math.min(180, Math.round(Number.isFinite(value) ? value : DEFAULT_ZOOM)));
+}
+
 function getNoteKey(textbookId: string, nodeId: string) {
   return `${textbookId}\u0000${nodeId}`;
 }
@@ -157,14 +161,36 @@ function flattenOutlineItems(items: MindMapOutlineItem[]) {
 }
 
 function updateAssetLastPage(store: TextbookStore, assetId: string, pageNumber: number) {
+  return updateAssetViewState(store, assetId, { lastPage: pageNumber });
+}
+
+function updateAssetViewState(
+  store: TextbookStore,
+  assetId: string,
+  patch: { lastPage?: number; lastBindingNodeId?: string | null; lastZoom?: number }
+) {
   const updatedAt = nowIso();
   let changed = false;
   const assets = store.assets.map((asset) => {
     if (asset.id !== assetId) return asset;
-    const nextPage = clampPage(pageNumber, asset);
-    if (asset.lastPage === nextPage) return asset;
+    const nextPage = patch.lastPage === undefined ? asset.lastPage : clampPage(patch.lastPage, asset);
+    const nextBindingNodeId = patch.lastBindingNodeId === undefined
+      ? asset.lastBindingNodeId
+      : patch.lastBindingNodeId || null;
+    const nextZoom = patch.lastZoom === undefined ? asset.lastZoom : clampZoom(patch.lastZoom);
+    if (
+      asset.lastPage === nextPage
+      && asset.lastBindingNodeId === nextBindingNodeId
+      && asset.lastZoom === nextZoom
+    ) return asset;
     changed = true;
-    return { ...asset, lastPage: nextPage, updatedAt };
+    return {
+      ...asset,
+      lastPage: nextPage,
+      lastBindingNodeId: nextBindingNodeId,
+      lastZoom: nextZoom,
+      updatedAt
+    };
   });
   if (!changed) return store;
   return {
@@ -434,10 +460,17 @@ export function TextbookWorkspace({
         commitStore(nextStore);
         const firstAsset = nextStore.assets[0] ?? null;
         const firstPage = firstAsset ? clampPage(firstAsset.lastPage, firstAsset) : 1;
-      setActiveAssetId(firstAsset?.id ?? null);
-      setPageNumber(firstPage);
-      setPageStartDraft(Number.NaN);
-      setPageEndDraft(Number.NaN);
+        const restoredNodeId = firstAsset?.lastBindingNodeId || bindingNodeIdRef.current;
+        setActiveAssetId(firstAsset?.id ?? null);
+        setPageNumber(firstPage);
+        setZoom(firstAsset ? clampZoom(firstAsset.lastZoom) : DEFAULT_ZOOM);
+        setPageStartDraft(Number.NaN);
+        setPageEndDraft(Number.NaN);
+        bindingNodeIdRef.current = restoredNodeId;
+        loadedBindingNodeIdRef.current = null;
+        loadedBindingContextKeyRef.current = "";
+        setBindingNodeId(restoredNodeId);
+        if (restoredNodeId) onNodeSelect?.(restoredNodeId);
         setIsRangeEdited(false);
         setSaveState("idle");
       })
@@ -505,13 +538,24 @@ export function TextbookWorkspace({
     return Promise.resolve(mergedStore);
   }, [commitStore, getLatestStore, persistStore, scopeKey]);
 
-  const persistNoteSnapshot = React.useCallback(async (snapshot: KnowledgeDocumentSnapshot, immediate = false, targetPage = pageNumber) => {
+  const persistNoteSnapshot = React.useCallback(async (
+    snapshot: KnowledgeDocumentSnapshot,
+    immediate = false,
+    targetPage = pageNumber,
+    options: { allowEmptyNote?: boolean } = {}
+  ) => {
     if (!scope || !activeAsset || !bindingNodeId) return;
     if (loadedBindingNodeIdRef.current !== bindingNodeId) return;
     const bindingContextKey = getBindingContextKey(scopeKey, activeAsset.id, bindingNodeId);
     if (loadedBindingContextKeyRef.current !== bindingContextKey) return;
     const content = extractTextFromSnapshot(snapshot.content.main);
-    if (!activeNote && !content.trim() && !immediate) return;
+    if (!activeNote && !content.trim() && !options.allowEmptyNote) {
+      if (immediate) {
+        setSaveState("saved");
+        setMessage("");
+      }
+      return;
+    }
 
     const timestamp = nowIso();
     const baseStore = getLatestStore();
@@ -545,11 +589,16 @@ export function TextbookWorkspace({
       updatedAt: timestamp
     };
     const noteKey = getNoteKey(nextNote.textbookId, nextNote.nodeId);
+    const baseWithAssetState = updateAssetViewState(baseStore, activeAsset.id, {
+      lastPage: nextNote.pageNumber,
+      lastBindingNodeId: bindingNodeId,
+      lastZoom: zoom
+    });
     const nextStore = normalizeTextbookStore({
-      ...updateAssetLastPage(baseStore, activeAsset.id, nextNote.pageNumber),
+      ...baseWithAssetState,
       notes: [
         nextNote,
-        ...baseStore.notes.filter((note) => getNoteKey(note.textbookId, note.nodeId) !== noteKey)
+        ...baseWithAssetState.notes.filter((note) => getNoteKey(note.textbookId, note.nodeId) !== noteKey)
       ]
     }, scope);
     setPageNumber(nextNote.pageNumber);
@@ -558,23 +607,23 @@ export function TextbookWorkspace({
     setIsRangeEdited(false);
     pendingNoteSignatureRef.current = nextSignature;
     await schedulePersist(nextStore, immediate);
-  }, [activeAsset?.id, activeNote?.id, bindingNodeId, bindingNodeTitle, getLatestStore, isRangeEdited, pageEndDraft, pageNumber, pageStartDraft, schedulePersist, scopeKey]);
+  }, [activeAsset?.id, activeNote?.id, bindingNodeId, bindingNodeTitle, getLatestStore, isRangeEdited, pageEndDraft, pageNumber, pageStartDraft, schedulePersist, scopeKey, zoom]);
 
   const saveNoteNow = React.useCallback(async () => {
-    if (!isActiveBindingLoaded || !activeNote) return noteSnapshot;
-    const latestSnapshot = await noteEditorRef.current?.getSnapshot() ?? noteSnapshot;
-    setNoteSnapshot(latestSnapshot);
-    await persistNoteSnapshot(latestSnapshot, true);
-    return latestSnapshot;
-  }, [activeNote?.id, isActiveBindingLoaded, noteSnapshot, persistNoteSnapshot]);
-
-  const bindPageRangeNow = React.useCallback(async () => {
     if (!isActiveBindingLoaded) return noteSnapshot;
     const latestSnapshot = await noteEditorRef.current?.getSnapshot() ?? noteSnapshot;
     setNoteSnapshot(latestSnapshot);
     await persistNoteSnapshot(latestSnapshot, true);
     return latestSnapshot;
   }, [isActiveBindingLoaded, noteSnapshot, persistNoteSnapshot]);
+
+  const bindPageRangeNow = React.useCallback(async () => {
+    if (!isActiveBindingLoaded) return noteSnapshot;
+    const latestSnapshot = await noteEditorRef.current?.getSnapshot() ?? noteSnapshot;
+    setNoteSnapshot(latestSnapshot);
+    await persistNoteSnapshot(latestSnapshot, true, pageNumber, { allowEmptyNote: true });
+    return latestSnapshot;
+  }, [isActiveBindingLoaded, noteSnapshot, pageNumber, persistNoteSnapshot]);
 
   const cancelBindingNow = React.useCallback(async () => {
     if (!scope || !activeAsset || !bindingNodeId || !isActiveBindingLoaded || !activeNote) return;
@@ -630,9 +679,19 @@ export function TextbookWorkspace({
   }, [activeAsset?.id, bindingNodeId, hydrateBindingNodeState]);
 
   React.useEffect(() => {
-    if (!activeAsset || !bindingNodeId || !activeNote || !isActiveBindingLoaded) return;
+    if (!activeAsset || !bindingNodeId || !isActiveBindingLoaded) return;
     persistNoteSnapshot(noteSnapshot, false);
   }, [activeAsset?.id, activeNote?.id, bindingNodeId, isActiveBindingLoaded, noteSnapshot, persistNoteSnapshot]);
+
+  React.useEffect(() => {
+    if (!scope || !activeAsset || !isActiveBindingLoaded) return;
+    const baseStore = getLatestStore();
+    const nextStore = updateAssetViewState(baseStore, activeAsset.id, {
+      lastBindingNodeId: bindingNodeId,
+      lastZoom: zoom
+    });
+    if (nextStore !== baseStore) schedulePersist(nextStore);
+  }, [activeAsset?.id, bindingNodeId, getLatestStore, isActiveBindingLoaded, schedulePersist, scopeKey, zoom]);
 
   function applyPage(nextPage: number) {
     if (!activeAsset) return;
@@ -928,6 +987,7 @@ export function TextbookWorkspace({
   const canBindPageRange = canEditPageRange;
   const canCancelBinding = Boolean(activeAsset && bindingNodeId && hasActiveBinding);
   const canUseBoundNote = Boolean(activeAsset && bindingNodeId && hasActiveBinding);
+  const canSaveNote = Boolean(activeAsset && bindingNodeId && isActiveBindingLoaded);
   const noteEditorDisabled = !activeAsset || !bindingNodeId || !isActiveBindingLoaded;
   const selectedAnnotation = selectedAnnotationId ? annotations.find((annotation) => annotation.id === selectedAnnotationId) ?? null : null;
   const canEditAnnotations = Boolean(activeAsset && bindingNodeId && annotationDatabaseAvailable && !isAnnotationLoading && !isAnnotationSaving);
@@ -950,14 +1010,19 @@ export function TextbookWorkspace({
             onChange={(event) => {
               const asset = store.assets.find((item) => item.id === event.target.value) ?? null;
               const nextPage = asset ? clampPage(asset.lastPage, asset) : 1;
+              const nextNodeId = asset?.lastBindingNodeId || bindingNodeIdRef.current;
               setActiveAssetId(asset?.id ?? null);
               loadedBindingNodeIdRef.current = null;
               loadedBindingContextKeyRef.current = "";
               setIsBindingReady(false);
               setPageNumber(nextPage);
+              setZoom(asset ? clampZoom(asset.lastZoom) : DEFAULT_ZOOM);
               setPageStartDraft(Number.NaN);
               setPageEndDraft(Number.NaN);
               setIsRangeEdited(false);
+              bindingNodeIdRef.current = nextNodeId;
+              setBindingNodeId(nextNodeId);
+              if (nextNodeId) onNodeSelect?.(nextNodeId);
               setAnnotations([]);
               annotationWindowRef.current = null;
               setAnnotationMode("none");
@@ -1164,7 +1229,7 @@ export function TextbookWorkspace({
                 {isLoadingIntoDocument ? <Loader2 className="spin-icon" size={15} /> : <FileText size={15} />}
                 <span>载入文档</span>
               </button>
-              <button type="button" onClick={() => void saveNoteNow()} disabled={!canUseBoundNote}>
+              <button type="button" onClick={() => void saveNoteNow()} disabled={!canSaveNote}>
                 <Save size={15} />
                 <span>保存</span>
               </button>

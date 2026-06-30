@@ -23,6 +23,7 @@ declare global {
 }
 
 const STORE_VERSION = 1 as const;
+const DEFAULT_ZOOM = 100;
 
 function createEmptyTextbookStore(): TextbookStore {
   return { version: STORE_VERSION, assets: [], notes: [] };
@@ -118,6 +119,8 @@ function normalizeAsset(value: unknown, scope: TextbookScope): TextbookAsset | n
     byteSize: normalizeNumber(candidate.byteSize, 0, 0, Number.MAX_SAFE_INTEGER),
     pageCount,
     lastPage: normalizeNumber(candidate.lastPage, 1, 1, pageCount || 100000),
+    lastBindingNodeId: normalizeString(candidate.lastBindingNodeId) || null,
+    lastZoom: normalizeNumber(candidate.lastZoom, DEFAULT_ZOOM, 60, 180),
     createdAt: normalizeString(candidate.createdAt) || new Date().toISOString(),
     updatedAt: normalizeString(candidate.updatedAt) || new Date().toISOString()
   };
