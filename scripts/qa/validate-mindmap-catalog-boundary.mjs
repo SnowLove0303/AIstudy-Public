@@ -67,41 +67,49 @@ const {
   MIND_MAP_CATALOG_BOUNDARY_KEY,
   buildMindMapOutline,
   countNodes,
+  createMindMapStructureSignature,
   normalizeMindMapTree
 } = await import(`${pathToFileURL(snapshotModulePath).href}?qa=${Date.now()}`);
 
-const root = normalizeMindMapTree({
-  data: { uid: "root", text: "数学", expand: true },
-  children: [
-    {
-      data: { uid: "chapter", text: "函数", expand: true },
-      children: [
-        {
-          data: {
-            uid: "feature",
-            text: "特性",
-            expand: true,
-            [MIND_MAP_CATALOG_BOUNDARY_KEY]: true
-          },
-          children: [
-            { data: { uid: "bounded", text: "有界性", expand: true }, children: [] },
-            { data: { uid: "monotone", text: "单调性", expand: true }, children: [] }
-          ]
-        },
-        {
-          data: {
-            uid: "leaf-boundary",
-            text: "函数类型",
-            expand: true,
-            [MIND_MAP_CATALOG_BOUNDARY_KEY]: true
-          },
-          children: []
-        }
-      ]
-    }
-  ]
-});
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
+function createBaseRoot() {
+  return normalizeMindMapTree({
+    data: { uid: "root", text: "math", expand: true },
+    children: [
+      {
+        data: { uid: "chapter", text: "functions", expand: true },
+        children: [
+          {
+            data: {
+              uid: "feature",
+              text: "properties",
+              expand: true,
+              [MIND_MAP_CATALOG_BOUNDARY_KEY]: true
+            },
+            children: [
+              { data: { uid: "bounded", text: "boundedness", expand: true }, children: [] },
+              { data: { uid: "monotone", text: "monotonicity", expand: true }, children: [] }
+            ]
+          },
+          {
+            data: {
+              uid: "leaf-boundary",
+              text: "function types",
+              expand: true,
+              [MIND_MAP_CATALOG_BOUNDARY_KEY]: true
+            },
+            children: []
+          }
+        ]
+      }
+    ]
+  });
+}
+
+const root = createBaseRoot();
 assert(root.children[0].children[0].data[MIND_MAP_CATALOG_BOUNDARY_KEY] === true, "catalog boundary flag should survive normalization");
 assert(countNodes(root) === 6, "catalog boundary must not remove real mind map nodes");
 
@@ -112,16 +120,53 @@ const featureItem = chapterItem.children[0];
 const leafBoundaryItem = chapterItem.children[1];
 const titles = flattenOutlineTitles(outline);
 
-assert(rootItem.title === "数学", "root should remain in catalog");
-assert(chapterItem.title === "函数", "parent should remain in catalog");
-assert(featureItem.title === "特性", "boundary node should remain in catalog");
+assert(rootItem.title === "math", "root should remain in catalog");
+assert(chapterItem.title === "functions", "parent should remain in catalog");
+assert(featureItem.title === "properties", "boundary node should remain in catalog");
 assert(featureItem.catalogBoundary === true, "boundary outline item should expose catalogBoundary=true");
 assert(featureItem.childCount === 0, "visible childCount should stop at boundary");
 assert(featureItem.hiddenChildCount === 2, "hiddenChildCount should report suppressed children");
 assert(featureItem.children.length === 0, "boundary node should not expose descendants in catalog");
 assert(leafBoundaryItem.catalogBoundary === true, "leaf nodes can be prepared as future catalog boundaries");
 assert(leafBoundaryItem.hiddenChildCount === 0, "empty boundary nodes should not invent hidden children");
-assert(!titles.includes("有界性") && !titles.includes("单调性"), "boundary descendants should not appear in catalog");
-assert(titles.includes("函数类型"), "sibling boundary node should remain selectable");
+assert(!titles.includes("boundedness") && !titles.includes("monotonicity"), "boundary descendants should not appear in catalog");
+assert(titles.includes("function types"), "sibling boundary node should remain selectable");
+
+const restoredRoot = clone(root);
+delete restoredRoot.children[0].children[0].data[MIND_MAP_CATALOG_BOUNDARY_KEY];
+const restoredOutline = buildMindMapOutline(restoredRoot);
+const restoredFeatureItem = restoredOutline[0].children[0].children[0];
+const restoredTitles = flattenOutlineTitles(restoredOutline);
+assert(restoredFeatureItem.catalogBoundary === false, "restored node should expose catalogBoundary=false");
+assert(restoredFeatureItem.childCount === 2, "restored boundary should show its children again");
+assert(restoredTitles.includes("boundedness") && restoredTitles.includes("monotonicity"), "restored descendants should reappear in catalog");
+assert(
+  createMindMapStructureSignature(root) !== createMindMapStructureSignature(restoredRoot),
+  "catalog boundary changes should refresh the mind map UI signature"
+);
+
+const futureChildRoot = clone(root);
+futureChildRoot.children[0].children[1].children.push({
+  data: { uid: "trigonometric", text: "trigonometric functions", expand: true },
+  children: []
+});
+const futureChildOutline = buildMindMapOutline(futureChildRoot);
+const futureLeafBoundaryItem = futureChildOutline[0].children[0].children[1];
+const futureChildTitles = flattenOutlineTitles(futureChildOutline);
+assert(countNodes(futureChildRoot) === 7, "new child under a catalog boundary should remain in the real mind map");
+assert(futureLeafBoundaryItem.hiddenChildCount === 1, "future children under a boundary should be counted as hidden descendants");
+assert(!futureChildTitles.includes("trigonometric functions"), "future children under a boundary should stay out of catalog");
+
+const parentBoundaryRoot = clone(root);
+parentBoundaryRoot.children[0].data[MIND_MAP_CATALOG_BOUNDARY_KEY] = true;
+const parentBoundaryOutline = buildMindMapOutline(parentBoundaryRoot);
+const parentBoundaryChapterItem = parentBoundaryOutline[0].children[0];
+const parentBoundaryTitles = flattenOutlineTitles(parentBoundaryOutline);
+assert(parentBoundaryChapterItem.catalogBoundary === true, "a parent can become the catalog boundary");
+assert(parentBoundaryChapterItem.hiddenChildCount === 2, "parent boundary should suppress immediate child topics");
+assert(
+  parentBoundaryTitles.length === 2 && parentBoundaryTitles.includes("math") && parentBoundaryTitles.includes("functions"),
+  "parent boundary should hide all lower catalog levels while keeping the real branch"
+);
 
 console.log("mind map catalog boundary policy: ok");
