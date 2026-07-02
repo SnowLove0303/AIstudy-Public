@@ -36,7 +36,7 @@ import { AiAssistantPanel } from "../assistant/AiAssistantPanel";
 import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
 import { registerBeforeCloseSave } from "../../lib/saveDrain";
-import { readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
+import { deleteLocalSnapshot, readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
 import {
   areViewportScrollStatesEqual,
   EMPTY_VIEWPORT_SCROLL_STATE,
@@ -182,6 +182,10 @@ async function loadLocalDocument(courseId: string, mindMapId: string, nodeId: st
 
 async function saveLocalDocument(input: KnowledgeDocumentSaveInput) {
   await writeLocalSnapshot(getStorageKey(input.courseId, input.mindMapId, input.nodeId), "document", input.snapshot);
+}
+
+async function deleteLocalDocument(courseId: string, mindMapId: string, nodeId: string) {
+  await deleteLocalSnapshot(getStorageKey(courseId, mindMapId, nodeId));
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -876,6 +880,11 @@ export function KnowledgeDocumentWorkspace({
         }
 
         const document = await window.aistudyKnowledgeDocuments.save(input);
+        try {
+          await saveLocalDocument(input);
+        } catch {
+          // Database save is authoritative; local mirror failure only weakens offline recovery.
+        }
         updateDocumentStatusFromSnapshot(input, document);
         if (!silent) {
           setStorageMode("mysql");
@@ -1012,8 +1021,23 @@ export function KnowledgeDocumentWorkspace({
       try {
         const document = await window.aistudyKnowledgeDocuments.load(request);
         if (loadSequenceRef.current !== sequence) return;
-        const nextSnapshot = document?.snapshot ?? fallbackSnapshot;
+        const nextSnapshot = document?.snapshot ?? createEmptyKnowledgeDocumentSnapshot();
         if (document) {
+          try {
+            if (document.snapshot) {
+              await saveLocalDocument({
+                courseId: document.courseId,
+                mindMapId: document.mindMapId,
+                nodeId: document.nodeId,
+                title: document.title,
+                snapshot: document.snapshot
+              });
+            } else {
+              await deleteLocalDocument(document.courseId, document.mindMapId, document.nodeId);
+            }
+          } catch {
+            // Local mirror refresh should not block opening the database-backed document.
+          }
           upsertDocumentStatus({
             courseId: document.courseId,
             mindMapId: document.mindMapId,
@@ -1024,6 +1048,12 @@ export function KnowledgeDocumentWorkspace({
             byteSize: document.byteSize,
             hasContent: document.hasContent
           });
+        } else {
+          try {
+            await deleteLocalDocument(documentBinding.courseId, documentBinding.mindMapId, documentBinding.nodeId);
+          } catch {
+            // A successful empty database read must still render as empty even if cache cleanup fails.
+          }
         }
         setSnapshot(nextSnapshot);
         latestSnapshotRef.current = nextSnapshot;

@@ -53,6 +53,14 @@ type TextbookWorkspaceProps = {
 type SaveState = "idle" | "loading" | "saving" | "saved" | "error";
 type DeletedTextbookNoteKey = { textbookId: string; nodeId: string };
 type AnnotationMode = "none" | TextbookPdfAnnotationKind;
+type TextbookScope = { courseId: string; mindMapId: string };
+type DetachedPendingStoreSave = {
+  scope: TextbookScope;
+  scopeKey: string;
+  store: TextbookStore;
+  deletedNoteKeys: DeletedTextbookNoteKey[];
+  noteSignature: string | null;
+};
 
 const SAVE_DEBOUNCE_MS = 700;
 const DEFAULT_ZOOM = 100;
@@ -91,6 +99,10 @@ function getNoteKey(textbookId: string, nodeId: string) {
 
 function getBindingContextKey(scopeKey: string, textbookId: string | null, nodeId: string | null) {
   return `${scopeKey}\u0000${textbookId ?? ""}\u0000${nodeId ?? ""}`;
+}
+
+function getTextbookScopeKey(scope: TextbookScope | null) {
+  return scope ? `${scope.courseId}:${scope.mindMapId}` : "";
 }
 
 function normalizePageRange(start: number, end: number, asset: TextbookAsset | null) {
@@ -248,7 +260,9 @@ export function TextbookWorkspace({
   const [isBindingReady, setIsBindingReady] = React.useState(true);
   const saveTimerRef = React.useRef<number | null>(null);
   const pendingStoreRef = React.useRef<TextbookStore | null>(null);
+  const pendingStoreScopeRef = React.useRef<TextbookScope | null>(null);
   const pendingStoreScopeKeyRef = React.useRef("");
+  const pendingDeletedNoteKeysRef = React.useRef<DeletedTextbookNoteKey[]>([]);
   const annotationWindowRef = React.useRef<{ assetId: string; pageStart: number; pageEnd: number } | null>(null);
   const storeRef = React.useRef(store);
   const activeScopeKeyRef = React.useRef("");
@@ -265,7 +279,7 @@ export function TextbookWorkspace({
   const scope = React.useMemo(() => (
     courseId ? { courseId, mindMapId: mindMapId || courseId } : null
   ), [courseId, mindMapId]);
-  const scopeKey = scope ? `${scope.courseId}:${scope.mindMapId}` : "";
+  const scopeKey = getTextbookScopeKey(scope);
   const commitStore = React.useCallback((nextStore: TextbookStore) => {
     storeRef.current = nextStore;
     setStore(nextStore);
@@ -300,6 +314,63 @@ export function TextbookWorkspace({
   React.useEffect(() => {
     pageNumberRef.current = pageNumber;
   }, [pageNumber]);
+
+  function detachPendingStoreSave(): DetachedPendingStoreSave | null {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const pendingStore = pendingStoreRef.current;
+    const pendingScope = pendingStoreScopeRef.current;
+    if (!pendingStore || !pendingScope) {
+      pendingStoreRef.current = null;
+      pendingStoreScopeRef.current = null;
+      pendingStoreScopeKeyRef.current = "";
+      pendingDeletedNoteKeysRef.current = [];
+      return null;
+    }
+
+    const detached: DetachedPendingStoreSave = {
+      scope: pendingScope,
+      scopeKey: getTextbookScopeKey(pendingScope),
+      store: pendingStore,
+      deletedNoteKeys: pendingDeletedNoteKeysRef.current,
+      noteSignature: pendingNoteSignatureRef.current
+    };
+    pendingStoreRef.current = null;
+    pendingStoreScopeRef.current = null;
+    pendingStoreScopeKeyRef.current = "";
+    pendingDeletedNoteKeysRef.current = [];
+    return detached;
+  }
+
+  async function persistDetachedStoreSave(detached: DetachedPendingStoreSave) {
+    try {
+      const savedStore = await saveTextbookStore(detached.scope, detached.store, { deletedNoteKeys: detached.deletedNoteKeys });
+      if (activeScopeKeyRef.current === detached.scopeKey) {
+        const mergedStore = removeDeletedNotes(mergeTextbookStores(getLatestStore(), savedStore, detached.scope), detached.deletedNoteKeys, detached.scope);
+        commitStore(mergedStore);
+        if (detached.noteSignature) {
+          lastSavedNoteSignatureRef.current = detached.noteSignature;
+          pendingNoteSignatureRef.current = null;
+        }
+        setSaveState("saved");
+        setMessage("");
+      }
+      return savedStore;
+    } catch (error) {
+      if (activeScopeKeyRef.current === detached.scopeKey) {
+        pendingStoreRef.current = detached.store;
+        pendingStoreScopeRef.current = detached.scope;
+        pendingStoreScopeKeyRef.current = detached.scopeKey;
+        pendingDeletedNoteKeysRef.current = detached.deletedNoteKeys;
+        if (detached.noteSignature) pendingNoteSignatureRef.current = detached.noteSignature;
+        setSaveState("error");
+        setMessage(error instanceof Error ? error.message : "教材保存没有完成。");
+      }
+      throw error;
+    }
+  }
 
   const hydrateBindingNodeState = React.useCallback((nodeId: string | null) => {
     const isCurrentBindingRequest = () => (
@@ -397,12 +468,8 @@ export function TextbookWorkspace({
 
   React.useEffect(() => {
     activeScopeKeyRef.current = scopeKey;
-    if (saveTimerRef.current !== null) {
-      window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    pendingStoreRef.current = null;
-    pendingStoreScopeKeyRef.current = "";
+    const detachedPendingSave = detachPendingStoreSave();
+    if (detachedPendingSave) void persistDetachedStoreSave(detachedPendingSave);
     if (!scope) {
       commitStore(normalizeTextbookStore(null, { courseId: "", mindMapId: "" }));
       setActiveAssetId(null);
@@ -500,7 +567,9 @@ export function TextbookWorkspace({
       if (activeScopeKeyRef.current !== requestScopeKey) return savedStore;
       if (pendingStoreRef.current === nextStore || pendingStoreRef.current === storeToSave) {
         pendingStoreRef.current = null;
+        pendingStoreScopeRef.current = null;
         pendingStoreScopeKeyRef.current = "";
+        pendingDeletedNoteKeysRef.current = [];
       }
       if (pendingNoteSignatureRef.current) {
         lastSavedNoteSignatureRef.current = pendingNoteSignatureRef.current;
@@ -522,7 +591,9 @@ export function TextbookWorkspace({
     const mergedStore = scope ? removeDeletedNotes(mergeTextbookStores(getLatestStore(), nextStore, scope), deletedNoteKeys, scope) : nextStore;
     commitStore(mergedStore);
     pendingStoreRef.current = mergedStore;
+    pendingStoreScopeRef.current = scope ? { ...scope } : null;
     pendingStoreScopeKeyRef.current = requestScopeKey;
+    pendingDeletedNoteKeysRef.current = deletedNoteKeys;
     if (saveTimerRef.current !== null) {
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
@@ -655,9 +726,10 @@ export function TextbookWorkspace({
       saveTimerRef.current = null;
     }
     if (pendingStoreRef.current) {
-      await persistStore(pendingStoreRef.current);
+      const detachedPendingSave = detachPendingStoreSave();
+      if (detachedPendingSave) await persistDetachedStoreSave(detachedPendingSave);
     }
-  }, [activeAsset?.id, bindingNodeId, persistStore, saveNoteNow]);
+  }, [activeAsset?.id, bindingNodeId, saveNoteNow]);
 
   React.useEffect(() => {
     flushPendingSaveRef.current = flushPendingSave;

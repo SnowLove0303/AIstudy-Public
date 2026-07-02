@@ -25,7 +25,7 @@
 - 当前主要分支：`main`
 - 本轮系统整理开始前，本地 HEAD 与远端 `origin/main` 一致，提交为 `b861d75 test: expand mind map catalog boundary coverage`；`git fetch --prune origin` 后无远端冲突。
 - 当前公开版已经具备课程/分区、思维导图、节点 Word 文档、教材 PDF 与节点笔记、题库考试、信息采集、词汇实时采集、AI 助手、Chrome 固定端口、MCP 设置页、Tailscale 内网访问、远程权限细分、远程调用监控、导图/文档 MCP 读写工具、更新管理、错误日志、数据库更新保护、左右侧栏折叠、导图快捷键设置、右键文字排版浮层和右侧文档格式面板。
-- 最近一轮更新集中在词汇采集 Android 伴随 APK、桌面端实时接收器、词汇过滤去重、DB-first 持久化、本地 pending 兜底、主导航词汇采集入口、纯净打包守卫补充、系统旧版本环境整理和 APK 产物入库。
+- 最近一轮更新集中在词汇采集 Android 伴随 APK、桌面端实时接收器、词汇过滤去重、DB-first 持久化、本地 pending 兜底、主导航词汇采集入口、纯净打包守卫补充、系统旧版本环境整理、APK 产物入库，以及知识库文档/教材重启恢复可靠性收口。
 
 接手时必须先执行 `git status --short --branch` 判断工作区状态。若已有未提交改动，先确认归属，不要用 `git reset --hard` 或 checkout 回滚用户或其他线程的改动。纯净发行版、数据库自动发现和 StorageProvider 收口都会触碰 `electron/main.ts`、打包脚本和文档，后续接手必须先看真实 diff 再继续。
 
@@ -324,6 +324,7 @@ textbook_notes
 - `knowledge_document_snapshots` 存 canvas-editor JSON 快照。
 - 文档和导图通过 `(course_id, mind_map_id, node_id)` 绑定。
 - 文档编辑器使用宽纸张纵向阅读流，页面尺寸由当前工作区宽度计算；不要再把 page width/height 交换传入 `canvas-editor`，也不要在正常文档工作区使用 `PaperDirection.HORIZONTAL`。
+- 文档成功写入 MySQL 后会刷新 IndexedDB 本地恢复镜像；MySQL 成功读到空文档时必须打开空白文档并清理旧本地镜像，不能让旧 local snapshot 变成第二事实源。本地镜像只在文档 API 不可用或数据库读取失败时用于恢复。
 
 教材：
 
@@ -334,6 +335,7 @@ textbook_notes
 - 教材笔记绑定到节点和页段，可保存 canvas-editor 富文本快照，关闭前会进入统一保存 drain，并可合并进对应节点 Word 文档。
 - 教材读取、保存和 PDF 字节读取都走 DB-first StorageProvider。MySQL 可用时以 `textbook_assets`、`textbook_notes` 为准并回写本地缓存；本地 JSON 只在 MySQL 不可用或显式 dirty 时参与恢复。
 - 教材断连保存会写入本地缓存并在 `state/textbook-pending-scopes.json` 标记作用域；重连后按 `updatedAt` 提拔到 MySQL，资产按 `asset.id` 合并，笔记按 `textbookId + nodeId` 合并。`state/textbook-database-backed-scopes.json` 记录已经被数据库接管的作用域，避免数据库后续为空时被旧 JSON 反向覆盖。若作用域尚未被数据库接管、数据库为空且旧本地缓存有内容，会先把本地缓存迁入数据库，避免升级时丢旧数据；若数据库已有内容或作用域已被接管且缓存未 dirty，则不让旧 JSON 覆盖数据库。
+- 教材工作区延迟保存必须记录原始 `courseId + mindMapId`，切换课程/导图或页面重置时先脱离 pending store 并按原作用域落库，避免新作用域初始化清掉上一个作用域的 PDF 页码、缩放、目录节点和笔记。
 - 旧版 `mindMapId === courseId` 教材作用域会自动迁移到真实导图作用域。
 - 当前教材文件路径仍保存在资产记录中，后续如果做跨机器迁移，要检查路径相对化和资产复制策略。
 
@@ -494,6 +496,7 @@ npm run dev:app             # 日常开发验证，不打安装包
 npm run dev                 # 原始 Vite + Electron 调试入口
 npm run build               # TypeScript + Vite + Electron 构建
 npm run qa:data-boundaries  # 校验 DB-first、本地缓存、preload 和打包数据边界
+npm run qa:knowledge-reliability # 校验知识库文档/教材重启恢复和 DB-first 可靠性守卫
 npm run qa:math-clipboard   # 校验 ChatGPT/KaTeX/MathML/纯文本数学粘贴解析
 npm run qa:textbook         # 构建并校验教材资产/笔记/PDF 批注数据合同
 npm run qa:error-codes      # 构建并校验错误码体系
@@ -622,7 +625,7 @@ android\vocabulary-capture\dist\AIstudyVocabularyCapture-0.1.4-debug.apk
 
 ## 11. 最近版本记录
 
-- `0.1.76`：接入 AIstudy 管理 MySQL 自动发现和短启动，安装器 MySQL 配置改为 UTF-8 无 BOM 写入，修复重复安装时 `[mysqld]`/`[client]` 多端口解析导致的参数转换失败，并为 `dist:oneclick` 增加纯净安装源运行数据守卫；补充教材 PDF 批注 DB-owned 服务拆分、`storageBoundary` 数据边界清单、数学粘贴共享解析模块、`qa:data-boundaries`、`qa:math-clipboard`、`qa:textbook` 和 `release/build-manifest.json`；新增词汇采集桌面接收器、Android Accessibility 伴随 APK、DB-first 词汇文档、断连 pending 重放、词汇去重和主导航入口；清理旧 `0.1.68`-`0.1.75` 安装包到 F 盘隔离区并移除已失效的旧内测版快捷方式/卸载注册表残留。
+- `0.1.76`：接入 AIstudy 管理 MySQL 自动发现和短启动，安装器 MySQL 配置改为 UTF-8 无 BOM 写入，修复重复安装时 `[mysqld]`/`[client]` 多端口解析导致的参数转换失败，并为 `dist:oneclick` 增加纯净安装源运行数据守卫；补充教材 PDF 批注 DB-owned 服务拆分、`storageBoundary` 数据边界清单、数学粘贴共享解析模块、`qa:data-boundaries`、`qa:math-clipboard`、`qa:textbook` 和 `release/build-manifest.json`；新增词汇采集桌面接收器、Android Accessibility 伴随 APK、DB-first 词汇文档、断连 pending 重放、词汇去重和主导航入口；修复节点文档成功读库为空时回放旧本地镜像、教材作用域切换丢弃延迟保存的问题，并新增 `qa:knowledge-reliability`；清理旧 `0.1.68`-`0.1.75` 安装包到 F 盘隔离区并移除已失效的旧内测版快捷方式/卸载注册表残留。
 - `0.1.75`：纯净公开版默认隔离本机数据目录，并在未显式配置 MySQL 时避免读取本机旧数据库内容。
 - `0.1.74`：修复教材节点页段绑定状态隔离、已绑定锁定/取消重设，并清理教材 PDF 独立窗口残留。
 - `0.1.73`：修复教材资产与节点笔记按课程和导图作用域读取保存、教材页段绑定切换和持久化问题，并优化文档内 AI 小窗拖动体验。
@@ -751,6 +754,7 @@ android/vocabulary-capture/
 - 词汇采集已新增 `src/renderer/features/vocabulary/README.md` 和 `android/vocabulary-capture/README.md`。后续改采集筛选、端口、APK 包名、授权方式、MySQL 表或 pending 文件时必须同步这两个 README、`docs/ARCHITECTURE.md` 和本接手文档。
 - ChatGPT/KaTeX/MathML/纯文本数学粘贴已抽到 `src/renderer/features/mathInput/`，`npm run build` 会先跑 `qa:math-clipboard`；后续改教材或节点文档粘贴逻辑时不要在业务组件内另起一套符号替换。
 - 教材资产、节点笔记和 PDF 批注新增 `npm run qa:textbook` 回归脚本；涉及教材页段绑定、笔记规范化、批注坐标/颜色/数据库归属时必须运行。
+- 知识库文档本地镜像和教材延迟保存新增 `npm run qa:knowledge-reliability` 守卫；涉及 DB-first 恢复、重启状态、切换课程/导图保存时必须运行。
 - 本轮检索了 `TODO/FIXME/placeholder/mock/sample/lorem/测试/占位/假/dummy/fake`。新增可疑业务假入口未发现；命中主要是历史研究文档里的 fixture/sample 计划、CSS/输入框 placeholder、导入报告 `sample` 字段，以及考试政治真题种子入口。后续如果改 UI，应继续遵守“不展示未接入真实能力的入口”。
 - 当前工作区已有用户/历史改动，交接者在任何提交、打包或发布前必须重新跑 `git status --short --branch` 并确认改动归属。
 - 2026-07-02 环境整理后，`release` 下旧 `AIstudy-Setup-0.1.68` 到 `0.1.75` 安装包已移入 `F:\AIAPP\Codex\cleanup-quarantine\AIstudy-public-20260702-1708`；当前桌面主版本只保留 `0.1.76`。该隔离区是回滚点，不属于仓库源码。

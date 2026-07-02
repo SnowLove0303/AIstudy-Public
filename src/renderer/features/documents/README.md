@@ -18,6 +18,8 @@ Current files:
 - The workspace must not bind documents by title, path, or UI selection text.
 - Renderer code must save through `window.aistudyKnowledgeDocuments` or the local snapshot fallback.
 - `knowledge_documents` stores the current pointer and metadata only; actual content belongs to snapshots.
+- A successful database save refreshes the IndexedDB recovery mirror, but the database remains authoritative.
+- A successful database read with no node document opens an empty document and clears the old local mirror; local snapshots are only used when the document API or database read fails.
 - Large images and attachments must not be stored as long inline base64 in document JSON.
 - DOCX export is a read-only projection of the current node document snapshot; it must not mutate the editor snapshot or document binding.
 - Column layout is currently block-level: the editor converts simple text documents into a 1-row canvas-editor table marked as `aistudyBlockKind: "columns"`. Content columns are split by full page inner width, with disabled spacer cells on both sides of each center divider so text does not touch the divider. Setting one column closes column layout by merging content cells in reading order while skipping spacer cells; switching between two and three columns first merges the existing column block and then redistributes the text. Complex non-column documents fall back to inserting an empty column block instead of rewriting tables or images. It is saved in the normal snapshot, reopens through the existing document loader, and exports to DOCX as content columns with only the internal divider. It is not a page/section-level flowing Word columns implementation.
@@ -40,3 +42,4 @@ Current files:
 - New asset handling must write to asset storage/link tables instead of embedding binaries.
 - Math paste behavior must stay shared with textbook notes through `features/mathInput`; do not add document-only symbol replacements in this adapter.
 - ChatGPT or webpage rich-text paste must not inherit external CSS spacing. Preserve semantic structure, then render with AIstudy document spacing and snapshot attributes.
+- Changes to document DB-first recovery must keep `npm run qa:knowledge-reliability` passing.

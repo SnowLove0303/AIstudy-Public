@@ -22,6 +22,7 @@
 - MySQL 不可用时，本地兜底文件位于 `state/textbooks/{courseId}__{mindMapId}.json`，待同步作用域记录在 `state/textbook-pending-scopes.json`，已经被数据库接管的作用域记录在 `state/textbook-database-backed-scopes.json`。
 - MySQL 可用时读取、保存和 PDF 字节读取都走 DB-first StorageProvider，并把数据库结果回写本地缓存；只有数据库不可用或该作用域被标记为 dirty 时，本地缓存才会参与恢复。
 - 教材保存是增量安全写：资产、页码、缩放和笔记 upsert 到数据库；只有用户明确取消绑定时才通过删除键软删对应笔记，避免局部保存或重启关闭时把同一知识库下其它教材/笔记误删。
+- 教材延迟保存必须携带原始 `courseId + mindMapId` 作用域；切换课程、导图或关闭页面前，上一作用域的 pending store 会脱离当前 UI 状态继续落库，不能被新作用域初始化清掉。
 - 旧版本已经存在的本地教材缓存，如果该作用域尚未被数据库接管且数据库为空，会自动提拔到 MySQL；接管后如果数据库已有内容或缓存未 dirty，不允许旧 JSON 覆盖数据库。
 - PDF 阅读走 `aistudy-pdf` 特权协议，不把 PDF 二进制塞进导图或 Word 快照。
 - 当前资产记录保存 PDF 文件路径；跨机器迁移前必须重新确认路径相对化和资产复制策略。
@@ -70,3 +71,4 @@ Renderer 只通过 preload 调用：
 - 不把教材文件复制、转码或上传到隐藏位置，除非先明确资产迁移策略。
 - 笔记合并到 Word 前必须保存当前笔记，并确认目标节点真实存在。
 - 后续做 OCR、划线、批注或页内定位时，应继续绑定到 `textbookId + nodeId + pageStart/pageEnd`，不要改动课程、导图、节点三段主链路。
+- 涉及教材 pending、重启恢复或作用域切换保存时，必须保持 `npm run qa:knowledge-reliability` 和 `npm run qa:textbook` 通过。

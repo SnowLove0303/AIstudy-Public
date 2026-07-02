@@ -275,7 +275,7 @@ The public version has moved beyond the first milestone. Current shipped surface
 - Current node documents can be exported to `.docx` through Electron main. Export is a projection of the active document snapshot and does not change MySQL content.
 - Importer supports `.txt`, `.md`, `.markdown`, and `.docx` into node documents.
 - Textbook workspace supports course/mind-map scoped PDF assets, node page-range binding, node textbook notes, shared math paste normalization, detached PDF windows, and MySQL-backed PDF annotations.
-- Textbook assets and notes use DB-first storage with local JSON only as disconnected fallback. PDF annotations are DB-owned and pause when the database is unavailable, avoiding a second local annotation source.
+- Textbook assets and notes use DB-first storage with local JSON only as disconnected fallback. Delayed textbook saves retain their original course/mind-map scope before UI reset, so switching scopes does not discard pending PDF state or notes. PDF annotations are DB-owned and pause when the database is unavailable, avoiding a second local annotation source.
 - Chrome fixed-port management currently covers 豆包、ChatGPT、Bilibili、知乎、智联招聘、BOSS 直聘 and 小红书.
 - Chrome fixed-port metadata is DB-first through `chrome_port_states`, while real login cookies stay in per-platform Chrome profiles. Production builds use a stable runtime root outside the app install directory on F drive when available so packaging cleanup or reinstalling does not reset browser login state.
 - Vocabulary capture is a desktop receiver plus Android Accessibility companion APK. The Electron main process listens on port `38673`, filters Baicizhan word-card text, deduplicates accepted words, persists to `vocabulary_capture_documents` and `vocabulary_capture_events`, and uses local pending files only while MySQL is unavailable. The renderer only shows connection state and the filtered word document.
@@ -286,7 +286,7 @@ The public version has moved beyond the first milestone. Current shipped surface
 - App updates preserve runtime data and database configuration. Version updates must not overwrite user courses, mind maps, documents, MCP remote state, or MySQL config.
 - The Windows installer is a slim app package. MySQL and VC++ runtime setup is handled by `build/installer/install-aistudy-mysql-runtime.ps1` during install and may download runtime dependencies on the target machine; dependency setup failure must not block opening the app.
 - The main knowledge workspace has collapsible left knowledge-base pane and right catalog pane. Collapsing side panes must not collapse or zero-width the central mind-map/document canvas.
-- Storage boundaries are declared in `electron/storageBoundary.ts` and checked by `npm run qa:data-boundaries` during build.
+- Storage boundaries are declared in `electron/storageBoundary.ts` and checked by `npm run qa:data-boundaries` during build. Knowledge-base recovery rules are checked by `npm run qa:knowledge-reliability`.
 - ChatGPT/KaTeX/MathML/plain-text math paste normalization lives in `src/renderer/features/mathInput/` and is checked by `npm run qa:math-clipboard` during build.
 - `dist:oneclick` removes runtime data from the installer source and writes `release/build-manifest.json` with version, commit, dirty state, and artifact hashes.
 - Do not re-embed `mysql-8.4.7-winx64.zip` or `vc_redist.x64.exe` into the main NSIS package unless explicitly building a separate offline dependency package.
@@ -355,6 +355,6 @@ Authorization: Bearer ...
 
 - External MCP calls must be observable when monitoring is enabled.
 - Remote edit access must be permission-gated by capability: course management, mind-map editing, document writing, destructive operations.
-- Build verification is `npm run build`. Data-boundary verification is `npm run qa:data-boundaries`. Math paste verification is `npm run qa:math-clipboard`. Textbook data-contract verification is `npm run qa:textbook`. Installer verification is `npm run dist:oneclick`.
+- Build verification is `npm run build`. Data-boundary verification is `npm run qa:data-boundaries`. Knowledge recovery verification is `npm run qa:knowledge-reliability`. Math paste verification is `npm run qa:math-clipboard`. Textbook data-contract verification is `npm run qa:textbook`. Installer verification is `npm run dist:oneclick`.
 - `npm run dist:oneclick` rewrites `docs/updates/INDEX.md`; restore the real release summary after packaging.
 
