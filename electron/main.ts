@@ -5357,6 +5357,17 @@ async function openAistudyDataRoot() {
   return true;
 }
 
+async function openExternalHttpUrl(input: unknown) {
+  if (typeof input !== "string") throw new Error("invalid-url");
+  const normalizedInput = input.trim().toLowerCase().startsWith("www.") ? `https://${input.trim()}` : input.trim();
+  const url = new URL(normalizedInput);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("unsupported-url-protocol");
+  }
+  await shell.openExternal(url.toString());
+  return true;
+}
+
 async function findProjectRoot() {
   const candidates = [
     process.cwd(),
@@ -8326,24 +8337,189 @@ const MCP_DOCUMENT_STYLE = {
 } as const;
 const MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const MCP_DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
+const MCP_DOCUMENT_UNICODE_SUPERSCRIPT: Record<string, string> = {
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+  "+": "⁺",
+  "-": "⁻",
+  "=": "⁼",
+  "(": "⁽",
+  ")": "⁾",
+  "n": "ⁿ",
+  "i": "ⁱ"
+};
+const MCP_DOCUMENT_UNICODE_SUBSCRIPT: Record<string, string> = {
+  "0": "₀",
+  "1": "₁",
+  "2": "₂",
+  "3": "₃",
+  "4": "₄",
+  "5": "₅",
+  "6": "₆",
+  "7": "₇",
+  "8": "₈",
+  "9": "₉",
+  "+": "₊",
+  "-": "₋",
+  "=": "₌",
+  "(": "₍",
+  ")": "₎",
+  "a": "ₐ",
+  "e": "ₑ",
+  "h": "ₕ",
+  "i": "ᵢ",
+  "j": "ⱼ",
+  "k": "ₖ",
+  "l": "ₗ",
+  "m": "ₘ",
+  "n": "ₙ",
+  "o": "ₒ",
+  "p": "ₚ",
+  "r": "ᵣ",
+  "s": "ₛ",
+  "t": "ₜ",
+  "u": "ᵤ",
+  "v": "ᵥ",
+  "x": "ₓ"
+};
 
 function stripMcpMarkdownHeading(line: string) {
   return line.replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
+}
+
+function isMcpDocumentTemplateNumberHeadingText(value: string) {
+  return /^\d+[.．、]\s*\S.{0,60}$/.test(value.trim());
 }
 
 function classifyMcpDocumentLine(line: string) {
   const plain = stripMcpMarkdownHeading(line);
   if (!plain) return null;
   if (/^#{1,2}\s+/.test(line) || /^[一二三四五六七八九十]+[、.．]/.test(plain)) return "section";
-  if (/^#{3,6}\s+/.test(line) || /^[（(][一二三四五六七八九十\d]+[）)]、?/.test(plain)) return "subsection";
+  if (/^#{3,6}\s+/.test(line) || /^[（(][一二三四五六七八九十\d]+[）)]、?/.test(plain) || isMcpDocumentTemplateNumberHeadingText(plain)) return "subsection";
   if (/^第[一二三四五六七八九十百千万\d]+条/.test(plain)) return "article";
   if (plain.length <= 28 && /[:：]$/.test(plain)) return "subsection";
   return "body";
 }
 
+function splitMcpDocumentHeadingLine(line: string): { kind: keyof typeof MCP_DOCUMENT_STYLE; heading: string; rest: string } | null {
+  const raw = stripMcpMarkdownHeading(line);
+  const patterns: Array<{ kind: keyof typeof MCP_DOCUMENT_STYLE; regex: RegExp }> = [
+    { kind: "section", regex: /^([一二三四五六七八九十]+[、.．][^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "subsection", regex: /^([（(][一二三四五六七八九十\d]+[）)]、?[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "subsection", regex: /^(\d+[.．、]\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "article", regex: /^(第[一二三四五六七八九十百千万\d]+条[^：:\n]{0,80}[：:]?)\s*(.+)$/ }
+  ];
+  for (const { kind, regex } of patterns) {
+    const match = raw.match(regex);
+    if (match?.[1] && match[2]) {
+      return { kind, heading: match[1].trim(), rest: match[2].trim() };
+    }
+  }
+  return null;
+}
+
+function toMcpDocumentUnicodeScript(value: string, map: Record<string, string>) {
+  const text = value.replace(/^\{|\}$/g, "");
+  if (!text || text.length > 24) return value;
+  let result = "";
+  for (const char of text) {
+    const mapped = map[char];
+    if (!mapped) return value;
+    result += mapped;
+  }
+  return result;
+}
+
+function normalizeMcpDocumentNestedScriptText(value: string) {
+  return value.replace(/([A-Za-zα-ωΑ-Ω])_([A-Za-z0-9])/gu, (match, base: string, script: string) => {
+    const converted = toMcpDocumentUnicodeScript(script, MCP_DOCUMENT_UNICODE_SUBSCRIPT);
+    return converted === script ? match : `${base}${converted}`;
+  });
+}
+
+function normalizeMcpDocumentMathText(value: string) {
+  let text = value
+    .replace(/\u00a0/g, " ")
+    .replace(/\u2212/g, "-")
+    .replace(/\\qquad(?![A-Za-z])|\\quad(?![A-Za-z])/g, " ")
+    .replace(/\\left|\\right/g, "")
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}")
+    .replace(/\\mid\b/g, "|")
+    .replace(/\\mathbb\s*\{\s*R\s*\}/gi, "ℝ")
+    .replace(/\\mathbb\s*\{\s*N\s*\}/gi, "ℕ")
+    .replace(/\\mathbb\s*\{\s*Z\s*\}/gi, "ℤ")
+    .replace(/\\mathbb\s*\{\s*Q\s*\}/gi, "ℚ")
+    .replace(/\bmathbb\s*\{\s*R\s*\}/gi, "ℝ")
+    .replace(/\bmathbb\s*\{\s*N\s*\}/gi, "ℕ")
+    .replace(/\bmathbb\s*\{\s*Z\s*\}/gi, "ℤ")
+    .replace(/\bmathbb\s*\{\s*Q\s*\}/gi, "ℚ")
+    .replace(/\\notin(?![A-Za-z])|\bnotin\b/g, "∉")
+    .replace(/\\subseteq(?![A-Za-z])|\bsubseteq\b/g, "⊆")
+    .replace(/\\subset(?![A-Za-z])|\bsubset\b/g, "⊂")
+    .replace(/\\neq(?![A-Za-z])|\\ne(?![A-Za-z])|\bneq\b|\bne\b|!=/g, "≠")
+    .replace(/\\geq(?![A-Za-z])|\\ge(?![A-Za-z])|\bgeq\b|>=/g, "≥")
+    .replace(/\\leq(?![A-Za-z])|\\le(?![A-Za-z])|\bleq\b|<=/g, "≤")
+    .replace(/\\infty(?![A-Za-z])|\binfty\b|\binfinity\b/gi, "∞")
+    .replace(/\\mapsto(?![A-Za-z])|\bmapsto\b/g, "↦")
+    .replace(/\\longrightarrow(?![A-Za-z])|\\rightarrow(?![A-Za-z])|\\to(?![A-Za-z])|\blongrightarrow\b|\brightarrow\b|->/g, "→")
+    .replace(/\\leftarrow(?![A-Za-z])|\bleftarrow\b|<-/g, "←")
+    .replace(/\\Rightarrow(?![A-Za-z])|\\implies(?![A-Za-z])|=>/g, "⇒")
+    .replace(/\\Leftrightarrow(?![A-Za-z])|\\iff(?![A-Za-z])|<=>/g, "⇔")
+    .replace(/\\in(?![A-Za-z])/g, "∈")
+    .replace(/\\cup(?![A-Za-z])|\bcup\b/g, "∪")
+    .replace(/\\cap(?![A-Za-z])|\bcap\b/g, "∩")
+    .replace(/\\forall(?![A-Za-z])|\bforall\b/g, "∀")
+    .replace(/\\exists(?![A-Za-z])|\bexists\b/g, "∃")
+    .replace(/\\sqrt\s*\{([^{}\n]+)\}/g, "√$1")
+    .replace(/\\pi(?![A-Za-z])|\bpi\b/g, "π")
+    .replace(/\\theta(?![A-Za-z])|\btheta\b/g, "θ")
+    .replace(/\\alpha(?![A-Za-z])|\balpha\b/g, "α")
+    .replace(/\\beta(?![A-Za-z])|\bbeta\b/g, "β")
+    .replace(/\\gamma(?![A-Za-z])|\bgamma\b/g, "γ")
+    .replace(/\\Delta(?![A-Za-z])|\bDelta\b/g, "Δ")
+    .replace(/\\lambda(?![A-Za-z])|\blambda\b/g, "λ")
+    .replace(/\\epsilon(?![A-Za-z])|\bepsilon\b/gi, "ε")
+    .replace(/\\varepsilon(?![A-Za-z])|\bvarepsilon\b/gi, "ε")
+    .replace(/\\delta(?![A-Za-z])|\bdelta\b/gi, "δ")
+    .replace(/\\R(?![A-Za-z])/g, "ℝ")
+    .replace(/\\N(?![A-Za-z])/g, "ℕ")
+    .replace(/\\Z(?![A-Za-z])/g, "ℤ")
+    .replace(/\\Q(?![A-Za-z])/g, "ℚ")
+    .replace(/\bN\+/g, "ℕ⁺")
+    .replace(/\\[,;! ]/g, " ");
+
+  text = text.replace(/([A-Za-z0-9ℝℕℤℚα-ωΑ-Ω)\]}])([_^])(\{[^{}\n]{1,24}\}|[-+]?\d{1,4}|[A-Za-zα-ωΑ-Ω])/gu, (_match, base: string, marker: string, script: string) => {
+    const map = marker === "_" ? MCP_DOCUMENT_UNICODE_SUBSCRIPT : MCP_DOCUMENT_UNICODE_SUPERSCRIPT;
+    const converted = toMcpDocumentUnicodeScript(script, map);
+    const fallback = script.startsWith("{") && script.endsWith("}")
+      ? `{${normalizeMcpDocumentNestedScriptText(script.slice(1, -1))}}`
+      : script;
+    return converted === script ? `${base}${marker}${fallback}` : `${base}${converted}`;
+  });
+
+  const mathToken = String.raw`[A-Za-z0-9ℝℕℤℚα-ωΑ-Ω)\]}]`;
+  const mathTarget = String.raw`[A-Za-z0-9ℝℕℤℚα-ωΑ-Ω([{]`;
+  text = text
+    .replace(new RegExp(`(${mathToken})\\s*(?:right)?arrow\\s*(${mathTarget})`, "g"), "$1 → $2")
+    .replace(new RegExp(`(${mathToken})\\s*mapsto\\s*(${mathTarget})`, "g"), "$1 ↦ $2")
+    .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
+    .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
+
+  return text.replace(/\\/g, "");
+}
+
 function createMcpDocumentElement(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {
   return {
-    value,
+    value: normalizeMcpDocumentMathText(value),
     ...MCP_DOCUMENT_STYLE[kind]
   } as Record<string, unknown>;
 }
@@ -8375,15 +8551,26 @@ function createMcpDocumentElements(value: string, kind: keyof typeof MCP_DOCUMEN
     .map((part) => createMcpDocumentElement(part, kind));
 }
 
+function normalizeMcpDocumentTemplateSource(text: string) {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/([。！？；;])([一二三四五六七八九十]+[、.．][^：:\n]{1,80}[：:])/g, "$1\n$2")
+    .replace(/([。！？；;])([（(][一二三四五六七八九十\d]+[）)]、?[^：:\n]{1,80}[：:])/g, "$1\n$2")
+    .replace(/([。！？；;])(\d+[.．、]\s*[^：:\n]{1,80}[：:])/g, "$1\n$2")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
-  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  const lines = normalizeMcpDocumentTemplateSource(text).split("\n");
   const elements: Record<string, unknown>[] = [];
   let bodyLines: string[] = [];
   const flushBody = () => {
     const body = bodyLines.join("\n").trim();
     bodyLines = [];
     if (!body) return;
-    elements.push(...createMcpDocumentElements(`${body}\n\n`, "body"));
+    elements.push(...createMcpDocumentElements(`${body}\n`, "body"));
+    elements.push(createMcpDocumentElement("\n", "body"));
   };
 
   for (const rawLine of lines) {
@@ -8392,10 +8579,17 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
       flushBody();
       continue;
     }
+    const splitHeading = splitMcpDocumentHeadingLine(rawLine);
+    if (splitHeading) {
+      flushBody();
+      elements.push(createMcpDocumentElement(`${splitHeading.heading}\n`, splitHeading.kind));
+      bodyLines.push(splitHeading.rest);
+      continue;
+    }
     const kind = classifyMcpDocumentLine(rawLine);
     if (kind && kind !== "body") {
       flushBody();
-      elements.push(createMcpDocumentElement(`${stripMcpMarkdownHeading(rawLine)}\n\n`, kind));
+      elements.push(createMcpDocumentElement(`${stripMcpMarkdownHeading(rawLine)}\n`, kind));
       continue;
     }
     bodyLines.push(line);
@@ -9760,6 +9954,8 @@ ipcMain.handle("runtime:diagnose", withUserFacingError("runtime:diagnose", "环�
 ipcMain.handle("runtime:copy-diagnostic-report", withUserFacingError("runtime:copy-diagnostic-report", "诊断报告暂时无法复制。", () => copyRuntimeDiagnosticReport()));
 
 ipcMain.handle("runtime:open-data-root", withUserFacingError("runtime:open-data-root", "数据目录暂时无法打开。", () => openAistudyDataRoot()));
+
+ipcMain.handle("runtime:open-external-url", withUserFacingError("runtime:open-external-url", "链接暂时无法打开。", (_event, input) => openExternalHttpUrl(input)));
 
 ipcMain.handle("ai-chat:send", async (_event, request: unknown) => {
   try {

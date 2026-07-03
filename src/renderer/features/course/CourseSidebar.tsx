@@ -2,6 +2,7 @@ import * as React from "react";
 import { ChevronDown, ChevronRight, ChevronsDown, ChevronsRight, Copy, Edit3, FolderPlus, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import type { Course, CourseSection, CourseSyncStatus } from "./courseTypes";
 import { normalizeSectionName, sortByOrderThenUpdated } from "./courseTypes";
+import { isImeComposingEvent } from "../../lib/ime";
 
 type CourseGroup = {
   kind: "section" | "unsectioned";
@@ -99,6 +100,8 @@ export function CourseSidebar({
   const [courseContextMenuAnchor, setCourseContextMenuAnchor] = React.useState<CourseContextMenuAnchor | null>(null);
   const [isUnsectionedCollapsed, setIsUnsectionedCollapsed] = React.useState(false);
   const [draggingItem, setDraggingItem] = React.useState<DraggingSidebarItem | null>(null);
+  const isSectionInputComposingRef = React.useRef(false);
+  const sectionInputRef = React.useRef<HTMLInputElement | null>(null);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const canReorder = !normalizedQuery && editingSectionId === null;
   const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
@@ -161,6 +164,7 @@ export function CourseSidebar({
       setCourseContextMenuAnchor(null);
     }
     function closeOnEscape(event: KeyboardEvent) {
+      if (isImeComposingEvent(event)) return;
       if (event.key === "Escape") closeMenu();
     }
     window.addEventListener("resize", closeMenu);
@@ -206,6 +210,15 @@ export function CourseSidebar({
   }, [openCourseMoveMenuId]);
 
   const activeMoveMenuCourse = openCourseMoveMenuId ? courses.find((course) => course.id === openCourseMoveMenuId) ?? null : null;
+
+  React.useEffect(() => {
+    if (!editingSectionId) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      sectionInputRef.current?.focus({ preventScroll: true });
+      sectionInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editingSectionId]);
 
   function closeCourseMoveMenu() {
     setOpenCourseMoveMenuId(null);
@@ -298,8 +311,9 @@ export function CourseSidebar({
     setSectionDraft("");
   }
 
-  async function submitSectionEdit(event: React.FormEvent<HTMLFormElement>) {
+  const submitSectionEdit: React.ComponentProps<"form">["onSubmit"] = async (event) => {
     event.preventDefault();
+    if (isSectionInputComposingRef.current) return;
     const name = normalizeSectionName(sectionDraft);
     if (!name) {
       cancelSectionEdit();
@@ -312,9 +326,10 @@ export function CourseSidebar({
       await onRenameSection(editingSectionId, name);
     }
     cancelSectionEdit();
-  }
+  };
 
   function handleSectionInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (isImeComposingEvent(event)) return;
     if (event.key === "Escape") {
       event.preventDefault();
       cancelSectionEdit();
@@ -390,16 +405,27 @@ export function CourseSidebar({
 
   function renderSectionEditor() {
     return (
-      <form className="course-section-editor" onSubmit={submitSectionEdit}>
+      <form
+        className="course-section-editor"
+        onSubmit={submitSectionEdit}
+        onPointerDown={(event) => event.stopPropagation()}
+        onDragStart={(event) => event.preventDefault()}
+      >
         <ChevronDown size={15} />
         <input
+          ref={sectionInputRef}
           value={sectionDraft}
           onChange={(event) => setSectionDraft(event.target.value)}
+          onCompositionStart={() => {
+            isSectionInputComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            isSectionInputComposingRef.current = false;
+          }}
           onKeyDown={handleSectionInputKeyDown}
           onBlur={() => {
             if (!normalizeSectionName(sectionDraft)) cancelSectionEdit();
           }}
-          autoFocus
           maxLength={40}
           placeholder="分区名称"
         />

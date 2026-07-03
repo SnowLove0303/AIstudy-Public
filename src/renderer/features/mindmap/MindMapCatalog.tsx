@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronRight, Copy, ListTree, ListX, Trash2 } from "lucide-react";
 import type { MindMapOutlineItem } from "./mindMapTypes";
+import { isImeComposingEvent } from "../../lib/ime";
 
 type MindMapCatalogProps = {
   items: MindMapOutlineItem[];
@@ -103,6 +104,7 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
               onClick={() => options.onNodeSelect?.(item)}
               onContextMenu={(event) => options.onNodeContextMenu?.(event, item)}
               onKeyDown={(event) => {
+                if (isImeComposingEvent(event)) return;
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
                 options.onNodeSelect?.(item);
@@ -169,6 +171,7 @@ export function MindMapCatalog({
       closeMenu();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isImeComposingEvent(event)) return;
       if (event.key === "Escape") closeMenu();
     };
 

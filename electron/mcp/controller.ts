@@ -516,7 +516,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: use read_courses, read_current_mindmap, search_nodes, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
-    "For document writes: use write_node_document only for new content or explicit whole-document replacement with replaceExisting=true. Use append_node_document for additions, format_node_document for style cleanup that preserves every value, and update_node_document_style for simple whole-document style changes.",
+    "For document writes: use write_node_document only for new content or explicit whole-document replacement with replaceExisting=true. Use append_node_document for additions. Separate independent knowledge points with exactly one blank line. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. Use format_node_document for style cleanup that preserves every value, and update_node_document_style for simple whole-document style changes.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -566,6 +566,7 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "4. 读取任务走 `read_current_mindmap`、`search_nodes`、`list_node_documents`、`read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
+      "7. 写入文档时独立知识点之间必须空一行；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
       "",
       "不要把 UI 面包屑当成本地路径。需要给其他 Codex/Claude Code 定位时，调用 `resolve_course_locator`。"
     ].join("\n");
@@ -587,7 +588,11 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "`mcp_plan_task({ intent, allowEdit: true })` -> `mcp_resolve_target` -> 具体编辑工具。",
       "",
       "## 编辑文档",
-      "`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document` -> `write_node_document` 或 `append_node_document`。",
+      "`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document` -> 按目标选择工具：写新内容用 `write_node_document`，追加内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，只改全文样式用 `update_node_document_style`。",
+      "",
+      "传入 `text` 时使用干净文本或 Markdown 标题；独立知识点之间保留且只保留一个空行。推荐结构是：小节标题一行，正文一到三行，然后空一行再写下一个知识点。",
+      "",
+      "数学表达优先使用规范符号和可读公式文本：例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。避免把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入；AIstudy 会尽量自动规范化，但调用方仍应输出干净内容。",
       "",
       "## 交给其他智能体",
       "`resolve_course_locator` 生成本地定位文件，把 locatorPath 交给对方。",
@@ -654,7 +659,7 @@ function createMcpPrompt(name: string, args: Record<string, unknown>) {
     aistudy_start: "你已经接入 AIstudy MCP。请先调用 mcp_get_started，再按返回的 nextSteps 做只读探测，不要进行编辑。",
     aistudy_read_knowledge: `请用 AIstudy MCP 读取知识库内容。目标：${target || "由用户当前问题决定"}。先 mcp_get_started，再 mcp_resolve_target，不要猜 courseId 或 nodeId。`,
     aistudy_edit_mindmap: `请用 AIstudy MCP 编辑思维导图。需求：${intent || "未提供"}。先 mcp_plan_task，再 mcp_resolve_target，确认 AISTUDY_MCP_ALLOW_EDIT=1 后只调用必要的编辑工具。`,
-    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId 并读取现有文档。新增内容用 append_node_document；整理排版用 format_node_document，它只能改样式，不能改正文、空行或缩进；write_node_document 只用于新文档，覆盖已有全文必须由用户明确要求并传 replaceExisting=true。`
+    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId 并读取现有文档。新增内容用 append_node_document；写入内容时独立知识点之间空一行，数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本；整理排版用 format_node_document，它只能改样式，不能改正文、空行或缩进；write_node_document 只用于新文档，覆盖已有全文必须由用户明确要求并传 replaceExisting=true。`
   };
   const text = textByName[name];
   if (!text) throw new Error("Unknown MCP prompt.");

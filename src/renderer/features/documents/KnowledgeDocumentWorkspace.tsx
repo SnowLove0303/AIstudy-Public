@@ -37,6 +37,7 @@ import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
 import { registerBeforeCloseSave } from "../../lib/saveDrain";
 import { deleteLocalSnapshot, readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
+import { isImeComposingEvent } from "../../lib/ime";
 import {
   areViewportScrollStatesEqual,
   EMPTY_VIEWPORT_SCROLL_STATE,
@@ -734,6 +735,7 @@ export function KnowledgeDocumentWorkspace({
 
   const handleEditorKeyDownCapture = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (isImeComposingEvent(event)) return;
       if (event.key === "Enter" && editorRef.current?.cancelBlankListOnEnter()) {
         event.preventDefault();
         event.stopPropagation();
@@ -1147,6 +1149,9 @@ export function KnowledgeDocumentWorkspace({
               ...clampAiPanelPoint(point, nextSize),
               text: assistantText
             });
+          },
+          onOpenUrl: (url) => {
+            void window.aistudyRuntime?.openExternalUrl?.(url);
           }
         })
           .then((editor) => {

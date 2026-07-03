@@ -322,7 +322,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: use read_courses, read_current_mindmap, search_nodes, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
-    "For document writes: pass clean plain text or Markdown-style headings to write_node_document or append_node_document. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
+    "For document writes: pass clean plain text or Markdown-style headings to write_node_document or append_node_document. Separate independent knowledge points with exactly one blank line. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -372,7 +372,7 @@ function createMcpResourceText(uri) {
       "4. 读取任务走 `read_current_mindmap`、`search_nodes`、`list_node_documents`、`read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
-      "7. 写入文档时传干净文本或 Markdown 标题即可，AIstudy 会自动套用统一排版模板。",
+      "7. 写入文档时传干净文本或 Markdown 标题即可，AIstudy 会自动套用统一排版模板。独立知识点之间必须空一行；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
       "8. 只做不改内容的样式清理时调用 `format_node_document`；只改全文字号/颜色/粗斜体时调用 `update_node_document_style`；不要为了排版调用 `write_node_document` 重写整篇文档。",
       "",
       "不要把 UI 面包屑当成本地路径。需要给其他 Codex/Claude Code 定位时，调用 `resolve_course_locator`。"
@@ -398,6 +398,10 @@ function createMcpResourceText(uri) {
       "`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document` -> 按目标选择工具：写新内容用 `write_node_document`，追加内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，只改全文样式用 `update_node_document_style`。",
       "",
       "传入 `text` 时使用干净文本或 Markdown 标题；系统会自动生成统一排版：章节标题蓝色加粗，条款标题蓝色加粗，正文为深色常规文本。",
+      "",
+      "独立知识点之间保留且只保留一个空行。推荐结构是：小节标题一行，正文一到三行，然后空一行再写下一个知识点。",
+      "",
+      "数学表达优先使用规范符号和可读公式文本：例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。避免把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入；AIstudy 会尽量自动规范化，但调用方仍应输出干净内容。",
       "",
       "`format_node_document` 是安全样式工具：只允许改字体、颜色、粗体、下划线等样式字段，不允许删空行、插空行、缩进、拆段、合段或改写 `value`。",
       "",
@@ -444,7 +448,7 @@ function createMcpPrompt(name, args = {}) {
     aistudy_start: "你已经接入 AIstudy MCP。请先调用 mcp_get_started，再按返回的 nextSteps 做只读探测，不要进行编辑。",
     aistudy_read_knowledge: `请用 AIstudy MCP 读取知识库内容。目标：${target || "由用户当前问题决定"}。先 mcp_get_started，再 mcp_resolve_target，不要猜 courseId 或 nodeId。`,
     aistudy_edit_mindmap: `请用 AIstudy MCP 编辑思维导图。需求：${intent || "未提供"}。先 mcp_plan_task，再 mcp_resolve_target，确认 AISTUDY_MCP_ALLOW_EDIT=1 后只调用必要的编辑工具。`,
-    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
+    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；独立知识点之间空一行；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本。整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
   };
   const text = textByName[name];
   if (!text) throw new Error("Unknown MCP prompt.");
@@ -1694,6 +1698,59 @@ const DOCUMENT_TEMPLATE_STYLE = {
 };
 const DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
+const DOCUMENT_UNICODE_SUPERSCRIPT = {
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+  "+": "⁺",
+  "-": "⁻",
+  "=": "⁼",
+  "(": "⁽",
+  ")": "⁾",
+  "n": "ⁿ",
+  "i": "ⁱ"
+};
+const DOCUMENT_UNICODE_SUBSCRIPT = {
+  "0": "₀",
+  "1": "₁",
+  "2": "₂",
+  "3": "₃",
+  "4": "₄",
+  "5": "₅",
+  "6": "₆",
+  "7": "₇",
+  "8": "₈",
+  "9": "₉",
+  "+": "₊",
+  "-": "₋",
+  "=": "₌",
+  "(": "₍",
+  ")": "₎",
+  "a": "ₐ",
+  "e": "ₑ",
+  "h": "ₕ",
+  "i": "ᵢ",
+  "j": "ⱼ",
+  "k": "ₖ",
+  "l": "ₗ",
+  "m": "ₘ",
+  "n": "ₙ",
+  "o": "ₒ",
+  "p": "ₚ",
+  "r": "ᵣ",
+  "s": "ₛ",
+  "t": "ₜ",
+  "u": "ᵤ",
+  "v": "ᵥ",
+  "x": "ₓ"
+};
 
 const DOCUMENT_TEMPLATE_STYLE_KEYS = new Set([
   "value",
@@ -1851,11 +1908,15 @@ function stripMarkdownHeading(line) {
   return String(line || "").replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
 }
 
+function isDocumentTemplateNumberHeadingText(value) {
+  return /^\d+[.．、]\s*\S.{0,60}$/.test(String(value || "").trim());
+}
+
 function classifyDocumentTemplateLine(line) {
   const plain = stripMarkdownHeading(line);
   if (!plain) return null;
   if (/^#{1,2}\s+/.test(line) || /^[一二三四五六七八九十]+[、.．]/.test(plain)) return "section";
-  if (/^#{3,6}\s+/.test(line) || /^[（(][一二三四五六七八九十\d]+[）)]、?/.test(plain)) return "subsection";
+  if (/^#{3,6}\s+/.test(line) || /^[（(][一二三四五六七八九十\d]+[）)]、?/.test(plain) || isDocumentTemplateNumberHeadingText(plain)) return "subsection";
   if (/^第[一二三四五六七八九十百千万\d]+条/.test(plain)) return "article";
   return "body";
 }
@@ -1865,6 +1926,7 @@ function splitDocumentTemplateHeadingLine(line) {
   const patterns = [
     { kind: "section", regex: /^([一二三四五六七八九十]+[、.．][^：:\n]{1,80}[：:])\s*(.+)$/ },
     { kind: "subsection", regex: /^([（(][一二三四五六七八九十\d]+[）)]、?[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "subsection", regex: /^(\d+[.．、]\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
     { kind: "article", regex: /^(第[一二三四五六七八九十百千万\d]+条[^：:\n]{0,80}[：:]?)\s*(.+)$/ }
   ];
   for (const { kind, regex } of patterns) {
@@ -1876,8 +1938,99 @@ function splitDocumentTemplateHeadingLine(line) {
   return null;
 }
 
+function toDocumentUnicodeScript(value, map) {
+  const text = String(value || "").replace(/^\{|\}$/g, "");
+  if (!text || text.length > 24) return value;
+  let result = "";
+  for (const char of text) {
+    const mapped = map[char];
+    if (!mapped) return value;
+    result += mapped;
+  }
+  return result;
+}
+
+function normalizeDocumentNestedScriptText(value) {
+  return String(value || "").replace(/([A-Za-zα-ωΑ-Ω])_([A-Za-z0-9])/gu, (match, base, script) => {
+    const converted = toDocumentUnicodeScript(script, DOCUMENT_UNICODE_SUBSCRIPT);
+    return converted === script ? match : `${base}${converted}`;
+  });
+}
+
+function normalizeDocumentMathText(value) {
+  let text = String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u2212/g, "-")
+    .replace(/\\qquad(?![A-Za-z])|\\quad(?![A-Za-z])/g, " ")
+    .replace(/\\left|\\right/g, "")
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}")
+    .replace(/\\mid\b/g, "|")
+    .replace(/\\mathbb\s*\{\s*R\s*\}/gi, "ℝ")
+    .replace(/\\mathbb\s*\{\s*N\s*\}/gi, "ℕ")
+    .replace(/\\mathbb\s*\{\s*Z\s*\}/gi, "ℤ")
+    .replace(/\\mathbb\s*\{\s*Q\s*\}/gi, "ℚ")
+    .replace(/\bmathbb\s*\{\s*R\s*\}/gi, "ℝ")
+    .replace(/\bmathbb\s*\{\s*N\s*\}/gi, "ℕ")
+    .replace(/\bmathbb\s*\{\s*Z\s*\}/gi, "ℤ")
+    .replace(/\bmathbb\s*\{\s*Q\s*\}/gi, "ℚ")
+    .replace(/\\notin(?![A-Za-z])|\bnotin\b/g, "∉")
+    .replace(/\\subseteq(?![A-Za-z])|\bsubseteq\b/g, "⊆")
+    .replace(/\\subset(?![A-Za-z])|\bsubset\b/g, "⊂")
+    .replace(/\\neq(?![A-Za-z])|\\ne(?![A-Za-z])|\bneq\b|\bne\b|!=/g, "≠")
+    .replace(/\\geq(?![A-Za-z])|\\ge(?![A-Za-z])|\bgeq\b|>=/g, "≥")
+    .replace(/\\leq(?![A-Za-z])|\\le(?![A-Za-z])|\bleq\b|<=/g, "≤")
+    .replace(/\\infty(?![A-Za-z])|\binfty\b|\binfinity\b/gi, "∞")
+    .replace(/\\mapsto(?![A-Za-z])|\bmapsto\b/g, "↦")
+    .replace(/\\longrightarrow(?![A-Za-z])|\\rightarrow(?![A-Za-z])|\\to(?![A-Za-z])|\blongrightarrow\b|\brightarrow\b|->/g, "→")
+    .replace(/\\leftarrow(?![A-Za-z])|\bleftarrow\b|<-/g, "←")
+    .replace(/\\Rightarrow(?![A-Za-z])|\\implies(?![A-Za-z])|=>/g, "⇒")
+    .replace(/\\Leftrightarrow(?![A-Za-z])|\\iff(?![A-Za-z])|<=>/g, "⇔")
+    .replace(/\\in(?![A-Za-z])/g, "∈")
+    .replace(/\\cup(?![A-Za-z])|\bcup\b/g, "∪")
+    .replace(/\\cap(?![A-Za-z])|\bcap\b/g, "∩")
+    .replace(/\\forall(?![A-Za-z])|\bforall\b/g, "∀")
+    .replace(/\\exists(?![A-Za-z])|\bexists\b/g, "∃")
+    .replace(/\\sqrt\s*\{([^{}\n]+)\}/g, "√$1")
+    .replace(/\\pi(?![A-Za-z])|\bpi\b/g, "π")
+    .replace(/\\theta(?![A-Za-z])|\btheta\b/g, "θ")
+    .replace(/\\alpha(?![A-Za-z])|\balpha\b/g, "α")
+    .replace(/\\beta(?![A-Za-z])|\bbeta\b/g, "β")
+    .replace(/\\gamma(?![A-Za-z])|\bgamma\b/g, "γ")
+    .replace(/\\Delta(?![A-Za-z])|\bDelta\b/g, "Δ")
+    .replace(/\\lambda(?![A-Za-z])|\blambda\b/g, "λ")
+    .replace(/\\epsilon(?![A-Za-z])|\bepsilon\b/gi, "ε")
+    .replace(/\\varepsilon(?![A-Za-z])|\bvarepsilon\b/gi, "ε")
+    .replace(/\\delta(?![A-Za-z])|\bdelta\b/gi, "δ")
+    .replace(/\\R(?![A-Za-z])/g, "ℝ")
+    .replace(/\\N(?![A-Za-z])/g, "ℕ")
+    .replace(/\\Z(?![A-Za-z])/g, "ℤ")
+    .replace(/\\Q(?![A-Za-z])/g, "ℚ")
+    .replace(/\bN\+/g, "ℕ⁺")
+    .replace(/\\[,;! ]/g, " ");
+
+  text = text.replace(/([A-Za-z0-9ℝℕℤℚα-ωΑ-Ω)\]}])([_^])(\{[^{}\n]{1,24}\}|[-+]?\d{1,4}|[A-Za-zα-ωΑ-Ω])/gu, (_match, base, marker, script) => {
+    const map = marker === "_" ? DOCUMENT_UNICODE_SUBSCRIPT : DOCUMENT_UNICODE_SUPERSCRIPT;
+    const converted = toDocumentUnicodeScript(script, map);
+    const fallback = script.startsWith("{") && script.endsWith("}")
+      ? `{${normalizeDocumentNestedScriptText(script.slice(1, -1))}}`
+      : script;
+    return converted === script ? `${base}${marker}${fallback}` : `${base}${converted}`;
+  });
+
+  const mathToken = String.raw`[A-Za-z0-9ℝℕℤℚα-ωΑ-Ω)\]}]`;
+  const mathTarget = String.raw`[A-Za-z0-9ℝℕℤℚα-ωΑ-Ω([{]`;
+  text = text
+    .replace(new RegExp(`(${mathToken})\\s*(?:right)?arrow\\s*(${mathTarget})`, "g"), "$1 → $2")
+    .replace(new RegExp(`(${mathToken})\\s*mapsto\\s*(${mathTarget})`, "g"), "$1 ↦ $2")
+    .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
+    .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
+
+  return text.replace(/\\/g, "");
+}
+
 function createTemplateElement(value, kind) {
-  return { value, ...DOCUMENT_TEMPLATE_STYLE[kind] };
+  return { value: normalizeDocumentMathText(value), ...DOCUMENT_TEMPLATE_STYLE[kind] };
 }
 
 function shouldSplitDocumentTextRunAt(value, index) {
@@ -1923,6 +2076,7 @@ function normalizeDocumentTemplateSource(text) {
     .replace(/\r/g, "\n")
     .replace(/([。！？；;])([一二三四五六七八九十]+[、.．][^：:\n]{1,80}[：:])/g, "$1\n$2")
     .replace(/([。！？；;])([（(][一二三四五六七八九十\d]+[）)]、?[^：:\n]{1,80}[：:])/g, "$1\n$2")
+    .replace(/([。！？；;])(\d+[.．、]\s*[^：:\n]{1,80}[：:])/g, "$1\n$2")
     .replace(/\n{3,}/g, "\n\n");
 }
 
@@ -1933,7 +2087,10 @@ function buildDocumentTemplateElements(text) {
   const flushBody = () => {
     const body = normalizeDocumentTemplateValue(bodyLines.join("\n"));
     bodyLines = [];
-    if (body) elements.push(...createTemplateElements(`${body}\n`, "body"));
+    if (body) {
+      elements.push(...createTemplateElements(`${body}\n`, "body"));
+      elements.push(createTemplateElement("\n", "body"));
+    }
   };
   for (const rawLine of lines) {
     const line = String(rawLine || "").trim();
@@ -2880,9 +3037,11 @@ if (isMainModule) {
 }
 
 export {
+  buildDocumentTemplateElements,
   cleanExtractedDocumentText,
   createDocumentTextIntegrity,
   extractDocumentText,
+  normalizeDocumentMathText,
   normalizeDocumentSnapshot,
   startStdioServer
 };

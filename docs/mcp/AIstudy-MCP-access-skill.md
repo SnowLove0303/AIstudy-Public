@@ -193,6 +193,8 @@ Authorization: Bearer ...
 - 不要为了“改排版”调用 `write_node_document` 覆盖整篇文档。
 - 节点已有文档时，`write_node_document` 默认会拒绝覆盖；只有用户明确要求“整篇重写/覆盖”时才传 `replaceExisting: true`。
 - 新内容写入用 `write_node_document`，补内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，简单全文样式用 `update_node_document_style`。
+- `write_node_document` 和 `append_node_document` 的 `text` 必须保持干净：独立知识点之间保留且只保留一个空行；推荐“小节标题一行 + 正文一到三行 + 空一行 + 下一知识点”。
+- 数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。不要把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入最终文档。
 - `format_node_document` 写入前必须校验元素数量一致、所有 `value` 逐字一致；校验失败必须中断，不得写入。
 - MCP 不再把“清理空行、缩进正文、重排段落”当作安全排版。需要改变正文结构时，必须先读全文、让用户确认，再用 `write_node_document` 重建整篇。
 

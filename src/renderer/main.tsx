@@ -56,6 +56,7 @@ import {
 import type { MindMapOutlineItem, MindMapSelectedNode } from "./features/mindmap/mindMapTypes";
 import { TextbookPdfWindow } from "./features/textbook/TextbookPdfWindow";
 import { VocabularyCapturePanel } from "./features/vocabulary/VocabularyCapturePanel";
+import { isImeComposingEvent } from "./lib/ime";
 import { startCoreFeatureWarmup } from "./lib/performanceWarmup";
 import { drainBeforeCloseSaves } from "./lib/saveDrain";
 import "./styles.css";
@@ -79,16 +80,6 @@ declare global {
     };
   }
 }
-
-type McpDataChange = {
-  id: string;
-  tool: string;
-  kind: "course" | "mindmap" | "document" | "chrome" | "unknown";
-  courseId: string | null;
-  nodeId: string | null;
-  changedAt: string;
-  message: string;
-};
 
 type UpdateManagerInfo = {
   appVersion: string;
@@ -233,6 +224,7 @@ declare global {
       diagnose: () => Promise<RuntimeDiagnosticResult>;
       copyDiagnosticReport: () => Promise<RuntimeDiagnosticReportCopyResult>;
       openDataRoot: () => Promise<boolean>;
+      openExternalUrl: (url: string) => Promise<boolean>;
     };
   }
 }
@@ -521,6 +513,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   const captureShortcut = React.useCallback((command: MindMapBranchShortcutCommand, event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeComposingEvent(event)) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.key === "Backspace" || event.key === "Delete") {
@@ -903,6 +896,8 @@ function App() {
   const [nodeDeletionRequest, setNodeDeletionRequest] = React.useState<WorkspaceNodeDeletionRequest | null>(null);
   const [catalogBoundaryRequest, setCatalogBoundaryRequest] = React.useState<WorkspaceCatalogBoundaryRequest | null>(null);
   const [catalogCollapseRequest, setCatalogCollapseRequest] = React.useState<MindMapCatalogCollapseRequest | null>(null);
+  const courseNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const isCourseDialogComposingRef = React.useRef(false);
   const [activeSection, setActiveSection] = React.useState<AppSection>("knowledge");
   const [isLibraryPaneCollapsed, setIsLibraryPaneCollapsed] = React.useState(false);
   const [isCatalogPaneCollapsed, setIsCatalogPaneCollapsed] = React.useState(false);
@@ -1024,6 +1019,15 @@ function App() {
     }
   }, [activeCourseId, courses]);
 
+  React.useEffect(() => {
+    if (!dialogMode) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      courseNameInputRef.current?.focus({ preventScroll: true });
+      courseNameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [dialogMode]);
+
   const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
   const sectionIds = React.useMemo(() => new Set(courseSections.map((section) => section.id)), [courseSections]);
   const sectionNameById = React.useMemo(() => new Map(courseSections.map((section) => [section.id, section.name])), [courseSections]);
@@ -1109,6 +1113,7 @@ function App() {
 
   const saveCourse: React.ComponentProps<"form">["onSubmit"] = (event) => {
     event.preventDefault();
+    if (isCourseDialogComposingRef.current) return;
     const name = draftName.trim();
     const description = draftDescription.trim();
     if (!name) return;
@@ -1503,7 +1508,19 @@ function App() {
 
             <label className="form-field">
               <span>课程名称</span>
-              <input value={draftName} onChange={(event) => setDraftName(event.target.value)} autoFocus maxLength={40} placeholder="课程名称" />
+              <input
+                ref={courseNameInputRef}
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                onCompositionStart={() => {
+                  isCourseDialogComposingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  isCourseDialogComposingRef.current = false;
+                }}
+                maxLength={40}
+                placeholder="课程名称"
+              />
             </label>
 
             <label className="form-field">
@@ -1511,6 +1528,12 @@ function App() {
               <textarea
                 value={draftDescription}
                 onChange={(event) => setDraftDescription(event.target.value)}
+                onCompositionStart={() => {
+                  isCourseDialogComposingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  isCourseDialogComposingRef.current = false;
+                }}
                 maxLength={120}
                 placeholder="课程描述"
               />

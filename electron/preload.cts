@@ -195,5 +195,6 @@ contextBridge.exposeInMainWorld("aistudyErrorLogs", {
 contextBridge.exposeInMainWorld("aistudyRuntime", {
   diagnose: () => invokeApp("runtime:diagnose"),
   copyDiagnosticReport: () => invokeApp("runtime:copy-diagnostic-report"),
-  openDataRoot: () => invokeApp("runtime:open-data-root")
+  openDataRoot: () => invokeApp("runtime:open-data-root"),
+  openExternalUrl: (url: string) => invokeApp("runtime:open-external-url", url)
 });

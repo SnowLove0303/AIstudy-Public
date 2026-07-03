@@ -13,6 +13,7 @@ import type {
 import { AISTUDY_CORE_CONTRACT } from "../../domain/coreContracts";
 import { parseClipboardDocumentBlocks, type ClipboardDocumentBlock } from "../mathInput/documentClipboard";
 import { parseClipboardMathElements } from "../mathInput/mathClipboard";
+import { normalizeDocumentUrl, normalizeDocumentUrlLinksInContent, normalizeDocumentUrlLinksInElementList } from "./documentUrlLinks";
 
 const DOCUMENT_EDITOR_VERSION = "canvas-editor@0.9.135";
 const DEFAULT_FONT_SIZE = 16;
@@ -61,13 +62,14 @@ type KnowledgeDocumentColumnTableRow = {
   tdList?: KnowledgeDocumentColumnTableCell[];
 };
 const DOCUMENT_GET_VALUE_OPTIONS = {
-  extraPickAttrs: ["aistudyBlockKind", "aistudyColumnCount"] as unknown as Array<keyof IElement>
+  extraPickAttrs: ["aistudyBlockKind", "aistudyColumnCount", "href", "url"] as unknown as Array<keyof IElement>
 };
 
 type CanvasDocumentEvents = {
   onSnapshotChanged?: (snapshot: KnowledgeDocumentSnapshot) => void;
   onFormatChanged?: (state: KnowledgeDocumentFormatState) => void;
   onAskAi?: (selectedText: string) => void;
+  onOpenUrl?: (url: string) => void;
 };
 
 type CanvasDocumentEditorOptions = {
@@ -202,12 +204,13 @@ function normalizeOptionalElementList(value: unknown): IElement[] | undefined {
 }
 
 function normalizeEditorData(content: KnowledgeDocumentContent | null | undefined): IEditorData {
-  return {
+  const data = {
     header: normalizeOptionalElementList(content?.header),
     main: normalizeElementList(content?.main),
     footer: normalizeOptionalElementList(content?.footer),
     graffiti: Array.isArray(content?.graffiti) ? (content?.graffiti as IEditorData["graffiti"]) : undefined
   };
+  return normalizeDocumentUrlLinksInContent(data).content as IEditorData;
 }
 
 function normalizeLiveElement(element: IElement): IElement {
@@ -237,6 +240,12 @@ function normalizeLiveEditorData(content: KnowledgeDocumentContent | null | unde
     footer: normalizeLiveOptionalElementList(content?.footer),
     graffiti: Array.isArray(content?.graffiti) ? (content?.graffiti as IEditorData["graffiti"]) : undefined
   };
+}
+
+function getElementUrl(element: unknown): string | null {
+  if (!element || typeof element !== "object") return null;
+  const candidate = element as Partial<IElement> & { href?: unknown; url?: unknown; valueList?: unknown };
+  return normalizeDocumentUrl(candidate.url ?? candidate.href);
 }
 
 function hasExplicitInlineStyle(element: IElement) {
@@ -1060,8 +1069,10 @@ export async function createCanvasDocumentEditor(
     nextContent = normalizedInputStyle.content;
     const normalizedLists = normalizeOrderedLists(nextContent);
     nextContent = normalizedLists.content;
+    const normalizedUrlLinks = normalizeDocumentUrlLinksInContent(nextContent);
+    nextContent = normalizedUrlLinks.content as IEditorData;
 
-    if (!normalizedInputStyle.changed && !normalizedLists.changed) return;
+    if (!normalizedInputStyle.changed && !normalizedLists.changed && !normalizedUrlLinks.changed) return;
     isNormalizingInputStyle = true;
     try {
       editor.command.executeSetValue(nextContent, { isSetCursor: false });
@@ -1099,7 +1110,7 @@ export async function createCanvasDocumentEditor(
     markUserEdited();
     const documentBlocks = parseClipboardDocumentBlocks(event.clipboardData);
     if (documentBlocks) {
-      const canvasElements = toCanvasDocumentElements(documentBlocks);
+      const canvasElements = normalizeDocumentUrlLinksInElementList(toCanvasDocumentElements(documentBlocks)).elements;
       if (canvasElements.length > 0) {
         event.preventDefault();
         event.stopPropagation();
@@ -1116,7 +1127,7 @@ export async function createCanvasDocumentEditor(
     if (!elements) return;
     event.preventDefault();
     event.stopPropagation();
-    const canvasElements = toCanvasInlineElements(elements);
+    const canvasElements = normalizeDocumentUrlLinksInElementList(toCanvasInlineElements(elements)).elements;
     if (canvasElements.length === 0) return;
     runFormatCommand(() => editor.command.executeInsertElementList(canvasElements));
   };
@@ -1350,6 +1361,16 @@ export async function createCanvasDocumentEditor(
     isPointerSelecting = true;
     clearSelectionOverlay();
   };
+  const handleUrlClick = (event: MouseEvent) => {
+    if (event.button !== 0 || event.defaultPrevented || isPointerSelecting) return;
+    const hit = editor.command.getPositionContextByEvent(event, { isMustDirectHit: true });
+    const hitUrl = getElementUrl(hit?.element);
+    const rangeUrl = hitUrl ?? getElementUrl(editor.command.getRangeContext()?.startElement);
+    if (!rangeUrl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    events.onOpenUrl?.(rangeUrl);
+  };
   const markUserEdited = () => {
     hasUserEdited = true;
   };
@@ -1365,6 +1386,7 @@ export async function createCanvasDocumentEditor(
   container.addEventListener(FAST_SELECTION_CHANGE_EVENT, handleFastSelectionRangeChange);
   container.addEventListener("beforeinput", handleBeforeInput, true);
   container.addEventListener("keydown", handleKeyDown, true);
+  container.addEventListener("click", handleUrlClick, true);
   container.addEventListener("paste", handlePaste, true);
   container.addEventListener("cut", markUserEdited, true);
   container.addEventListener("drop", markUserEdited, true);
@@ -1516,6 +1538,7 @@ export async function createCanvasDocumentEditor(
       container.removeEventListener(FAST_SELECTION_CHANGE_EVENT, handleFastSelectionRangeChange);
       container.removeEventListener("beforeinput", handleBeforeInput, true);
       container.removeEventListener("keydown", handleKeyDown, true);
+      container.removeEventListener("click", handleUrlClick, true);
       container.removeEventListener("paste", handlePaste, true);
       container.removeEventListener("cut", markUserEdited, true);
       container.removeEventListener("drop", markUserEdited, true);

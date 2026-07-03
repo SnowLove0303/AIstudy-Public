@@ -100,6 +100,8 @@ MCP 现在按独立模块管理，主进程不再直接维护 MCP 工具状态�
 - `format_node_document`
 - `update_node_document_style`
 
+节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净文本或 Markdown 标题；独立知识点之间必须空一行；数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`，不得把 `epsilon`、`infinity`、`->` 这类退化文本作为最终内容。
+
 定位与交接：
 
 - `resolve_course_locator`

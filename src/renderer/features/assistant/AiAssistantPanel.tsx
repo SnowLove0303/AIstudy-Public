@@ -1,5 +1,6 @@
 import React from "react";
 import { Bot, CheckCircle2, Loader2, Send, Sparkles, Trash2, X } from "lucide-react";
+import { isImeComposingEvent } from "../../lib/ime";
 
 type AiChatProvider = "doubao" | "chatgpt";
 
@@ -327,6 +328,7 @@ export function AiAssistantPanel({
             placeholder="输入问题，Enter 发送，Shift+Enter 换行"
             rows={compact ? 4 : 2}
             onKeyDown={(event) => {
+              if (isImeComposingEvent(event)) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void sendMessage();

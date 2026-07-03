@@ -25,6 +25,7 @@ import { KnowledgeDocumentWorkspace } from "../documents/KnowledgeDocumentWorksp
 import { TextbookWorkspace } from "../textbook/TextbookWorkspace";
 import { drainBeforeCloseSaves, registerBeforeCloseSave } from "../../lib/saveDrain";
 import { deleteLocalSnapshot, readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
+import { isImeComposingEvent } from "../../lib/ime";
 import {
   buildMindMapOutline,
   countNodes,
@@ -1135,6 +1136,7 @@ export function MindMapWorkspace({
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isImeComposingEvent(event)) return;
       if (event.defaultPrevented || editorModeRef.current !== "mindmap" || !canUseEditorRef.current) return;
       if (isInteractiveKeyboardTarget(event.target)) return;
 
