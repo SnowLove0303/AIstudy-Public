@@ -4367,6 +4367,10 @@ h3 {
   padding-right: 2px;
 }
 
+.catalog-tree-root {
+  min-width: 0;
+}
+
 .catalog-tree {
   display: flex;
   flex-direction: column;
@@ -4437,8 +4441,8 @@ h3 {
 }
 
 .catalog-node.selected {
-  border-color: var(--line-accent);
-  background: var(--accent-soft);
+  border-color: rgba(37, 99, 235, 0.12);
+  background: rgba(239, 246, 255, 0.52);
   color: var(--accent);
 }
 
@@ -4464,6 +4468,9 @@ h3 {
 .catalog-node-title {
   min-width: 0;
   overflow: hidden;
+  padding: 2px 5px;
+  margin-left: -5px;
+  border-radius: 5px;
   color: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -4532,7 +4539,8 @@ h3 {
 }
 
 .catalog-node.selected .catalog-node-title {
-  color: inherit;
+  background: rgba(147, 197, 253, 0.34);
+  color: #155e9f;
   font-weight: 740;
 }
 

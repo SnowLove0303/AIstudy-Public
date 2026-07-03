@@ -29,11 +29,18 @@ type CatalogContextMenuState = {
 type CatalogRenderOptions = {
   selectedNodeId: string | null;
   collapsedPaths: ReadonlySet<string>;
+  forcedVisiblePaths: ReadonlySet<string>;
   branchesOnly: boolean;
   showLeafItems?: boolean;
   onToggle: (path: string) => void;
   onNodeSelect?: (item: MindMapOutlineItem) => void;
   onNodeContextMenu?: (event: React.MouseEvent<HTMLDivElement>, item: MindMapOutlineItem) => void;
+};
+
+type CatalogSelectionTarget = {
+  item: MindMapOutlineItem;
+  visiblePaths: Set<string>;
+  ancestorPaths: Set<string>;
 };
 
 function collectCollapsiblePaths(items: MindMapOutlineItem[], paths = new Set<string>()) {
@@ -76,8 +83,33 @@ function isLeafParent(item: MindMapOutlineItem) {
   return item.children.length > 0 && !item.children.some((child) => child.children.length > 0);
 }
 
+function findSelectionTarget(
+  items: MindMapOutlineItem[],
+  nodeId: string | null,
+  ancestors: MindMapOutlineItem[] = []
+): CatalogSelectionTarget | null {
+  if (!nodeId) return null;
+
+  for (const item of items) {
+    if (item.nodeId === nodeId) {
+      return {
+        item,
+        ancestorPaths: new Set(ancestors.map((ancestor) => ancestor.path)),
+        visiblePaths: new Set([...ancestors.map((ancestor) => ancestor.path), item.path])
+      };
+    }
+
+    const child = findSelectionTarget(item.children, nodeId, [...ancestors, item]);
+    if (child) return child;
+  }
+
+  return null;
+}
+
 function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderOptions) {
-  const visibleItems = options.branchesOnly && !options.showLeafItems ? items.filter((item) => item.children.length > 0) : items;
+  const visibleItems = options.branchesOnly && !options.showLeafItems
+    ? items.filter((item) => item.children.length > 0 || options.forcedVisiblePaths.has(item.path))
+    : items;
 
   return (
     <ol className="catalog-tree">
@@ -94,8 +126,10 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
               style={{ paddingLeft: 8 + item.level * 14 }}
               data-catalog-source={item.source}
               data-catalog-path={item.path}
+              data-catalog-node-id={item.nodeId ?? ""}
               data-catalog-parent-path={item.parentPath ?? ""}
               data-catalog-order={item.order}
+              data-catalog-selected={isSelected ? "true" : undefined}
               aria-level={item.level + 1}
               aria-expanded={hasChildren ? !isCollapsed : undefined}
               aria-current={isSelected ? "true" : undefined}
@@ -151,8 +185,18 @@ export function MindMapCatalog({
   const [collapsedPaths, setCollapsedPaths] = React.useState<Set<string>>(() => collectDefaultCollapsedPaths(items));
   const [branchesOnly, setBranchesOnly] = React.useState(false);
   const [contextMenu, setContextMenu] = React.useState<CatalogContextMenuState | null>(null);
+  const catalogRootRef = React.useRef<HTMLDivElement | null>(null);
   const knownCollapsiblePathsRef = React.useRef<Set<string>>(collectCollapsiblePaths(items));
   const collapseRequestNonceRef = React.useRef<number | null>(null);
+  const pendingScrollNodeIdRef = React.useRef<string | null>(null);
+  const selectedTarget = React.useMemo(
+    () => findSelectionTarget(items, selectedNodeId),
+    [items, selectedNodeId]
+  );
+  const forcedVisiblePaths = React.useMemo(
+    () => selectedTarget?.visiblePaths ?? new Set<string>(),
+    [selectedTarget]
+  );
 
   React.useEffect(() => {
     const validPaths = collectCollapsiblePaths(items);
@@ -160,6 +204,7 @@ export function MindMapCatalog({
     setCollapsedPaths(collectDefaultCollapsedPaths(items));
     setBranchesOnly(false);
     setContextMenu(null);
+    pendingScrollNodeIdRef.current = selectedNodeId;
   }, [resetKey]);
 
   React.useEffect(() => {
@@ -227,6 +272,34 @@ export function MindMapCatalog({
     knownCollapsiblePathsRef.current = validPaths;
   }, [items]);
 
+  React.useEffect(() => {
+    if (!selectedNodeId || !selectedTarget) return;
+    pendingScrollNodeIdRef.current = selectedNodeId;
+    setCollapsedPaths((current) => {
+      let changed = false;
+      const next = new Set(current);
+      selectedTarget.ancestorPaths.forEach((path) => {
+        if (next.delete(path)) {
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [selectedNodeId, selectedTarget]);
+
+  React.useEffect(() => {
+    if (!selectedNodeId || pendingScrollNodeIdRef.current !== selectedNodeId) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      const selectedElement = catalogRootRef.current?.querySelector<HTMLElement>('[data-catalog-selected="true"]');
+      if (!selectedElement) return;
+      selectedElement.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+      pendingScrollNodeIdRef.current = null;
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [collapsedPaths, forcedVisiblePaths, items, selectedNodeId]);
+
   const togglePath = React.useCallback((path: string) => {
     setCollapsedPaths((current) => {
       const next = new Set(current);
@@ -291,14 +364,17 @@ export function MindMapCatalog({
 
   return (
     <>
-      {renderCatalogItems(items, {
-        selectedNodeId,
-        collapsedPaths,
-        branchesOnly,
-        onToggle: togglePath,
-        onNodeSelect,
-        onNodeContextMenu: openContextMenu
-      })}
+      <div ref={catalogRootRef} className="catalog-tree-root">
+        {renderCatalogItems(items, {
+          selectedNodeId,
+          collapsedPaths,
+          forcedVisiblePaths,
+          branchesOnly,
+          onToggle: togglePath,
+          onNodeSelect,
+          onNodeContextMenu: openContextMenu
+        })}
+      </div>
       {contextMenu ? (
         <div
           className="catalog-context-menu"
