@@ -36,10 +36,12 @@ import {
   describeInformationToolFailure,
   getInformationCollectionRuntimeRoot as getInformationCollectionRuntimeRootFromDataPath,
   normalizeInformationSubtitleText,
+  organizeInformationDocumentWithMimo,
   readInformationToolStatus,
   readTextFilesFromDirectory,
   runInformationExecFile,
   sanitizeInformationFileSegment,
+  type InformationPreparedDocument,
   type InformationProcessStep,
   type InformationToolStatus
 } from "./informationCollectionRuntime.js";
@@ -702,6 +704,8 @@ type InformationBilibiliCollectRequest = {
   mid?: string | number;
   pageSize?: number;
   requestId?: string;
+  platform?: string;
+  url?: string;
 };
 
 type InformationBilibiliUp = {
@@ -712,7 +716,9 @@ type InformationBilibiliUp = {
 };
 
 type InformationBilibiliVideo = {
+  platform: "bilibili" | "youtube";
   bvid: string;
+  sourceId: string;
   aid: number;
   cid: number;
   title: string;
@@ -736,6 +742,7 @@ type InformationBilibiliVideo = {
     text: string;
     message: string;
   };
+  preparedDocument?: InformationPreparedDocument;
 };
 
 type InformationWorkflowStep = {
@@ -1585,7 +1592,9 @@ function normalizeBilibiliVideoFromView(data: Record<string, unknown>): Informat
   const stat = readNestedRecord(data, "stat") ?? {};
   const bvid = getNonEmptyString(data.bvid);
   return {
+    platform: "bilibili",
     bvid,
+    sourceId: bvid,
     aid: normalizePositiveNumber(data.aid, 0),
     cid: normalizePositiveNumber(data.cid, 0),
     title: getNonEmptyString(data.title, "未命名视频"),
@@ -1615,7 +1624,9 @@ function normalizeBilibiliVideoFromView(data: Record<string, unknown>): Informat
 function normalizeBilibiliVideoFromSpace(item: Record<string, unknown>, up: InformationBilibiliUp): InformationBilibiliVideo {
   const bvid = getNonEmptyString(item.bvid);
   return {
+    platform: "bilibili",
     bvid,
+    sourceId: bvid,
     aid: normalizePositiveNumber(item.aid, 0),
     cid: 0,
     title: stripHtmlText(item.title) || "未命名视频",
@@ -1646,7 +1657,9 @@ function normalizeBilibiliVideoFromSearch(item: Record<string, unknown>): Inform
   const bvid = getNonEmptyString(item.bvid);
   const author = stripHtmlText(item.author) || stripHtmlText(item.author_name) || "未知 UP";
   return {
+    platform: "bilibili",
     bvid,
+    sourceId: bvid,
     aid: normalizePositiveNumber(item.aid, 0),
     cid: 0,
     title: stripHtmlText(item.title) || "未命名视频",
@@ -1840,6 +1853,174 @@ async function hydratePrimaryBilibiliVideo(videos: InformationBilibiliVideo[], c
   }
 }
 
+function normalizeYoutubeVideoId(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const match = text.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([0-9A-Za-z_-]{8,20})/) || text.match(/^[0-9A-Za-z_-]{11}$/);
+  return Array.isArray(match) ? match[1] ?? match[0] : "";
+}
+
+function isYoutubeInput(value: string) {
+  return Boolean(normalizeYoutubeVideoId(value)) || /youtube\.com|youtu\.be/i.test(value);
+}
+
+function createYoutubeUrl(value: string) {
+  const videoId = normalizeYoutubeVideoId(value);
+  if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+  return value;
+}
+
+function normalizeYtdlpUploadDate(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (/^\d{8}$/.test(text)) {
+    return new Date(`${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}T00:00:00.000Z`).toISOString();
+  }
+  return "";
+}
+
+function normalizeYoutubeVideoFromMetadata(data: Record<string, unknown>): InformationBilibiliVideo {
+  const id = getNonEmptyString(data.id) || normalizeYoutubeVideoId(getNonEmptyString(data.webpage_url));
+  const url = getNonEmptyString(data.webpage_url) || getNonEmptyString(data.original_url) || createYoutubeUrl(id);
+  const author = getNonEmptyString(data.uploader) || getNonEmptyString(data.channel) || "未知作者";
+  return {
+    platform: "youtube",
+    bvid: id,
+    sourceId: id,
+    aid: 0,
+    cid: 0,
+    title: getNonEmptyString(data.title, "未命名视频"),
+    url,
+    author,
+    mid: 0,
+    publishedAt: normalizeYoutubeYtdlpDate(data.timestamp) || normalizeYtdlpUploadDate(data.upload_date),
+    durationSeconds: normalizePositiveNumber(data.duration, 0),
+    description: getNonEmptyString(data.description, ""),
+    coverUrl: getNonEmptyString(data.thumbnail, ""),
+    stats: {
+      view: normalizePositiveNumber(data.view_count, 0),
+      like: normalizePositiveNumber(data.like_count, 0),
+      favorite: 0,
+      coin: 0,
+      reply: normalizePositiveNumber(data.comment_count, 0),
+      share: 0
+    },
+    transcript: {
+      status: "missing",
+      text: "",
+      message: "需要下载字幕或音频后生成转录。"
+    }
+  };
+}
+
+function normalizeYoutubeYtdlpDate(value: unknown) {
+  const seconds = normalizePositiveNumber(value, 0);
+  return seconds ? new Date(seconds * 1000).toISOString() : "";
+}
+
+async function readYtdlpJsonLines(args: string[], workDir: string) {
+  await fs.mkdir(workDir, { recursive: true });
+  const result = await runInformationExecFile("yt-dlp", ["--no-cache-dir", ...args], workDir, 120000);
+  return `${result.stdout || ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function fetchYoutubeVideoByInput(value: string, workDir: string) {
+  const [data] = await readYtdlpJsonLines(["--dump-json", "--skip-download", createYoutubeUrl(value)], workDir);
+  if (!data) throw new Error("YouTube 视频信息没有读取到。");
+  return normalizeYoutubeVideoFromMetadata(data);
+}
+
+async function searchYoutubeVideos(upName: string, clue: string, pageSize: number, workDir: string) {
+  const query = [upName.trim(), clue.trim()].filter(Boolean).join(" ").trim();
+  if (!query) return [];
+  const rows = await readYtdlpJsonLines([
+    "--dump-json",
+    "--skip-download",
+    "--flat-playlist",
+    "--playlist-end",
+    String(pageSize),
+    `ytsearch${pageSize}:${query}`
+  ], workDir);
+  return rows
+    .map((item) => normalizeYoutubeVideoFromMetadata(item))
+    .filter((video) => video.sourceId)
+    .sort((left, right) => new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime());
+}
+
+async function hydratePrimaryYoutubeVideo(videos: InformationBilibiliVideo[]) {
+  const primary = videos[0];
+  if (!primary?.url) return videos;
+  const workDir = path.join(getInformationCollectionRuntimeRoot(), "youtube", sanitizeInformationFileSegment(primary.sourceId || primary.bvid), "metadata");
+  try {
+    const fullVideo = await fetchYoutubeVideoByInput(primary.url, workDir);
+    return dedupeBilibiliVideos([fullVideo, ...videos.slice(1)]);
+  } catch {
+    return videos;
+  }
+}
+
+async function collectYoutubeInformation(
+  request: InformationBilibiliCollectRequest,
+  steps: InformationWorkflowStep[],
+  updateStep: (id: InformationWorkflowStep["id"], status: InformationWorkflowStep["status"], message: string) => void,
+  blockers: string[]
+): Promise<InformationBilibiliCollectResult> {
+  const upName = typeof request.upName === "string" ? request.upName.trim().slice(0, 80) : "";
+  const rawVideoInput = typeof request.bvid === "string" ? request.bvid.trim() : "";
+  const pageSize = Math.min(50, Math.max(5, normalizePositiveNumber(request.pageSize, 20)));
+  const workDir = path.join(getInformationCollectionRuntimeRoot(), "youtube", "search", createInformationCollectionRunId());
+  let videos: InformationBilibiliVideo[] = [];
+  let up: InformationBilibiliUp | null = upName ? { mid: 0, name: upName, face: "", spaceUrl: "" } : null;
+  const createResult = (status: InformationBilibiliCollectResult["status"], message: string) => ({
+    status,
+    message,
+    up,
+    videos,
+    blockers,
+    steps,
+    primaryBvid: videos[0]?.bvid ?? "",
+    collectedAt: new Date().toISOString()
+  });
+
+  updateStep("locate", "running", "正在定位 YouTube 视频。");
+  try {
+    if (isYoutubeInput(rawVideoInput)) {
+      const video = await fetchYoutubeVideoByInput(rawVideoInput, workDir);
+      videos = [video];
+      up = { mid: 0, name: video.author, face: "", spaceUrl: "" };
+      updateStep("locate", "done", "已识别 YouTube 视频。");
+      updateStep("read-up", "done", `已确认作者：${video.author}`);
+      updateStep("list-videos", "skipped", "精准视频不读取候选列表。");
+      updateStep("read-video", "done", "已读取视频信息。");
+    } else {
+      updateStep("read-up", upName ? "done" : "skipped", upName ? `按作者线索：${upName}` : "未提供作者线索。");
+      updateStep("list-videos", "running", "正在搜索 YouTube 候选。");
+      videos = await searchYoutubeVideos(upName, rawVideoInput, pageSize, workDir);
+      if (videos.length) {
+        updateStep("locate", "done", `已定位到 ${videos.length} 个 YouTube 候选。`);
+        updateStep("list-videos", "done", `已读取 ${videos.length} 条候选。`);
+        videos = await hydratePrimaryYoutubeVideo(videos);
+        up = { mid: 0, name: videos[0]?.author || upName || "YouTube", face: "", spaceUrl: "" };
+        updateStep("read-video", "done", "已读取首个候选内容。");
+      } else {
+        blockers.push("没有按该线索定位到 YouTube 视频。");
+        updateStep("locate", "blocked", blockers[blockers.length - 1]);
+        updateStep("list-videos", "blocked", blockers[blockers.length - 1]);
+        updateStep("read-video", "blocked", "没有可读取的视频。");
+      }
+    }
+  } catch (error) {
+    blockers.push(error instanceof Error ? error.message : "YouTube 视频没有读取到。");
+    updateStep("locate", "blocked", blockers[blockers.length - 1]);
+    updateStep("read-video", "blocked", blockers[blockers.length - 1]);
+  }
+  updateStep("prepare-document", videos.length ? "done" : "blocked", videos.length ? "文档预览已生成。" : "没有可用内容。");
+  const status: InformationBilibiliCollectResult["status"] = videos.length ? "partial" : "blocked";
+  return createResult(status, videos.length ? "已拿到视频资料，转录需要后续处理。" : "暂时没有拿到可用结果。");
+}
+
 async function collectBilibiliInformation(input: unknown): Promise<InformationBilibiliCollectResult> {
   const request = input && typeof input === "object" ? input as InformationBilibiliCollectRequest : {};
   const upName = typeof request.upName === "string" ? request.upName.trim().slice(0, 80) : "";
@@ -1884,6 +2065,10 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
     updateStep("prepare-document", "blocked", "没有可用内容。");
     blockers.push("需要输入 UP、BV、链接或视频线索。");
     return createResult("blocked", "视频没有定位到。");
+  }
+
+  if (request.platform === "youtube" || isYoutubeInput(rawVideoInput)) {
+    return collectYoutubeInformation(request, steps, updateStep, blockers);
   }
 
   const cookieHeader = await getBilibiliCookieHeader();
@@ -2003,6 +2188,10 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
     ? blockers.length > 0 || !hasReadyBilibiliTranscript(videos[0]) ? "partial" : "ready"
     : "blocked";
 
+  if (status === "blocked" && (rawVideoInput || upName) && !requestedMid) {
+    return collectYoutubeInformation(request, steps, updateStep, blockers);
+  }
+
   return {
     status,
     message: status === "ready"
@@ -2105,11 +2294,201 @@ async function fetchOfficialArticleText(url: string, workDir: string) {
   }
 }
 
+async function prepareInformationVideoDocument(
+  video: InformationBilibiliVideo,
+  workDir: string,
+  steps: InformationProcessStep[],
+  emitProgress: (status: InformationProcessProgress["status"], message: string) => void
+) {
+  if (video.transcript.status !== "available" || !video.transcript.text.trim()) return video;
+  steps.push(createInformationStep("organize", "整理文档", "running", "正在整理转录内容。"));
+  emitProgress("running", "正在整理转录内容。");
+  const document = await organizeInformationDocumentWithMimo({
+    title: video.title,
+    author: video.author,
+    publishedAt: video.publishedAt,
+    url: video.url,
+    description: video.description,
+    transcript: video.transcript.text,
+    workDir
+  });
+  steps[steps.length - 1] = createInformationStep(
+    "organize",
+    "整理文档",
+    document.status === "blocked" ? "blocked" : document.status === "available" ? "done" : "skipped",
+    document.message
+  );
+  emitProgress("running", document.message);
+  return { ...video, preparedDocument: document };
+}
+
+async function processYoutubeVideo(
+  input: unknown,
+  notifyProgress?: (progress: InformationProcessProgress) => void
+): Promise<InformationBilibiliProcessResult> {
+  const request = input && typeof input === "object" ? input as InformationBilibiliCollectRequest : {};
+  const rawVideoInput = typeof request.url === "string" && request.url.trim()
+    ? request.url.trim()
+    : typeof request.bvid === "string" ? request.bvid.trim() : "";
+  const requestId = typeof request.requestId === "string" && request.requestId.trim() ? request.requestId.trim().slice(0, 120) : randomUUID();
+  const sourceId = normalizeYoutubeVideoId(rawVideoInput) || sanitizeInformationFileSegment(rawVideoInput || "youtube");
+  const workDir = path.join(getInformationCollectionRuntimeRoot(), "youtube", sourceId, createInformationCollectionRunId());
+  const steps: InformationProcessStep[] = [];
+  await fs.mkdir(workDir, { recursive: true });
+  const emitProgress = (status: InformationProcessProgress["status"], message: string) => {
+    notifyProgress?.({
+      requestId,
+      bvid: sourceId,
+      status,
+      message,
+      steps: steps.map((step) => ({ ...step })),
+      workDir,
+      updatedAt: new Date().toISOString()
+    });
+  };
+  const finish = (result: InformationBilibiliProcessResult) => {
+    emitProgress(result.status, result.message);
+    return result;
+  };
+
+  if (!rawVideoInput) {
+    return finish({
+      status: "blocked",
+      message: "需要先选择一个视频。",
+      video: null,
+      steps: [createInformationStep("metadata", "读取视频", "blocked", "缺少视频链接。")],
+      workDir
+    });
+  }
+
+  steps.push(createInformationStep("metadata", "读取视频", "running", "正在读取视频信息。"));
+  emitProgress("running", "正在读取视频信息。");
+  let video: InformationBilibiliVideo;
+  try {
+    video = await fetchYoutubeVideoByInput(rawVideoInput, workDir);
+    await fs.writeFile(path.join(workDir, "metadata-video.json"), `${JSON.stringify(video, null, 2)}\n`, "utf8").catch(() => undefined);
+    steps[0] = createInformationStep("metadata", "读取视频", "done", "已读取视频信息。");
+    emitProgress("running", "已读取视频信息。");
+  } catch (error) {
+    steps[0] = createInformationStep("metadata", "读取视频", "blocked", error instanceof Error ? error.message : "视频信息没有读取到。");
+    return finish({ status: "blocked", message: "视频处理没有开始。", video: null, steps, workDir });
+  }
+
+  const tools = await readInformationToolStatus();
+  const toolMap = new Map(tools.map((tool) => [tool.id, tool]));
+  const ytDlpReady = Boolean(toolMap.get("yt-dlp")?.available);
+  const ffmpegReady = Boolean(toolMap.get("ffmpeg")?.available);
+  const whisperReady = Boolean(toolMap.get("whisper")?.available);
+
+  steps.push(createInformationStep("subtitle", "读取字幕", "skipped", "YouTube 字幕通过下载步骤读取。"));
+  steps.push(createInformationStep("official-text", "读取文字稿", "skipped", "YouTube 流程不单独读取图文稿。"));
+  steps.push(createInformationStep("download-subtitle", "下载字幕", "running", "正在下载字幕文件。"));
+  emitProgress("running", "正在下载字幕文件。");
+  if (!ytDlpReady) {
+    steps[3] = createInformationStep("download-subtitle", "下载字幕", "blocked", "缺少 yt-dlp，无法下载字幕或音频。");
+    return finish({ status: "blocked", message: "转录工具还没有准备好。", video, steps, workDir });
+  }
+
+  const outputBase = path.join(workDir, `${sanitizeInformationFileSegment(video.sourceId)}-%(title).80s`);
+  try {
+    await runInformationExecFile(
+      "yt-dlp",
+      [
+        "--no-cache-dir",
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+        "zh-Hans.*,zh-CN.*,zh.*,en.*",
+        "--sub-format",
+        "vtt/srt/best",
+        "--output",
+        outputBase,
+        video.url
+      ],
+      workDir,
+      120000
+    );
+    const subtitleTexts = await readTextFilesFromDirectory(workDir, [".vtt", ".srt"]);
+    const transcript = subtitleTexts.map(normalizeInformationSubtitleText).filter(Boolean).join("\n\n");
+    if (transcript) {
+      video = {
+        ...video,
+        transcript: {
+          status: "available",
+          text: transcript,
+          message: "已通过字幕文件生成转录。"
+        }
+      };
+      steps[3] = createInformationStep("download-subtitle", "下载字幕", "done", "已通过字幕文件生成转录。");
+      video = await prepareInformationVideoDocument(video, workDir, steps, emitProgress);
+      return finish({ status: "ready", message: "已完成转录和整理。", video, steps, workDir });
+    }
+    steps[3] = createInformationStep("download-subtitle", "下载字幕", "skipped", "没有可用字幕，进入音频转写。");
+  } catch (error) {
+    steps[3] = createInformationStep("download-subtitle", "下载字幕", "skipped", describeInformationToolFailure(error, "字幕没有拿到，进入音频转写。"));
+  }
+  emitProgress("running", steps[3].message);
+
+  steps.push(createInformationStep("download-audio", "下载音频", "pending", "等待下载音频。"));
+  steps.push(createInformationStep("transcribe", "语音转写", "pending", "等待语音转写。"));
+  if (!ffmpegReady || !whisperReady) {
+    steps[4] = createInformationStep("download-audio", "下载音频", ffmpegReady ? "pending" : "blocked", ffmpegReady ? "等待语音转写工具。" : "缺少 ffmpeg，无法抽取音频。");
+    steps[5] = createInformationStep("transcribe", "语音转写", whisperReady ? "pending" : "blocked", whisperReady ? "等待音频文件。" : "缺少 Whisper，无法本地转写。");
+    return finish({ status: "blocked", message: "视频没有可用字幕，音频转写依赖还没有准备好。", video, steps, workDir });
+  }
+
+  try {
+    steps[4] = createInformationStep("download-audio", "下载音频", "running", "正在下载音频。");
+    emitProgress("running", "正在下载音频。");
+    await runInformationExecFile(
+      "yt-dlp",
+      ["--no-cache-dir", "-f", "ba/bestaudio", "--output", path.join(workDir, `${sanitizeInformationFileSegment(video.sourceId)}-audio.%(ext)s`), video.url],
+      workDir,
+      10 * 60 * 1000
+    );
+    steps[4] = createInformationStep("download-audio", "下载音频", "done", "音频已下载。");
+    emitProgress("running", "音频已下载。");
+    const audioFiles = (await fs.readdir(workDir)).filter((fileName) => /\.(mp3|m4a|wav|webm)$/i.test(fileName));
+    const audioPath = audioFiles.length ? path.join(workDir, audioFiles[0]) : "";
+    if (!audioPath) throw new Error("音频文件没有生成。");
+    steps[5] = createInformationStep("transcribe", "语音转写", "running", "正在语音转写。");
+    emitProgress("running", "正在语音转写。");
+    await runInformationExecFile("whisper", [audioPath, "--language", "Chinese", "--output_dir", workDir, "--output_format", "txt"], workDir, 30 * 60 * 1000);
+    const transcript = (await readTextFilesFromDirectory(workDir, [".txt"])).join("\n\n").trim();
+    if (!transcript) throw new Error("转写文本没有生成。");
+    video = {
+      ...video,
+      transcript: {
+        status: "available",
+        text: transcript,
+        message: "已完成本地语音转写。"
+      }
+    };
+    steps[5] = createInformationStep("transcribe", "语音转写", "done", "已完成本地语音转写。");
+    video = await prepareInformationVideoDocument(video, workDir, steps, emitProgress);
+    return finish({ status: "ready", message: "已完成转录和整理。", video, steps, workDir });
+  } catch (error) {
+    const currentIndex = steps.findIndex((step) => step.status === "running");
+    if (currentIndex >= 0) {
+      steps[currentIndex] = {
+        ...steps[currentIndex],
+        status: "blocked",
+        message: describeInformationToolFailure(error, error instanceof Error ? error.message : "该步骤没有完成。")
+      };
+    }
+    return finish({ status: "blocked", message: "视频转录没有完成。", video, steps, workDir });
+  }
+}
+
 async function processBilibiliVideo(
   input: unknown,
   notifyProgress?: (progress: InformationProcessProgress) => void
 ): Promise<InformationBilibiliProcessResult> {
   const request = input && typeof input === "object" ? input as InformationBilibiliCollectRequest : {};
+  if (request.platform === "youtube" || isYoutubeInput(getNonEmptyString(request.url) || getNonEmptyString(request.bvid))) {
+    return processYoutubeVideo(input, notifyProgress);
+  }
   const bvid = normalizeBilibiliBvid(request.bvid);
   const requestId = typeof request.requestId === "string" && request.requestId.trim() ? request.requestId.trim().slice(0, 120) : randomUUID();
   const cookieHeader = await getBilibiliCookieHeader();
@@ -2162,9 +2541,10 @@ async function processBilibiliVideo(
 
   if (video.transcript.status === "available") {
     steps.push(createInformationStep("subtitle", "读取字幕", "done", "已读取公开字幕。"));
+    video = await prepareInformationVideoDocument(video, workDir, steps, emitProgress);
     return finish({
       status: "ready",
-      message: "已完成转录读取。",
+      message: "已完成转录和整理。",
       video,
       steps,
       workDir
@@ -2185,10 +2565,11 @@ async function processBilibiliVideo(
       }
     };
     steps[2] = createInformationStep("official-text", "读取文字稿", "done", officialArticle.message);
+    const preparedVideo = await prepareInformationVideoDocument(nextVideo, workDir, steps, emitProgress);
     return finish({
       status: "ready",
-      message: "已读取官方文字稿。",
-      video: nextVideo,
+      message: "已读取官方文字稿并完成整理。",
+      video: preparedVideo,
       steps,
       workDir
     });
@@ -2227,6 +2608,7 @@ async function processBilibiliVideo(
     await runInformationExecFile(
       "yt-dlp",
       [
+        "--no-cache-dir",
         ...(cookiePath ? ["--cookies", cookiePath] : []),
         "--skip-download",
         "--write-subs",
@@ -2254,10 +2636,11 @@ async function processBilibiliVideo(
         }
       };
       steps[3] = createInformationStep("download-subtitle", "下载字幕", "done", "已通过字幕文件生成转录。");
+      const preparedVideo = await prepareInformationVideoDocument(nextVideo, workDir, steps, emitProgress);
       return finish({
         status: "ready",
-        message: "已完成转录。",
-        video: nextVideo,
+        message: "已完成转录和整理。",
+        video: preparedVideo,
         steps,
         workDir
       });
@@ -2290,6 +2673,7 @@ async function processBilibiliVideo(
     await runInformationExecFile(
       "yt-dlp",
       [
+        "--no-cache-dir",
         ...(cookiePath ? ["--cookies", cookiePath] : []),
         "-f",
         "ba/bestaudio",
@@ -2320,10 +2704,11 @@ async function processBilibiliVideo(
       }
     };
     steps[5] = createInformationStep("transcribe", "语音转写", "done", "已完成本地语音转写。");
+    const preparedVideo = await prepareInformationVideoDocument(nextVideo, workDir, steps, emitProgress);
     return finish({
       status: "ready",
-      message: "已完成转录。",
-      video: nextVideo,
+      message: "已完成转录和整理。",
+      video: preparedVideo,
       steps,
       workDir
     });
@@ -2348,6 +2733,12 @@ async function processBilibiliVideo(
 
 async function openBilibiliCollectionTarget(input: unknown) {
   const request = input && typeof input === "object" ? input as InformationBilibiliCollectRequest : {};
+  const sourceUrl = getNonEmptyString(request.url) || getNonEmptyString(request.bvid);
+  if (request.platform === "youtube" || isYoutubeInput(sourceUrl)) {
+    const url = isYoutubeInput(sourceUrl) ? createYoutubeUrl(sourceUrl) : "https://www.youtube.com/";
+    await shell.openExternal(url);
+    return { opened: true, openedUrl: url };
+  }
   const bvid = normalizeBilibiliBvid(request.bvid);
   const mid = normalizePositiveNumber(request.mid, 0);
   const upName = typeof request.upName === "string" ? request.upName.trim() : "";

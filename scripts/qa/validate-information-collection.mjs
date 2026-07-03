@@ -43,11 +43,12 @@ assertContains(main, "download-subtitle", "Subtitle download step must have its 
 assertContains(main, "download-audio", "Audio download step must have its own stable id.");
 assertMatches(
   runtime,
-  /type InformationProcessStep = \{\s*id: "metadata" \| "subtitle" \| "official-text" \| "download-subtitle" \| "download-audio" \| "transcribe";/s,
+  /type InformationProcessStep = \{\s*id: "metadata" \| "subtitle" \| "official-text" \| "download-subtitle" \| "download-audio" \| "transcribe" \| "organize";/s,
   "Process step ids must be unique and explicit."
 );
 assertContains(panel, "{ id: \"download-subtitle\", name: \"下载字幕\"", "Frontend initial process steps must include subtitle download.");
 assertContains(panel, "{ id: \"download-audio\", name: \"下载音频\"", "Frontend initial process steps must include audio download.");
+assertContains(panel, "{ id: \"organize\", name: \"整理文档\"", "Frontend initial process steps must include document organization.");
 
 assertContains(main, "createInformationCollectionRunId", "Information collection must isolate each processing run.");
 assertMatches(
@@ -55,12 +56,20 @@ assertMatches(
   /path\.join\(getInformationCollectionRuntimeRoot\(\), "bilibili", bvid, createInformationCollectionRunId\(\)\)/,
   "Process work directory must include a unique run id under the BV directory."
 );
+assertContains(main, "path.join(getInformationCollectionRuntimeRoot(), \"youtube\"", "YouTube processing must use the information collection runtime boundary.");
+assertContains(main, "collectYoutubeInformation", "Information collection must support YouTube lookup fallback.");
+assertContains(main, "processYoutubeVideo", "Information collection must support YouTube processing.");
+assertContains(main, "--no-cache-dir", "yt-dlp must not use default user cache.");
 
 assertContains(panel, "href: video.url", "Generated Word snapshot must preserve source URL metadata.");
 assertContains(panel, "url: video.url", "Generated Word snapshot must preserve clickable source URL metadata.");
+assertContains(panel, "preparedDocument", "Generated Word snapshot must use organized document content when available.");
 
 assertContains(main, "hasReadyBilibiliTranscript", "Collection status must distinguish metadata-ready from transcript-ready.");
 assertContains(main, "转录需要后续处理", "Partial collection result must explain pending transcript work.");
+assertContains(runtime, "organizeInformationDocumentWithMimo", "Runtime must own the Mimo organization boundary.");
+assertContains(runtime, "AISTUDY_MIMO_API_KEY", "Mimo credentials must be read from environment only.");
+assertContains(runtime, "token-plan-cn.xiaomimimo.com", "Mimo Token Plan keys must use the token-plan endpoint by default.");
 
 assertContains(storageBoundary, "id: \"information-collection\"", "Storage boundary registry must include information collection runtime cache.");
 assertContains(storageBoundary, "runtime-cache", "Information collection runtime files must be classified as runtime cache.");

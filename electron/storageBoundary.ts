@@ -108,9 +108,9 @@ export const STORAGE_BOUNDARY_MODULES: StorageBoundaryModule[] = [
     mode: "runtime-cache",
     owner: "main",
     mysqlTables: [],
-    cacheFiles: ["AIstudyPublicData/runtime/information-collection/bilibili/{bvid}/{runId}"],
+    cacheFiles: ["AIstudyPublicData/runtime/information-collection/{platform}/{sourceId}/{runId}"],
     pendingFiles: [],
-    notes: "信息采集正式输出写入已有知识文档；字幕、音频、文字稿和 Bilibili cookie 只作为单次任务运行缓存，不能进入安装源。"
+    notes: "信息采集正式输出写入已有知识文档；字幕、音频、文字稿、Mimo 中间 JSON 和 Bilibili cookie 只作为单次任务运行缓存，不能进入安装源。"
   },
   {
     id: "ui-preferences",

@@ -1,47 +1,26 @@
 # 信息采集模块
 
-信息采集模块负责把外部平台资料整理成 AIstudy 可继续使用的来源池和节点文档。第一版围绕 Bilibili 日报视频工作流落地。
+信息采集模块负责把外部视频资料整理成 AIstudy 可继续使用的节点文档。当前主流程支持 Bilibili 与 YouTube：先定位视频，再读取元数据、字幕或音频转录，最后生成可写入知识库的结构化 Word 文档。
 
-## 用户痛点
+## 核心能力
 
-- 用户不是缺信息，而是缺可控、可追溯、可复用的信息流。
-- B站、知乎、网页、GitHub 等来源结构不同，人工整理标题、作者、链接、时间、热度和证据很耗时。
-- 平台失败时必须区分“确实没内容”和“端口、登录态、风控、转录工具不可用”。
-- 搜集结果最终要进入知识库、思维导图分支和内置 Word 文档，而不是停留在临时搜索页。
-
-## 第一版能力
-
-- 输入 UP 主名称或 BV 号发起 Bilibili 采集。
-- 通过 BV 号读取视频标题、UP、发布时间、链接、简介、播放和互动数据。
-- 尝试读取公开字幕；无字幕时明确进入“待下载转录”状态，不伪造转录。
-- 无公开字幕时，先读取视频简介里的文字稿链接；能读取正文则直接写入转录区，不能读取时继续走下载转录。
-- 检测本机 `yt-dlp`、`ffmpeg`、`whisper` 状态，为后续下载与 ASR 转录做准备。
-- “下载转录”走主进程标准调用链：读取视频信息 -> 尝试字幕 -> 读取文字稿 -> 下载字幕 -> 下载音频 -> 语音转写。
-- “下载转录”会通过 `information-collection:process-progress` 回推当前步骤，前端只接收同一 `requestId` 的进度。
-- 每次视频处理都会写入 `runtime/information-collection/bilibili/{BV号}/{runId}`，避免上一次字幕、音频或转写文本污染本次结果。
-- 下载字幕和音频时复用端口管理里的 Bilibili 登录态；遇到 412 或风控时提示用户先打开 B站端口并保持登录。
-- 选择指定知识库、指定思维导图分支，把采集结果写入该分支绑定的 Word 文档。
-- 通过 Chrome 端口打开 Bilibili 视频、UP 空间或搜索页，复用端口登录态。
-- 设置页环境检查会覆盖采集目录、Bilibili 端口、`yt-dlp`、`ffmpeg`、`whisper`。
+- 输入作者、BV、YouTube 链接或标题线索，定位真实视频来源。
+- Bilibili 继续复用固定 Chrome 端口登录态和 cookies；YouTube 通过 `yt-dlp` 读取搜索、元数据、字幕和音频。
+- “下载转录”通过 `information-collection:process-progress` 回推同一 `requestId` 的步骤进度。
+- 每次处理写入独立运行目录：
+  - `runtime/information-collection/bilibili/{bvid}/{runId}`
+  - `runtime/information-collection/youtube/{videoId}/{runId}`
+- 字幕优先；没有字幕时再下载音频并调用本地 Whisper。任何一步缺工具或失败都停在真实状态，不写假转录。
+- 转录完成后进入“整理文档”步骤。若配置了 `AISTUDY_MIMO_API_KEY` 或 `MIMO_API_KEY`，调用 MiMo OpenAI-compatible API 生成概览、分点标题、主要内容、来源链接和完整转录；未配置或调用失败时使用本地规则兜底整理，并明确显示状态。
+- Word 预览和写入优先使用整理后的 `preparedDocument`，不再直接把原始字幕碎片作为最终文档。
 
 ## 数据边界
 
-- 不新建独立文档存储表。
-- 写入知识库时走现有 `aistudyKnowledgeDocuments.save`，保持 `courseId + mindMapId + nodeId` 绑定规则。
-- 当前 Word 内容使用 `aistudy-word` 快照格式，兼容内置文档编辑器。
-- Bilibili 全量视频列表可能受到风控影响；前端必须展示部分成功和失败原因。
-- 转录依赖未就绪时，任务停在对应步骤并返回可读原因，不写假转录。
-- 采集状态 `ready` 只表示视频资料和真实转录都已可用；只有视频资料但缺少真实转录时返回 `partial`。
-- Word 预览和写入前必须把字幕/文字稿整理成可读段落，不直接把原始字幕碎片或 `#1/#2` 条目塞成一个长段落。
-- Word 来源链接必须带 `href/url` 元数据，不能只做蓝色文本。
-- 信息采集正式输出写入已有知识文档；运行目录、cookie、字幕、音频和转写中间产物都属于运行缓存，不得打入安装源。
+- 正式输出只写入已有知识库节点文档，不新建独立文档存储表。
+- 运行目录、cookies、字幕、音频、HTML、转录和 MiMo 整理中间产物都属于 runtime cache，不得打入安装源或伪装成正式数据。
+- Mimo 密钥只允许从环境变量读取，禁止写入源码、文档、日志、缓存或打包产物。
+- Word 来源链接必须保留 `href/url` 元数据，不能只做蓝色文本。
 
 ## 回归守卫
 
-- `npm run qa:information-collection`：校验进度事件、唯一步骤 ID、单次 run 目录隔离、Word 链接元数据和打包运行数据守卫。
-
-## 后续扩展
-
-- 接入自动摘要：`transcript -> summary -> Word`。
-- 增加知乎、网页、GitHub 多来源采集。
-- 增加来源池持久化、采集历史和批量入库。
+- `npm run qa:information-collection` 校验进度事件、步骤 ID、运行目录隔离、YouTube 路径、Mimo 环境变量边界、Word 链接元数据和 runtime cache 守卫。

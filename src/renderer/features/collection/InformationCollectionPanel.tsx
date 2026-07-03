@@ -7,7 +7,7 @@ import { buildMindMapOutline } from "../mindmap/mindMapSnapshot";
 import type { MindMapDocument, MindMapOutlineItem } from "../mindmap/mindMapTypes";
 
 type ToolStatus = {
-  id: "yt-dlp" | "ffmpeg" | "whisper";
+  id: "yt-dlp" | "ffmpeg" | "whisper" | "mimo";
   name: string;
   available: boolean;
   version: string;
@@ -22,7 +22,9 @@ type BilibiliUp = {
 };
 
 type BilibiliVideo = {
+  platform: "bilibili" | "youtube";
   bvid: string;
+  sourceId: string;
   aid: number;
   cid: number;
   title: string;
@@ -46,6 +48,19 @@ type BilibiliVideo = {
     text: string;
     message: string;
   };
+  preparedDocument?: {
+    status: "available" | "fallback" | "blocked";
+    provider: "mimo" | "local";
+    title: string;
+    overview: string;
+    items: Array<{
+      title: string;
+      mainContent: string;
+      sourceUrls: string[];
+    }>;
+    transcript: string;
+    message: string;
+  };
 };
 
 type CollectionStep = {
@@ -67,7 +82,7 @@ type BilibiliCollectResult = {
 };
 
 type ProcessStep = {
-  id: "metadata" | "subtitle" | "official-text" | "download-subtitle" | "download-audio" | "transcribe";
+  id: "metadata" | "subtitle" | "official-text" | "download-subtitle" | "download-audio" | "transcribe" | "organize";
   name: string;
   status: "pending" | "running" | "done" | "blocked" | "skipped";
   message: string;
@@ -105,9 +120,9 @@ declare global {
   interface Window {
     aistudyInformationCollection?: {
       collectBilibili: (input: { upName: string; bvid: string; mid?: number; pageSize?: number }) => Promise<BilibiliCollectResult>;
-      processBilibili: (input: { bvid: string; requestId?: string }) => Promise<BilibiliProcessResult>;
+      processBilibili: (input: { bvid: string; requestId?: string; platform?: BilibiliVideo["platform"]; url?: string }) => Promise<BilibiliProcessResult>;
       toolStatus: () => Promise<ToolStatus[]>;
-      openBilibili: (input: { upName?: string; bvid?: string; mid?: number }) => Promise<unknown>;
+      openBilibili: (input: { upName?: string; bvid?: string; mid?: number; platform?: BilibiliVideo["platform"]; url?: string }) => Promise<unknown>;
       onProcessProgress: (callback: (progress: BilibiliProcessProgress) => void) => () => void;
     };
   }
@@ -373,32 +388,55 @@ function addTranscriptBlock(main: unknown[], block: TranscriptBlock) {
   addParagraph(main, block.text);
 }
 
+function addSourceLink(main: unknown[], url: string) {
+  main.push(createTextElement(url, { color: "#2563eb", underline: true, href: url, url }));
+  main.push(createLine());
+}
+
 function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSnapshot {
   const main: unknown[] = [];
-  addHeading(main, video.title, 1);
-  addParagraph(main, `来源：${video.author} / ${video.bvid}`);
+  const prepared = video.preparedDocument;
+  addHeading(main, prepared?.title || video.title, 1);
+  addParagraph(main, `来源：${video.author} / ${video.platform === "youtube" ? "YouTube" : "B站"} / ${video.sourceId || video.bvid}`);
   addParagraph(main, `发布时间：${formatDateTime(video.publishedAt)}    时长：${formatDuration(video.durationSeconds) || "未知"}`);
   main.push(createTextElement("链接："));
   main.push(createTextElement(video.url, { color: "#2563eb", underline: true, href: video.url, url: video.url }));
   main.push(createLine());
   main.push(createLine());
 
-  addHeading(main, "基础信息", 2);
-  addParagraph(main, `播放 ${formatNumber(video.stats.view)} · 点赞 ${formatNumber(video.stats.like)} · 收藏 ${formatNumber(video.stats.favorite)} · 评论 ${formatNumber(video.stats.reply)}`);
-  if (video.description) {
-    addParagraph(main, video.description);
-  }
-  main.push(createLine());
-
   addHeading(main, "转录状态", 2);
-  addParagraph(main, video.transcript.message, {
+  addParagraph(main, prepared?.message || video.transcript.message, {
     color: video.transcript.status === "available" ? "#047857" : "#b45309"
   });
   main.push(createLine());
 
-  addHeading(main, getTranscriptHeading(video), 2);
-  for (const block of getVideoTranscriptBlocks(video)) {
-    addTranscriptBlock(main, block);
+  if (prepared) {
+    addHeading(main, "今日概览", 2);
+    addParagraph(main, prepared.overview || "暂无概览。");
+    main.push(createLine());
+
+    addHeading(main, "分点内容", 2);
+    prepared.items.forEach((item, index) => {
+      addHeading(main, `${index + 1}. ${item.title}`, 3);
+      addParagraph(main, item.mainContent || item.title);
+      item.sourceUrls.forEach((url) => addSourceLink(main, url));
+      main.push(createLine());
+    });
+
+    addHeading(main, "完整转录", 2);
+    for (const block of buildReadableTranscriptBlocks(prepared.transcript || video.transcript.text)) {
+      addTranscriptBlock(main, block);
+    }
+  } else {
+    addHeading(main, "基础信息", 2);
+    addParagraph(main, `播放 ${formatNumber(video.stats.view)} · 点赞 ${formatNumber(video.stats.like)} · 收藏 ${formatNumber(video.stats.favorite)} · 评论 ${formatNumber(video.stats.reply)}`);
+    if (video.description) addParagraph(main, video.description);
+    main.push(createLine());
+
+    addHeading(main, getTranscriptHeading(video), 2);
+    for (const block of getVideoTranscriptBlocks(video)) {
+      addTranscriptBlock(main, block);
+    }
   }
 
   return {
@@ -541,6 +579,8 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
       await window.aistudyInformationCollection?.openBilibili?.({
         upName,
         bvid: selectedVideo?.bvid || bvid,
+        platform: selectedVideo?.platform,
+        url: selectedVideo?.url,
         mid: result?.up?.mid
       });
     } catch (openError) {
@@ -567,10 +607,16 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
       { id: "official-text", name: "读取文字稿", status: "pending", message: "等待。" },
       { id: "download-subtitle", name: "下载字幕", status: "pending", message: "等待。" },
       { id: "download-audio", name: "下载音频", status: "pending", message: "等待。" },
-      { id: "transcribe", name: "语音转写", status: "pending", message: "等待。" }
+      { id: "transcribe", name: "语音转写", status: "pending", message: "等待。" },
+      { id: "organize", name: "整理文档", status: "pending", message: "等待。" }
     ]);
     try {
-      const processResult = await window.aistudyInformationCollection?.processBilibili?.({ bvid: selectedVideo.bvid, requestId });
+      const processResult = await window.aistudyInformationCollection?.processBilibili?.({
+        bvid: selectedVideo.bvid,
+        platform: selectedVideo.platform,
+        url: selectedVideo.url,
+        requestId
+      });
       if (!processResult) throw new Error("视频处理服务未就绪");
       setProcessSteps(processResult.steps);
       setMessage(processResult.message);
@@ -658,7 +704,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
           </label>
           <label className="collection-field">
             <span>视频</span>
-            <input value={bvid} onChange={(event) => setBvid(event.target.value)} placeholder="BV / 链接 / 标题关键词" />
+            <input value={bvid} onChange={(event) => setBvid(event.target.value)} placeholder="BV / YouTube 链接 / 标题关键词" />
           </label>
           <button className="primary-button" type="button" onClick={() => void collect()} disabled={isCollecting || (!upName.trim() && !bvid.trim())}>
             {isCollecting ? <Loader2 className="spin-icon" size={16} /> : <Search size={16} />}
@@ -666,7 +712,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
           </button>
           <button className="secondary-button" type="button" onClick={() => void openBilibili()}>
             <ExternalLink size={16} />
-            打开 B站
+            打开来源
           </button>
         </section>
 
@@ -675,7 +721,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
             <div className="collection-panel-heading">
               <div>
                 <h2>{result?.up?.name ?? "采集结果"}</h2>
-                <p>{result?.up ? `UID ${result.up.mid}` : "输入 UP 主或 BV 后开始"}</p>
+                <p>{result?.up ? (result.up.mid ? `UID ${result.up.mid}` : result.up.name) : "输入作者、BV、链接或标题后开始"}</p>
               </div>
               <span className={`collection-status-chip ${result?.status ?? "idle"}`}>
                 {result ? result.message : "等待"}
@@ -701,7 +747,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
                   >
                     <span className="collection-video-title">{video.title}</span>
                     <span>{formatDateTime(video.publishedAt)}</span>
-                    <span>{video.bvid}</span>
+                    <span>{video.platform === "youtube" ? "YouTube" : "B站"} · {video.sourceId || video.bvid}</span>
                     <span>播放 {formatNumber(video.stats.view)}</span>
                   </button>
                 ))}
@@ -718,7 +764,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
             <section className="collection-mini-panel">
               <div className="collection-mini-heading">
                 <h2>转录工具</h2>
-                <span>{toolReadyCount}/{tools.length || 3}</span>
+                <span>{toolReadyCount}/{tools.length || 4}</span>
               </div>
               <div className="collection-tool-list">
                 {tools.map((tool) => (
@@ -795,14 +841,34 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
             {selectedVideo ? (
               <>
                 <h1>{selectedVideo.title}</h1>
-                <p className="collection-word-meta">{selectedVideo.author} · {selectedVideo.bvid} · {formatDateTime(selectedVideo.publishedAt)}</p>
+                <p className="collection-word-meta">{selectedVideo.author} · {selectedVideo.platform === "youtube" ? "YouTube" : "B站"} · {selectedVideo.sourceId || selectedVideo.bvid} · {formatDateTime(selectedVideo.publishedAt)}</p>
                 <p>播放 {formatNumber(selectedVideo.stats.view)} · 点赞 {formatNumber(selectedVideo.stats.like)} · 收藏 {formatNumber(selectedVideo.stats.favorite)}</p>
                 {selectedVideo.description ? <p>{selectedVideo.description}</p> : null}
                 <h2>转录状态</h2>
-                <p>{selectedVideo.transcript.message}</p>
-                <h2>{getTranscriptHeading(selectedVideo)}</h2>
+                <p>{selectedVideo.preparedDocument?.message || selectedVideo.transcript.message}</p>
+                {selectedVideo.preparedDocument ? (
+                  <>
+                    <h2>今日概览</h2>
+                    <p>{selectedVideo.preparedDocument.overview}</p>
+                    <h2>分点内容</h2>
+                    <div className="collection-word-transcript">
+                      {selectedVideo.preparedDocument.items.map((item, index) => (
+                        <section className="collection-transcript-item" key={`${index}-${item.title.slice(0, 16)}`}>
+                          <h3>{index + 1}. {item.title}</h3>
+                          <p>{item.mainContent}</p>
+                        </section>
+                      ))}
+                    </div>
+                    <h2>完整转录</h2>
+                  </>
+                ) : (
+                  <h2>{getTranscriptHeading(selectedVideo)}</h2>
+                )}
                 <div className="collection-word-transcript">
-                  {selectedTranscriptBlocks.map((block, index) => (
+                  {(selectedVideo.preparedDocument
+                    ? buildReadableTranscriptBlocks(selectedVideo.preparedDocument.transcript)
+                    : selectedTranscriptBlocks
+                  ).map((block, index) => (
                     block.kind === "heading" ? (
                       <h3 key={`${index}-${block.text.slice(0, 16)}`}>{block.text}</h3>
                     ) : (
