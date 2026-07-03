@@ -33,6 +33,7 @@ const DOCUMENT_COLUMN_BLOCK_KIND = "columns";
 const DOCUMENT_COLUMN_DIVIDER_GAP = 80;
 const DOCUMENT_COLUMN_MIN_DIVIDER_GAP = 32;
 const DOCUMENT_COLUMN_MIN_CONTENT_WIDTH = 180;
+const DOCUMENT_CLIPBOARD_MIME = "application/x-aistudy-document-elements+json";
 
 type CanvasEditorModule = typeof import("@hufe921/canvas-editor");
 type CanvasEditorInstance = InstanceType<CanvasEditorModule["default"]>;
@@ -318,6 +319,152 @@ function isDocumentColumnBlockElement(element: IElement): element is KnowledgeDo
 
 function normalizeDocumentColumnCount(value: unknown): KnowledgeDocumentColumnCount {
   return value === 3 ? 3 : 2;
+}
+
+function sanitizeClipboardElement(value: unknown): IElement | null {
+  if (!value || typeof value !== "object") return null;
+  const next = { ...(value as IElement) } as IElement;
+  delete next.id;
+  delete next.tableId;
+  delete next.trId;
+  delete next.tdId;
+  delete next.pagingId;
+  delete next.pagingIndex;
+
+  const record = next as unknown as Record<string, unknown>;
+  for (const [key, child] of Object.entries(record)) {
+    if (Array.isArray(child)) {
+      record[key] = child.map((item) => {
+        const nested = sanitizeClipboardElement(item);
+        return nested ?? item;
+      });
+    }
+  }
+  return next;
+}
+
+function sanitizeClipboardElementList(value: unknown): IElement[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(sanitizeClipboardElement)
+    .filter((element): element is IElement => Boolean(element));
+}
+
+function readClipboardElementList(data: DataTransfer | null) {
+  if (!data) return [];
+  const payload = data.getData(DOCUMENT_CLIPBOARD_MIME);
+  if (!payload) return [];
+  try {
+    const parsed = JSON.parse(payload) as { editor?: unknown; elements?: unknown };
+    if (parsed?.editor !== DOCUMENT_EDITOR) return [];
+    return sanitizeClipboardElementList(parsed.elements);
+  } catch {
+    return [];
+  }
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function normalizeClipboardColor(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return /^#[0-9a-f]{3,8}$/i.test(text) ? text : "";
+}
+
+function elementToHtmlSpan(element: IElement) {
+  const styles: string[] = [];
+  const color = normalizeClipboardColor(element.color);
+  const highlight = normalizeClipboardColor(element.highlight);
+  if (color) styles.push(`color:${color}`);
+  if (highlight) styles.push(`background-color:${highlight}`);
+  if (Number.isFinite(Number(element.size))) styles.push(`font-size:${Number(element.size)}pt`);
+  if (element.bold) styles.push("font-weight:700");
+  if (element.italic) styles.push("font-style:italic");
+  if (element.underline) styles.push("text-decoration:underline");
+  if (element.strikeout) styles.push("text-decoration:line-through");
+  const value = escapeHtml(toElementText(element.value)).replace(/\n/g, "<br>");
+  if (element.type === "superscript") return `<sup${styles.length ? ` style="${styles.join(";")}"` : ""}>${value}</sup>`;
+  if (element.type === "subscript") return `<sub${styles.length ? ` style="${styles.join(";")}"` : ""}>${value}</sub>`;
+  return `<span${styles.length ? ` style="${styles.join(";")}"` : ""}>${value}</span>`;
+}
+
+function elementLineToHtml(elements: IElement[]) {
+  const level = elements.find((element) => element.level)?.level;
+  const body = elements.map(elementToHtmlSpan).join("");
+  if (level) {
+    const headingLevel = level === "first" ? 1 : level === "second" ? 2 : level === "third" ? 3 : 4;
+    return `<h${headingLevel}>${body}</h${headingLevel}>`;
+  }
+  return `<p>${body || "<br>"}</p>`;
+}
+
+function elementListToClipboardLines(elements: IElement[]) {
+  const lines: IElement[][] = [];
+  let current: IElement[] = [];
+  for (const element of elements) {
+    if (!isTextElement(element)) continue;
+    const value = toElementText(element.value);
+    const parts = value.split(/(\n)/);
+    for (const part of parts) {
+      if (part === "\n") {
+        lines.push(current);
+        current = [];
+        continue;
+      }
+      if (part) current.push({ ...element, value: part } as IElement);
+    }
+  }
+  if (current.length > 0) lines.push(current);
+  return lines;
+}
+
+function elementsToClipboardHtml(elements: IElement[]) {
+  const lines = elementListToClipboardLines(elements);
+  let html = "";
+  let activeList: "ol" | "ul" | null = null;
+  const closeList = () => {
+    if (!activeList) return;
+    html += `</${activeList}>`;
+    activeList = null;
+  };
+  for (const line of lines) {
+    const listElement = line.find((element) => element.listType);
+    if (listElement) {
+      const tag = listElement.listType === "ol" ? "ol" : "ul";
+      if (activeList !== tag) {
+        closeList();
+        html += `<${tag}>`;
+        activeList = tag;
+      }
+      html += `<li>${line.map(elementToHtmlSpan).join("")}</li>`;
+      continue;
+    }
+    closeList();
+    html += elementLineToHtml(line);
+  }
+  closeList();
+  return `<article data-aistudy-document="true">${html}</article>`;
+}
+
+function elementsToClipboardText(elements: IElement[]) {
+  const lines = elementListToClipboardLines(elements);
+  let orderedIndex = 1;
+  return lines.map((line) => {
+    const text = line.map((element) => toElementText(element.value)).join("");
+    const listElement = line.find((element) => element.listType);
+    if (!listElement) {
+      orderedIndex = 1;
+      return text;
+    }
+    if (listElement.listType === "ol") return `${orderedIndex++}. ${text}`;
+    orderedIndex = 1;
+    return `- ${text}`;
+  }).join("\n");
 }
 
 function getColumnBlockRows(element: IElement): KnowledgeDocumentColumnTableRow[] {
@@ -1142,6 +1289,18 @@ export async function createCanvasDocumentEditor(
   };
   const handlePaste = (event: ClipboardEvent) => {
     markUserEdited();
+    const aistudyClipboardElements = readClipboardElementList(event.clipboardData);
+    if (aistudyClipboardElements.length > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      const canvasElements = normalizeDocumentUrlLinksInElementList(aistudyClipboardElements).elements;
+      runFormatCommand(() =>
+        editor.command.executeInsertElementList(canvasElements, {
+          ignoreContextKeys: ["level", "listType", "listStyle", "listId", "rowFlex"] as Array<keyof IElement>
+        })
+      );
+      return;
+    }
     const documentBlocks = parseClipboardDocumentBlocks(event.clipboardData);
     if (documentBlocks) {
       const canvasElements = normalizeDocumentUrlLinksInElementList(toCanvasDocumentElements(documentBlocks)).elements;
@@ -1289,6 +1448,23 @@ export async function createCanvasDocumentEditor(
     }
     return selectedText;
   };
+  const handleCopy = (event: ClipboardEvent) => {
+    const selectionElements = sanitizeClipboardElementList(readCurrentSelectionElementList());
+    if (selectionElements.length === 0) return;
+    const text = elementsToClipboardText(selectionElements);
+    if (!text.trim()) return;
+    const html = elementsToClipboardHtml(selectionElements);
+    const payload = JSON.stringify({
+      editor: DOCUMENT_EDITOR,
+      version: 1,
+      elements: selectionElements
+    });
+    event.clipboardData?.setData(DOCUMENT_CLIPBOARD_MIME, payload);
+    event.clipboardData?.setData("text/html", html);
+    event.clipboardData?.setData("text/plain", text);
+    event.preventDefault();
+    event.stopPropagation();
+  };
   const flushFormatState = () => {
     pendingFormatFrame = null;
     const nextState = pendingFormatState;
@@ -1420,6 +1596,7 @@ export async function createCanvasDocumentEditor(
   container.addEventListener("beforeinput", handleBeforeInput, true);
   container.addEventListener("keydown", handleKeyDown, true);
   container.addEventListener("click", handleUrlClick, true);
+  container.addEventListener("copy", handleCopy, true);
   container.addEventListener("paste", handlePaste, true);
   container.addEventListener("cut", markUserEdited, true);
   container.addEventListener("drop", markUserEdited, true);
@@ -1574,9 +1751,10 @@ export async function createCanvasDocumentEditor(
       container.removeEventListener("pointerdown", handlePointerDown, true);
       container.removeEventListener(FAST_SELECTION_CHANGE_EVENT, handleFastSelectionRangeChange);
       container.removeEventListener("beforeinput", handleBeforeInput, true);
-      container.removeEventListener("keydown", handleKeyDown, true);
-      container.removeEventListener("click", handleUrlClick, true);
-      container.removeEventListener("paste", handlePaste, true);
+        container.removeEventListener("keydown", handleKeyDown, true);
+        container.removeEventListener("click", handleUrlClick, true);
+        container.removeEventListener("copy", handleCopy, true);
+        container.removeEventListener("paste", handlePaste, true);
       container.removeEventListener("cut", markUserEdited, true);
       container.removeEventListener("drop", markUserEdited, true);
       container.removeEventListener("compositionstart", markUserEdited, true);

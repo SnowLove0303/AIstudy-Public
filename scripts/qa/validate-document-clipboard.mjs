@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const mathSourcePath = path.join(projectRoot, "src/renderer/features/mathInput/mathClipboard.ts");
 const documentSourcePath = path.join(projectRoot, "src/renderer/features/mathInput/documentClipboard.ts");
+const adapterSourcePath = path.join(projectRoot, "src/renderer/features/documents/canvasEditorAdapter.ts");
 
 function assert(condition, message) {
   if (!condition) {
@@ -42,6 +43,7 @@ fs.writeFileSync(
 
 const mathClipboard = await import(pathToFileURL(path.join(tempDir, "mathClipboard.mjs")).href);
 const documentClipboard = await import(pathToFileURL(path.join(tempDir, "documentClipboard.mjs")).href);
+const adapterSource = fs.readFileSync(adapterSourcePath, "utf8");
 
 function flatten(elements) {
   return elements.map((element) => element.value).join("");
@@ -120,5 +122,12 @@ assert(inlineMathLatex.includes("(-x)^2") || inlineMathLatex.includes("(-x)^{2}"
 
 const normalized = mathClipboard.normalizeMathText("y = a^x \\quad (a>0, a\\ne1)");
 assert(!normalized.includes("quad") && normalized.includes("a≠1"), "math normalization should remove quad and normalize ne");
+
+assert(adapterSource.includes('const DOCUMENT_CLIPBOARD_MIME = "application/x-aistudy-document-elements+json"'), "document adapter should define an internal rich clipboard MIME");
+assert(adapterSource.includes("setData(DOCUMENT_CLIPBOARD_MIME"), "copy should write AIstudy structured document data");
+assert(adapterSource.includes('setData("text/html"'), "copy should write HTML for rich-text targets");
+assert(adapterSource.includes('setData("text/plain"'), "copy should write plain text fallback");
+assert(adapterSource.includes("readClipboardElementList(event.clipboardData)"), "paste should prefer AIstudy structured document data");
+assert(adapterSource.includes('container.addEventListener("copy", handleCopy, true)'), "document editor should intercept copy in capture phase");
 
 console.log("document clipboard regression policy: ok");
