@@ -30,6 +30,19 @@ import {
   type TextbookStore
 } from "./textbookStore.js";
 import { createTextbookAnnotationService } from "./textbookAnnotationService.js";
+import {
+  createInformationCollectionRunId,
+  createInformationStep,
+  describeInformationToolFailure,
+  getInformationCollectionRuntimeRoot as getInformationCollectionRuntimeRootFromDataPath,
+  normalizeInformationSubtitleText,
+  readInformationToolStatus,
+  readTextFilesFromDirectory,
+  runInformationExecFile,
+  sanitizeInformationFileSegment,
+  type InformationProcessStep,
+  type InformationToolStatus
+} from "./informationCollectionRuntime.js";
 import { createMcpController } from "./mcp/controller.js";
 import { createMcpRemoteAccessController } from "./mcp/remoteAccess.js";
 import { createVocabularyCaptureService } from "./vocabularyCaptureService.js";
@@ -683,19 +696,12 @@ type AiChatResult = {
   error?: string;
 };
 
-type InformationToolStatus = {
-  id: "yt-dlp" | "ffmpeg" | "whisper";
-  name: string;
-  available: boolean;
-  version: string;
-  message: string;
-};
-
 type InformationBilibiliCollectRequest = {
   upName?: string;
   bvid?: string;
   mid?: string | number;
   pageSize?: number;
+  requestId?: string;
 };
 
 type InformationBilibiliUp = {
@@ -750,19 +756,22 @@ type InformationBilibiliCollectResult = {
   collectedAt: string;
 };
 
-type InformationProcessStep = {
-  id: "metadata" | "subtitle" | "official-text" | "download" | "transcribe";
-  name: string;
-  status: "pending" | "running" | "done" | "blocked" | "skipped";
-  message: string;
-};
-
 type InformationBilibiliProcessResult = {
   status: "ready" | "blocked";
   message: string;
   video: InformationBilibiliVideo | null;
   steps: InformationProcessStep[];
   workDir: string;
+};
+
+type InformationProcessProgress = {
+  requestId: string;
+  bvid: string;
+  status: "running" | "ready" | "blocked";
+  message: string;
+  steps: InformationProcessStep[];
+  workDir: string;
+  updatedAt: string;
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -1816,6 +1825,10 @@ function dedupeBilibiliVideos(videos: InformationBilibiliVideo[]) {
   return result;
 }
 
+function hasReadyBilibiliTranscript(video: InformationBilibiliVideo | null | undefined) {
+  return video?.transcript.status === "available" && Boolean(video.transcript.text.trim());
+}
+
 async function hydratePrimaryBilibiliVideo(videos: InformationBilibiliVideo[], cookieHeader: string) {
   const primary = videos[0];
   if (!primary?.bvid) return videos;
@@ -1905,14 +1918,14 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
       updateStep("prepare-document", "blocked", "没有可用内容。");
     }
     const status: InformationBilibiliCollectResult["status"] = selectedVideo
-      ? blockers.length > 0 ? "partial" : "ready"
+      ? blockers.length > 0 || !hasReadyBilibiliTranscript(selectedVideo) ? "partial" : "ready"
       : "blocked";
     return createResult(
       status,
       status === "ready"
         ? "已完成精准视频采集。"
         : status === "partial"
-          ? "已拿到视频，部分信息需要后续处理。"
+          ? "已拿到视频资料，转录需要后续处理。"
           : "视频没有读取到。"
     );
   }
@@ -1987,7 +2000,7 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
   }
 
   const status: InformationBilibiliCollectResult["status"] = videos.length > 0
-    ? blockers.length > 0 ? "partial" : "ready"
+    ? blockers.length > 0 || !hasReadyBilibiliTranscript(videos[0]) ? "partial" : "ready"
     : "blocked";
 
   return {
@@ -1995,7 +2008,7 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
     message: status === "ready"
       ? "已完成采集。"
       : status === "partial"
-        ? "已拿到部分结果，还有部分步骤需要处理。"
+        ? "已拿到视频资料，转录需要后续处理。"
         : "暂时没有拿到可用结果。",
     up,
     videos,
@@ -2006,93 +2019,8 @@ async function collectBilibiliInformation(input: unknown): Promise<InformationBi
   };
 }
 
-async function readInformationToolStatus(): Promise<InformationToolStatus[]> {
-  const tools: Array<{ id: InformationToolStatus["id"]; name: string; command: string; args: string[]; missingMessage: string }> = [
-    { id: "yt-dlp", name: "视频下载", command: "yt-dlp", args: ["--version"], missingMessage: "未检测到视频下载工具。" },
-    { id: "ffmpeg", name: "音频处理", command: "ffmpeg", args: ["-version"], missingMessage: "未检测到音频处理工具。" },
-    { id: "whisper", name: "语音转写", command: "whisper", args: ["--help"], missingMessage: "未检测到本地转写工具。" }
-  ];
-
-  return Promise.all(tools.map(async (tool) => {
-    try {
-      const result = await execFileAsync(tool.command, tool.args, { timeout: 5000, windowsHide: true });
-      const version = `${result.stdout || result.stderr}`.split(/\r?\n/)[0]?.trim() ?? "";
-      return {
-        id: tool.id,
-        name: tool.name,
-        available: true,
-        version,
-        message: "已就绪"
-      };
-    } catch {
-      return {
-        id: tool.id,
-        name: tool.name,
-        available: false,
-        version: "",
-        message: tool.missingMessage
-      };
-    }
-  }));
-}
-
-function createInformationStep(
-  id: InformationProcessStep["id"],
-  name: string,
-  status: InformationProcessStep["status"],
-  message: string
-): InformationProcessStep {
-  return { id, name, status, message };
-}
-
 function getInformationCollectionRuntimeRoot() {
-  return getAistudyDataPath("runtime", "information-collection");
-}
-
-function sanitizeFileSegment(value: string) {
-  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 80) || "untitled";
-}
-
-async function readTextFilesFromDirectory(dirPath: string, extensions: string[]) {
-  const collected: string[] = [];
-  const files = await fs.readdir(dirPath).catch(() => []);
-  for (const fileName of files) {
-    const lowerName = fileName.toLowerCase();
-    if (!extensions.some((extension) => lowerName.endsWith(extension))) continue;
-    const rawText = await fs.readFile(path.join(dirPath, fileName), "utf8").catch(() => "");
-    if (!rawText.trim()) continue;
-    collected.push(rawText);
-  }
-  return collected;
-}
-
-function normalizeSubtitleText(rawText: string) {
-  return rawText
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && line !== "WEBVTT" && !/^\d+$/.test(line) && !/^\d\d:\d\d[:.]/.test(line))
-    .join("\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function describeBilibiliToolFailure(error: unknown, fallback: string) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/412|Precondition Failed/i.test(message)) {
-    return "B站限制了本次访问。请在端口管理打开 B站、确认已登录后重试。";
-  }
-  if (/cookies?/i.test(message)) {
-    return "B站登录态没有带上。请先通过端口管理打开 B站并保持登录。";
-  }
-  if (/ffmpeg/i.test(message)) {
-    return "ffmpeg 没有准备好，音频无法处理。";
-  }
-  if (/timed? out|timeout/i.test(message)) {
-    return "该步骤执行超时，请稍后重试或先打开 B站端口确认视频可播放。";
-  }
-  return fallback;
+  return getInformationCollectionRuntimeRootFromDataPath(getAistudyDataPath);
 }
 
 function extractFirstUrl(value: string) {
@@ -2177,62 +2105,75 @@ async function fetchOfficialArticleText(url: string, workDir: string) {
   }
 }
 
-async function runExecFile(command: string, args: string[], cwd: string, timeoutMs: number) {
-  return execFileAsync(command, args, {
-    cwd,
-    timeout: timeoutMs,
-    windowsHide: true,
-    maxBuffer: 16 * 1024 * 1024
-  });
-}
-
-async function processBilibiliVideo(input: unknown): Promise<InformationBilibiliProcessResult> {
+async function processBilibiliVideo(
+  input: unknown,
+  notifyProgress?: (progress: InformationProcessProgress) => void
+): Promise<InformationBilibiliProcessResult> {
   const request = input && typeof input === "object" ? input as InformationBilibiliCollectRequest : {};
   const bvid = normalizeBilibiliBvid(request.bvid);
+  const requestId = typeof request.requestId === "string" && request.requestId.trim() ? request.requestId.trim().slice(0, 120) : randomUUID();
   const cookieHeader = await getBilibiliCookieHeader();
-  const workDir = bvid ? path.join(getInformationCollectionRuntimeRoot(), "bilibili", bvid) : getInformationCollectionRuntimeRoot();
+  const workDir = bvid ? path.join(getInformationCollectionRuntimeRoot(), "bilibili", bvid, createInformationCollectionRunId()) : getInformationCollectionRuntimeRoot();
   const steps: InformationProcessStep[] = [];
   await fs.mkdir(workDir, { recursive: true });
+  const emitProgress = (status: InformationProcessProgress["status"], message: string) => {
+    notifyProgress?.({
+      requestId,
+      bvid,
+      status,
+      message,
+      steps: steps.map((step) => ({ ...step })),
+      workDir,
+      updatedAt: new Date().toISOString()
+    });
+  };
+  const finish = (result: InformationBilibiliProcessResult) => {
+    emitProgress(result.status, result.message);
+    return result;
+  };
 
   if (!bvid) {
-    return {
+    return finish({
       status: "blocked",
       message: "需要先选择一个视频。",
       video: null,
       steps: [createInformationStep("metadata", "读取视频", "blocked", "缺少 BV 号。")],
       workDir
-    };
+    });
   }
 
   steps.push(createInformationStep("metadata", "读取视频", "running", "正在读取视频信息。"));
+  emitProgress("running", "正在读取视频信息。");
   let video: InformationBilibiliVideo;
   try {
     video = await fetchBilibiliVideoByBvid(bvid, cookieHeader);
     steps[0] = createInformationStep("metadata", "读取视频", "done", "已读取视频信息。");
+    emitProgress("running", "已读取视频信息。");
   } catch (error) {
     steps[0] = createInformationStep("metadata", "读取视频", "blocked", error instanceof Error ? error.message : "视频信息没有读取到。");
-    return {
+    return finish({
       status: "blocked",
       message: "视频处理没有开始。",
       video: null,
       steps,
       workDir
-    };
+    });
   }
 
   if (video.transcript.status === "available") {
     steps.push(createInformationStep("subtitle", "读取字幕", "done", "已读取公开字幕。"));
-    return {
+    return finish({
       status: "ready",
       message: "已完成转录读取。",
       video,
       steps,
       workDir
-    };
+    });
   }
 
   steps.push(createInformationStep("subtitle", "读取字幕", "skipped", video.transcript.message));
   steps.push(createInformationStep("official-text", "读取文字稿", "running", "正在检查视频简介里的文字稿。"));
+  emitProgress("running", "正在检查视频简介里的文字稿。");
   const officialArticle = await fetchOfficialArticleText(extractFirstUrl(video.description), workDir);
   if (officialArticle.status === "available") {
     const nextVideo = {
@@ -2244,13 +2185,13 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
       }
     };
     steps[2] = createInformationStep("official-text", "读取文字稿", "done", officialArticle.message);
-    return {
+    return finish({
       status: "ready",
       message: "已读取官方文字稿。",
       video: nextVideo,
       steps,
       workDir
-    };
+    });
   }
   steps[2] = createInformationStep(
     "official-text",
@@ -2258,6 +2199,7 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
     "skipped",
     officialArticle.status === "blocked" ? `${officialArticle.message}，继续尝试下载字幕。` : officialArticle.message
   );
+  emitProgress("running", steps[2].message);
 
   const tools = await readInformationToolStatus();
   const toolMap = new Map(tools.map((tool) => [tool.id, tool]));
@@ -2265,23 +2207,24 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
   const ffmpegReady = Boolean(toolMap.get("ffmpeg")?.available);
   const whisperReady = Boolean(toolMap.get("whisper")?.available);
 
-  steps.push(createInformationStep("download", "下载字幕", "running", "正在尝试下载字幕文件。"));
+  steps.push(createInformationStep("download-subtitle", "下载字幕", "running", "正在尝试下载字幕文件。"));
+  emitProgress("running", "正在尝试下载字幕文件。");
   if (!ytDlpReady) {
-    steps[3] = createInformationStep("download", "下载字幕", "blocked", "缺少 yt-dlp，无法下载字幕或音频。");
+    steps[3] = createInformationStep("download-subtitle", "下载字幕", "blocked", "缺少 yt-dlp，无法下载字幕或音频。");
     steps.push(createInformationStep("transcribe", "语音转写", "skipped", "前置步骤未完成。"));
-    return {
+    return finish({
       status: "blocked",
       message: "转录工具还没有准备好。",
       video,
       steps,
       workDir
-    };
+    });
   }
 
-  const outputBase = path.join(workDir, `${sanitizeFileSegment(video.bvid)}-%(title).50s`);
+  const outputBase = path.join(workDir, `${sanitizeInformationFileSegment(video.bvid)}-%(title).50s`);
   const cookiePath = await writeBilibiliCookiesFile(workDir);
   try {
-    await runExecFile(
+    await runInformationExecFile(
       "yt-dlp",
       [
         ...(cookiePath ? ["--cookies", cookiePath] : []),
@@ -2300,7 +2243,7 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
       120000
     );
     const subtitleTexts = await readTextFilesFromDirectory(workDir, [".vtt", ".srt"]);
-    const transcript = subtitleTexts.map(normalizeSubtitleText).filter(Boolean).join("\n\n");
+    const transcript = subtitleTexts.map(normalizeInformationSubtitleText).filter(Boolean).join("\n\n");
     if (transcript) {
       const nextVideo = {
         ...video,
@@ -2310,39 +2253,41 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
           message: "已通过字幕文件生成转录。"
         }
       };
-      steps[3] = createInformationStep("download", "下载字幕", "done", "已通过字幕文件生成转录。");
-      return {
+      steps[3] = createInformationStep("download-subtitle", "下载字幕", "done", "已通过字幕文件生成转录。");
+      return finish({
         status: "ready",
         message: "已完成转录。",
         video: nextVideo,
         steps,
         workDir
-      };
+      });
     }
-    steps[3] = createInformationStep("download", "下载字幕", "skipped", "没有可用字幕，进入音频转写。");
+    steps[3] = createInformationStep("download-subtitle", "下载字幕", "skipped", "没有可用字幕，进入音频转写。");
   } catch (error) {
-    steps[3] = createInformationStep("download", "下载字幕", "skipped", describeBilibiliToolFailure(error, "字幕没有拿到，进入音频转写。"));
+    steps[3] = createInformationStep("download-subtitle", "下载字幕", "skipped", describeInformationToolFailure(error, "字幕没有拿到，进入音频转写。"));
   }
+  emitProgress("running", steps[3].message);
 
-  steps.push(createInformationStep("download", "下载音频", "pending", "等待下载音频。"));
+  steps.push(createInformationStep("download-audio", "下载音频", "pending", "等待下载音频。"));
   steps.push(createInformationStep("transcribe", "语音转写", "pending", "等待语音转写。"));
 
   if (!ffmpegReady || !whisperReady) {
-    steps[4] = createInformationStep("download", "下载音频", ffmpegReady ? "pending" : "blocked", ffmpegReady ? "等待语音转写工具。" : "缺少 ffmpeg，无法抽取音频。");
+    steps[4] = createInformationStep("download-audio", "下载音频", ffmpegReady ? "pending" : "blocked", ffmpegReady ? "等待语音转写工具。" : "缺少 ffmpeg，无法抽取音频。");
     steps[5] = createInformationStep("transcribe", "语音转写", whisperReady ? "pending" : "blocked", whisperReady ? "等待音频文件。" : "缺少 Whisper，无法本地转写。");
-    return {
+    return finish({
       status: "blocked",
       message: "视频没有公开字幕，音频转写依赖还没有准备好。",
       video,
       steps,
       workDir
-    };
+    });
   }
 
   try {
-    steps[4] = createInformationStep("download", "下载音频", "running", "正在下载音频。");
-    const audioBase = path.join(workDir, `${sanitizeFileSegment(video.bvid)}-audio.%(ext)s`);
-    await runExecFile(
+    steps[4] = createInformationStep("download-audio", "下载音频", "running", "正在下载音频。");
+    emitProgress("running", "正在下载音频。");
+    const audioBase = path.join(workDir, `${sanitizeInformationFileSegment(video.bvid)}-audio.%(ext)s`);
+    await runInformationExecFile(
       "yt-dlp",
       [
         ...(cookiePath ? ["--cookies", cookiePath] : []),
@@ -2355,13 +2300,15 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
       workDir,
       10 * 60 * 1000
     );
-    steps[4] = createInformationStep("download", "下载音频", "done", "音频已下载。");
+    steps[4] = createInformationStep("download-audio", "下载音频", "done", "音频已下载。");
+    emitProgress("running", "音频已下载。");
     const audioFiles = (await fs.readdir(workDir)).filter((fileName) => /\.(mp3|m4a|wav|webm)$/i.test(fileName));
     const audioPath = audioFiles.length ? path.join(workDir, audioFiles[0]) : "";
     if (!audioPath) throw new Error("音频文件没有生成。");
 
     steps[5] = createInformationStep("transcribe", "语音转写", "running", "正在语音转写。");
-    await runExecFile("whisper", [audioPath, "--language", "Chinese", "--output_dir", workDir, "--output_format", "txt"], workDir, 30 * 60 * 1000);
+    emitProgress("running", "正在语音转写。");
+    await runInformationExecFile("whisper", [audioPath, "--language", "Chinese", "--output_dir", workDir, "--output_format", "txt"], workDir, 30 * 60 * 1000);
     const transcript = (await readTextFilesFromDirectory(workDir, [".txt"])).join("\n\n").trim();
     if (!transcript) throw new Error("转写文本没有生成。");
     const nextVideo = {
@@ -2373,29 +2320,29 @@ async function processBilibiliVideo(input: unknown): Promise<InformationBilibili
       }
     };
     steps[5] = createInformationStep("transcribe", "语音转写", "done", "已完成本地语音转写。");
-    return {
+    return finish({
       status: "ready",
       message: "已完成转录。",
       video: nextVideo,
       steps,
       workDir
-    };
+    });
   } catch (error) {
     const currentIndex = steps.findIndex((step) => step.status === "running");
     if (currentIndex >= 0) {
       steps[currentIndex] = {
         ...steps[currentIndex],
         status: "blocked",
-        message: describeBilibiliToolFailure(error, error instanceof Error ? error.message : "该步骤没有完成。")
+        message: describeInformationToolFailure(error, error instanceof Error ? error.message : "该步骤没有完成。")
       };
     }
-    return {
+    return finish({
       status: "blocked",
       message: "视频转录没有完成。",
       video,
       steps,
       workDir
-    };
+    });
   }
 }
 
@@ -9934,7 +9881,14 @@ ipcMain.handle(
 
 ipcMain.handle(
   "information-collection:bilibili-process",
-  withUserFacingError("information-collection:bilibili-process", "视频处理没有完成，请稍后再试。", (_event, input) => processBilibiliVideo(input))
+  withUserFacingError("information-collection:bilibili-process", "视频处理没有完成，请稍后再试。", (event, input) => {
+    const sender = (event as IpcMainInvokeEvent).sender;
+    return processBilibiliVideo(input, (progress) => {
+      if (!sender.isDestroyed()) {
+        sender.send("information-collection:process-progress", progress);
+      }
+    });
+  })
 );
 
 ipcMain.handle(

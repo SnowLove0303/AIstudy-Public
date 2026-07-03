@@ -1,4 +1,4 @@
-export type StorageBoundaryMode = "db-first" | "db-owned" | "local-preference";
+export type StorageBoundaryMode = "db-first" | "db-owned" | "runtime-cache" | "local-preference";
 
 export type StorageBoundaryModule = {
   id: string;
@@ -103,6 +103,16 @@ export const STORAGE_BOUNDARY_MODULES: StorageBoundaryModule[] = [
     notes: "词汇采集文档和事件优先写入数据库；本地 JSON 只用于断连兜底和恢复后重放。"
   },
   {
+    id: "information-collection",
+    name: "信息采集运行缓存",
+    mode: "runtime-cache",
+    owner: "main",
+    mysqlTables: [],
+    cacheFiles: ["AIstudyPublicData/runtime/information-collection/bilibili/{bvid}/{runId}"],
+    pendingFiles: [],
+    notes: "信息采集正式输出写入已有知识文档；字幕、音频、文字稿和 Bilibili cookie 只作为单次任务运行缓存，不能进入安装源。"
+  },
+  {
     id: "ui-preferences",
     name: "界面偏好",
     mode: "local-preference",
@@ -117,12 +127,14 @@ export const STORAGE_BOUNDARY_MODULES: StorageBoundaryModule[] = [
 export function summarizeStorageBoundaries() {
   const dbFirst = STORAGE_BOUNDARY_MODULES.filter((item) => item.mode === "db-first").length;
   const dbOwned = STORAGE_BOUNDARY_MODULES.filter((item) => item.mode === "db-owned").length;
+  const runtimeCache = STORAGE_BOUNDARY_MODULES.filter((item) => item.mode === "runtime-cache").length;
   const localPreference = STORAGE_BOUNDARY_MODULES.filter((item) => item.mode === "local-preference").length;
-  const missingMysqlOwner = STORAGE_BOUNDARY_MODULES.filter((item) => item.mode !== "local-preference" && item.mysqlTables.length === 0);
+  const missingMysqlOwner = STORAGE_BOUNDARY_MODULES.filter((item) => item.mode !== "local-preference" && item.mode !== "runtime-cache" && item.mysqlTables.length === 0);
   return {
     total: STORAGE_BOUNDARY_MODULES.length,
     dbFirst,
     dbOwned,
+    runtimeCache,
     localPreference,
     valid: missingMysqlOwner.length === 0,
     missingMysqlOwnerIds: missingMysqlOwner.map((item) => item.id)

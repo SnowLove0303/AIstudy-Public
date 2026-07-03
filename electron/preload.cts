@@ -143,7 +143,14 @@ contextBridge.exposeInMainWorld("aistudyInformationCollection", {
   collectBilibili: (input: unknown) => invokeApp("information-collection:bilibili-collect", input),
   processBilibili: (input: unknown) => invokeApp("information-collection:bilibili-process", input),
   toolStatus: () => invokeApp("information-collection:tool-status"),
-  openBilibili: (input: unknown) => invokeApp("information-collection:open-bilibili", input)
+  openBilibili: (input: unknown) => invokeApp("information-collection:open-bilibili", input),
+  onProcessProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: IpcRendererEvent, progress: unknown) => callback(progress);
+    ipcRenderer.on("information-collection:process-progress", listener);
+    return () => {
+      ipcRenderer.off("information-collection:process-progress", listener);
+    };
+  }
 });
 
 contextBridge.exposeInMainWorld("aistudyAssistant", {

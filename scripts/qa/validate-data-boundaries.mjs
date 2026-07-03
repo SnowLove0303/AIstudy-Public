@@ -14,6 +14,7 @@ const requiredStorageModuleIds = [
   "textbook-annotations",
   "chrome-port-states",
   "vocabulary-capture",
+  "information-collection",
   "error-logs",
   "ui-preferences"
 ];
@@ -35,6 +36,7 @@ const forbiddenPackageEntries = [
   "vocabulary-capture.json",
   "vocabulary-capture-pending-events.json",
   "chrome-ports.json",
+  "bilibili-cookies.txt",
   "mysql.config.json"
 ];
 

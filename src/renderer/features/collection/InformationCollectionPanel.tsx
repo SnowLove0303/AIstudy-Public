@@ -67,7 +67,7 @@ type BilibiliCollectResult = {
 };
 
 type ProcessStep = {
-  id: "metadata" | "subtitle" | "official-text" | "download" | "transcribe";
+  id: "metadata" | "subtitle" | "official-text" | "download-subtitle" | "download-audio" | "transcribe";
   name: string;
   status: "pending" | "running" | "done" | "blocked" | "skipped";
   message: string;
@@ -79,6 +79,16 @@ type BilibiliProcessResult = {
   video: BilibiliVideo | null;
   steps: ProcessStep[];
   workDir: string;
+};
+
+type BilibiliProcessProgress = {
+  requestId: string;
+  bvid: string;
+  status: "running" | "ready" | "blocked";
+  message: string;
+  steps: ProcessStep[];
+  workDir: string;
+  updatedAt: string;
 };
 
 type TranscriptBlock = {
@@ -95,9 +105,10 @@ declare global {
   interface Window {
     aistudyInformationCollection?: {
       collectBilibili: (input: { upName: string; bvid: string; mid?: number; pageSize?: number }) => Promise<BilibiliCollectResult>;
-      processBilibili: (input: { bvid: string }) => Promise<BilibiliProcessResult>;
+      processBilibili: (input: { bvid: string; requestId?: string }) => Promise<BilibiliProcessResult>;
       toolStatus: () => Promise<ToolStatus[]>;
       openBilibili: (input: { upName?: string; bvid?: string; mid?: number }) => Promise<unknown>;
+      onProcessProgress: (callback: (progress: BilibiliProcessProgress) => void) => () => void;
     };
   }
 }
@@ -367,7 +378,9 @@ function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSna
   addHeading(main, video.title, 1);
   addParagraph(main, `来源：${video.author} / ${video.bvid}`);
   addParagraph(main, `发布时间：${formatDateTime(video.publishedAt)}    时长：${formatDuration(video.durationSeconds) || "未知"}`);
-  addParagraph(main, `链接：${video.url}`, { color: "#2563eb" });
+  main.push(createTextElement("链接："));
+  main.push(createTextElement(video.url, { color: "#2563eb", underline: true, href: video.url, url: video.url }));
+  main.push(createLine());
   main.push(createLine());
 
   addHeading(main, "基础信息", 2);
@@ -540,15 +553,24 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
     setIsProcessingVideo(true);
     setError("");
     setMessage("");
+    const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const unsubscribe = window.aistudyInformationCollection?.onProcessProgress?.((progress) => {
+      if (progress.requestId !== requestId) return;
+      setProcessSteps(progress.steps);
+      setMessage(progress.message);
+    });
     setProcessSteps([
       { id: "metadata", name: "读取视频", status: "running", message: "正在准备。" },
       { id: "subtitle", name: "读取字幕", status: "pending", message: "等待。" },
       { id: "official-text", name: "读取文字稿", status: "pending", message: "等待。" },
-      { id: "download", name: "下载音频", status: "pending", message: "等待。" },
+      { id: "download-subtitle", name: "下载字幕", status: "pending", message: "等待。" },
+      { id: "download-audio", name: "下载音频", status: "pending", message: "等待。" },
       { id: "transcribe", name: "语音转写", status: "pending", message: "等待。" }
     ]);
     try {
-      const processResult = await window.aistudyInformationCollection?.processBilibili?.({ bvid: selectedVideo.bvid });
+      const processResult = await window.aistudyInformationCollection?.processBilibili?.({ bvid: selectedVideo.bvid, requestId });
       if (!processResult) throw new Error("视频处理服务未就绪");
       setProcessSteps(processResult.steps);
       setMessage(processResult.message);
@@ -567,6 +589,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
     } catch (processError) {
       setError(processError instanceof Error ? processError.message : "视频处理没有完成");
     } finally {
+      unsubscribe?.();
       setIsProcessingVideo(false);
     }
   }
