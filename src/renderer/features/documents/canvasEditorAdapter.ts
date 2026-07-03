@@ -1365,11 +1365,10 @@ export async function createCanvasDocumentEditor(
     if (event.button !== 0 || event.defaultPrevented || isPointerSelecting) return;
     const hit = editor.command.getPositionContextByEvent(event, { isMustDirectHit: true });
     const hitUrl = getElementUrl(hit?.element);
-    const rangeUrl = hitUrl ?? getElementUrl(editor.command.getRangeContext()?.startElement);
-    if (!rangeUrl) return;
+    if (!hitUrl) return;
     event.preventDefault();
     event.stopPropagation();
-    events.onOpenUrl?.(rangeUrl);
+    events.onOpenUrl?.(hitUrl);
   };
   const markUserEdited = () => {
     hasUserEdited = true;

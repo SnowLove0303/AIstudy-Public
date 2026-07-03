@@ -7,6 +7,7 @@ import ts from "typescript";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const sourcePath = path.join(projectRoot, "src/renderer/features/documents/documentUrlLinks.ts");
+const adapterSourcePath = path.join(projectRoot, "src/renderer/features/documents/canvasEditorAdapter.ts");
 
 function assert(condition, message) {
   if (!condition) {
@@ -33,6 +34,7 @@ fs.writeFileSync(
 );
 
 const urlLinks = await import(pathToFileURL(outputPath).href);
+const adapterSource = fs.readFileSync(adapterSourcePath, "utf8");
 
 const normalizedWww = urlLinks.normalizeDocumentUrl("www.example.com/docs");
 assert(normalizedWww === "https://www.example.com/docs", "www URL should be normalized to https");
@@ -76,5 +78,9 @@ assert(content.content.main[0].url === undefined, "plain prefix should not becom
 assert(content.content.main.some((element) => element.url === "https://www.aistudy.local/path"), "www link should be detected in main content");
 const tableElement = content.content.main.find((element) => Array.isArray(element.trList));
 assert(tableElement.trList[0].tdList[0].value.some((element) => element.url === "https://example.org/table"), "table cell links should be detected");
+
+const handleUrlClickSource = adapterSource.slice(adapterSource.indexOf("const handleUrlClick"), adapterSource.indexOf("const markUserEdited"));
+assert(handleUrlClickSource.includes("getPositionContextByEvent(event, { isMustDirectHit: true })"), "URL click should use direct hit testing");
+assert(!handleUrlClickSource.includes("getRangeContext"), "URL click should not fall back to cursor context");
 
 console.log("Document URL link policy: ok");
