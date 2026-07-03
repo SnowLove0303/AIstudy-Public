@@ -68,6 +68,7 @@ const {
   buildMindMapOutline,
   countNodes,
   createMindMapStructureSignature,
+  findMindMapOutlineSelectionTarget,
   normalizeMindMapTree
 } = await import(`${pathToFileURL(snapshotModulePath).href}?qa=${Date.now()}`);
 
@@ -168,5 +169,62 @@ assert(
   parentBoundaryTitles.length === 2 && parentBoundaryTitles.includes("math") && parentBoundaryTitles.includes("functions"),
   "parent boundary should hide all lower catalog levels while keeping the real branch"
 );
+
+const pynesLikeRoot = normalizeMindMapTree({
+  data: { uid: "pynes", text: "Pynes", expand: true },
+  children: [
+    {
+      data: { uid: "feature-breakdown", text: "功能拆解", expand: true },
+      children: [
+        {
+          data: { uid: "selection", text: "选品", expand: true },
+          children: [
+            {
+              data: { uid: "platform", text: "平台", expand: true },
+              children: [
+                {
+                  data: { uid: "wdt", text: "旺店通", expand: true },
+                  children: [
+                    {
+                      data: { uid: "channel", text: "渠道", expand: true },
+                      children: [
+                        { data: { uid: "hot", text: "找爆款", expand: true }, children: [] },
+                        { data: { uid: "new", text: "有上新", expand: true }, children: [] },
+                        { data: { uid: "supplier", text: "找供应商", expand: true }, children: [] },
+                        { data: { uid: "goods", text: "找商品", expand: true }, children: [] },
+                        { data: { uid: "more", text: "更多好货", expand: true }, children: [] },
+                        { data: { uid: "category", text: "精选货源/类目货源", expand: true }, children: [] }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+});
+const pynesOutline = buildMindMapOutline(pynesLikeRoot);
+const featureSelection = findMindMapOutlineSelectionTarget(pynesOutline, "feature-breakdown");
+assert(featureSelection, "selection target should resolve the selected feature branch");
+const featureVisibleTitles = flattenOutlineTitles(pynesOutline).filter((title) => {
+  const match = [];
+  const stack = [...pynesOutline];
+  while (stack.length > 0) {
+    const item = stack.shift();
+    if (!item) continue;
+    if (item.title === title && featureSelection.visiblePaths.has(item.path)) match.push(item);
+    stack.unshift(...item.children);
+  }
+  return match.length > 0;
+});
+assert(featureVisibleTitles.includes("找爆款"), "selected branch should keep the first leaf item visible");
+assert(featureVisibleTitles.includes("有上新"), "selected branch should keep leaf siblings after 找爆款 visible");
+assert(featureVisibleTitles.includes("找供应商"), "selected branch should not lose later channel leaves");
+assert(featureSelection.expandedPaths.size >= 5, "selected branch should expand descendant parents, not only ancestors");
+const hotSelection = findMindMapOutlineSelectionTarget(pynesOutline, "hot");
+assert(hotSelection?.expandedPaths.has("1.1.1.1.1.1"), "selecting 找爆款 should expand 渠道 so sibling leaves can render");
 
 console.log("mind map catalog boundary policy: ok");

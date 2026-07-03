@@ -343,6 +343,50 @@ export function buildMindMapOutline(root: SimpleMindMapNode | null | undefined):
   ];
 }
 
+export type MindMapOutlineSelectionTarget = {
+  item: MindMapOutlineItem;
+  visiblePaths: Set<string>;
+  expandedPaths: Set<string>;
+};
+
+function collectSelectionDescendantPaths(
+  item: MindMapOutlineItem,
+  visiblePaths: Set<string>,
+  expandedPaths: Set<string>
+) {
+  visiblePaths.add(item.path);
+  if (item.children.length > 0) {
+    expandedPaths.add(item.path);
+  }
+  item.children.forEach((child) => collectSelectionDescendantPaths(child, visiblePaths, expandedPaths));
+}
+
+export function findMindMapOutlineSelectionTarget(
+  items: MindMapOutlineItem[],
+  nodeId: string | null,
+  ancestors: MindMapOutlineItem[] = []
+): MindMapOutlineSelectionTarget | null {
+  if (!nodeId) return null;
+
+  for (const item of items) {
+    if (item.nodeId === nodeId) {
+      const visiblePaths = new Set(ancestors.map((ancestor) => ancestor.path));
+      const expandedPaths = new Set(ancestors.map((ancestor) => ancestor.path));
+      collectSelectionDescendantPaths(item, visiblePaths, expandedPaths);
+      return {
+        item,
+        visiblePaths,
+        expandedPaths
+      };
+    }
+
+    const child = findMindMapOutlineSelectionTarget(item.children, nodeId, [...ancestors, item]);
+    if (child) return child;
+  }
+
+  return null;
+}
+
 export function extractNodeTitle(node: unknown): string {
   if (!node || typeof node !== "object") return "";
   const value = node as { getData?: (key?: string) => unknown; data?: { text?: unknown } };

@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronRight, Copy, ListTree, ListX, Trash2 } from "lucide-react";
 import type { MindMapOutlineItem } from "./mindMapTypes";
+import { findMindMapOutlineSelectionTarget } from "./mindMapSnapshot";
 import { isImeComposingEvent } from "../../lib/ime";
 
 type MindMapCatalogProps = {
@@ -35,12 +36,6 @@ type CatalogRenderOptions = {
   onToggle: (path: string) => void;
   onNodeSelect?: (item: MindMapOutlineItem) => void;
   onNodeContextMenu?: (event: React.MouseEvent<HTMLDivElement>, item: MindMapOutlineItem) => void;
-};
-
-type CatalogSelectionTarget = {
-  item: MindMapOutlineItem;
-  visiblePaths: Set<string>;
-  ancestorPaths: Set<string>;
 };
 
 function collectCollapsiblePaths(items: MindMapOutlineItem[], paths = new Set<string>()) {
@@ -81,29 +76,6 @@ function getCatalogDepthClass(level: number) {
 
 function isLeafParent(item: MindMapOutlineItem) {
   return item.children.length > 0 && !item.children.some((child) => child.children.length > 0);
-}
-
-function findSelectionTarget(
-  items: MindMapOutlineItem[],
-  nodeId: string | null,
-  ancestors: MindMapOutlineItem[] = []
-): CatalogSelectionTarget | null {
-  if (!nodeId) return null;
-
-  for (const item of items) {
-    if (item.nodeId === nodeId) {
-      return {
-        item,
-        ancestorPaths: new Set(ancestors.map((ancestor) => ancestor.path)),
-        visiblePaths: new Set([...ancestors.map((ancestor) => ancestor.path), item.path])
-      };
-    }
-
-    const child = findSelectionTarget(item.children, nodeId, [...ancestors, item]);
-    if (child) return child;
-  }
-
-  return null;
 }
 
 function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderOptions) {
@@ -190,7 +162,7 @@ export function MindMapCatalog({
   const collapseRequestNonceRef = React.useRef<number | null>(null);
   const pendingScrollNodeIdRef = React.useRef<string | null>(null);
   const selectedTarget = React.useMemo(
-    () => findSelectionTarget(items, selectedNodeId),
+    () => findMindMapOutlineSelectionTarget(items, selectedNodeId),
     [items, selectedNodeId]
   );
   const forcedVisiblePaths = React.useMemo(
@@ -278,7 +250,7 @@ export function MindMapCatalog({
     setCollapsedPaths((current) => {
       let changed = false;
       const next = new Set(current);
-      selectedTarget.ancestorPaths.forEach((path) => {
+      selectedTarget.expandedPaths.forEach((path) => {
         if (next.delete(path)) {
           changed = true;
         }
