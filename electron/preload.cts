@@ -72,6 +72,10 @@ contextBridge.exposeInMainWorld("aistudyKnowledgeDocuments", {
   exportDocx: (request: unknown) => invokeApp("knowledge-documents:export-docx", request)
 });
 
+contextBridge.exposeInMainWorld("aistudyKnowledgeAssets", {
+  chooseImage: (request: unknown) => invokeApp("knowledge-assets:choose-image", request)
+});
+
 contextBridge.exposeInMainWorld("aistudyExams", {
   load: () => invokeApp("exams:load"),
   save: (store: unknown) => invokeApp("exams:save", store)

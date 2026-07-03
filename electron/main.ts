@@ -45,6 +45,12 @@ import {
   type InformationProcessStep,
   type InformationToolStatus
 } from "./informationCollectionRuntime.js";
+import {
+  createKnowledgeAssetService,
+  extractKnowledgeAssetIds,
+  KNOWLEDGE_ASSET_PROTOCOL,
+  syncKnowledgeAssetLinks
+} from "./knowledgeAssetService.js";
 import { createMcpController } from "./mcp/controller.js";
 import { createMcpRemoteAccessController } from "./mcp/remoteAccess.js";
 import { createVocabularyCaptureService } from "./vocabularyCaptureService.js";
@@ -66,6 +72,16 @@ const MANAGED_MYSQL_SERVICE_NAME = "AIstudyMySQL";
 const MANAGED_MYSQL_START_TIMEOUT_MS = 3500;
 
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: KNOWLEDGE_ASSET_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      corsEnabled: true,
+      supportFetchAPI: true,
+      stream: true
+    }
+  },
   {
     scheme: TEXTBOOK_PDF_PROTOCOL,
     privileges: {
@@ -7519,6 +7535,22 @@ function readNodeData(node: SimpleMindMapNode) {
   return isRecord(node.data) ? node.data : {};
 }
 
+function collectMindMapNodeAssetReferences(root: SimpleMindMapNode | null | undefined) {
+  const references = new Map<string, string[]>();
+  const visit = (node: SimpleMindMapNode | null | undefined, pathKey: string) => {
+    if (!node) return;
+    const nodeId = getNodeId(node, pathKey);
+    const assetIds = extractKnowledgeAssetIds(node.data);
+    if (nodeId && assetIds.length > 0) {
+      references.set(nodeId, assetIds);
+    }
+    const children = Array.isArray(node.children) ? node.children : [];
+    children.forEach((child, index) => visit(child, `${pathKey}.${index + 1}`));
+  };
+  visit(root, "root");
+  return references;
+}
+
 function readNodeChildren(node: SimpleMindMapNode) {
   return Array.isArray(node.children) ? node.children.filter(isRecord) as SimpleMindMapNode[] : [];
 }
@@ -7812,7 +7844,7 @@ async function softDeleteKnowledgeDocumentsForMissingNodes(
 
 async function writeMindMapDocument(input: unknown): Promise<MindMapDocument> {
   const request = normalizeMindMapSaveRequest(input);
-  const { pool, courseTable, mindMapTable, mindMapSnapshotTable, mindMapNodeTable, knowledgeDocumentTable } = await getMysqlRuntime();
+  const { pool, courseTable, mindMapTable, mindMapSnapshotTable, mindMapNodeTable, knowledgeDocumentTable, knowledgeAssetLinkTable } = await getMysqlRuntime();
   const connection = await pool.getConnection();
   const now = new Date();
   const updatedAt = now.toISOString();
@@ -7898,6 +7930,16 @@ async function writeMindMapDocument(input: unknown): Promise<MindMapDocument> {
     }
 
     await upsertMindMapNodes(connection, mindMapNodeTable, request.courseId, mapId, nodes, now);
+    const nodeAssetReferences = collectMindMapNodeAssetReferences(request.snapshot.root);
+    for (const node of nodes) {
+      await syncKnowledgeAssetLinks(connection, knowledgeAssetLinkTable, {
+        courseId: request.courseId,
+        mindMapId: mapId,
+        nodeId: node.nodeId,
+        relationType: "mindmap-node-image",
+        assetIds: nodeAssetReferences.get(node.nodeId) ?? []
+      }, now);
+    }
     await softDeleteKnowledgeDocumentsForMissingNodes(
       connection,
       knowledgeDocumentTable,
@@ -8202,7 +8244,7 @@ async function readKnowledgeDocument(input: unknown): Promise<KnowledgeDocument 
 
 async function writeKnowledgeDocument(input: unknown): Promise<KnowledgeDocument> {
   const request = normalizeKnowledgeDocumentSaveRequest(input);
-  const { pool, mindMapNodeTable, knowledgeDocumentTable, knowledgeDocumentSnapshotTable } = await getMysqlRuntime();
+  const { pool, mindMapNodeTable, knowledgeDocumentTable, knowledgeDocumentSnapshotTable, knowledgeAssetLinkTable } = await getMysqlRuntime();
   const connection = await pool.getConnection();
   const now = new Date();
   const updatedAt = now.toISOString();
@@ -8283,6 +8325,15 @@ async function writeKnowledgeDocument(input: unknown): Promise<KnowledgeDocument
         KNOWLEDGE_DOCUMENT_SNAPSHOT_RETENTION_LIMIT
       );
     }
+
+    await syncKnowledgeAssetLinks(connection, knowledgeAssetLinkTable, {
+      courseId: request.courseId,
+      mindMapId: request.mindMapId,
+      nodeId: request.nodeId,
+      documentId,
+      relationType: "document-image",
+      assetIds: extractKnowledgeAssetIds(request.snapshot)
+    }, now);
 
     await connection.commit();
 
@@ -9362,6 +9413,11 @@ const vocabularyCaptureService = createVocabularyCaptureService({
   getWindows: () => BrowserWindow.getAllWindows(),
   launchCompanionApp: () => vocabularyCaptureCompanionLauncher.launchIfRuntimeActive()
 });
+const knowledgeAssetService = createKnowledgeAssetService({
+  getDataPath: getAistudyDataPath,
+  getMysqlRuntime,
+  getEventWindow
+});
 
 type McpDataChangeEvent = {
   id: string;
@@ -10066,6 +10122,7 @@ if (process.argv.includes("--aistudy-mcp")) {
   void mcpController.startStdioServer();
 } else {
 app.whenReady().then(() => {
+  knowledgeAssetService.registerProtocolHandler();
   registerTextbookProtocolHandler();
   createMainWindow();
   warmMysqlRuntime();
@@ -10195,6 +10252,10 @@ ipcMain.handle("knowledge-documents:export-docx", withUserFacingError("knowledge
   const invokeEvent = event as IpcMainInvokeEvent;
   return exportKnowledgeDocumentDocx(BrowserWindow.fromWebContents(invokeEvent.sender), request);
 }));
+
+ipcMain.handle("knowledge-assets:choose-image", withUserFacingError("knowledge-assets:choose-image", "图片没有插入成功，请稍后再试。", (event, request) => (
+  knowledgeAssetService.chooseImage(event as IpcMainInvokeEvent, request)
+)));
 
 ipcMain.handle("exams:load", withUserFacingError("exams:load", "考试数据读取没有完成，请稍后再试。", async () => {
   const runtime = await getMysqlRuntime();

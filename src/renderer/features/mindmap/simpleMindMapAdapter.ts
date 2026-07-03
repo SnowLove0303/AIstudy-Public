@@ -280,6 +280,18 @@ function readMarker(icons: unknown, markerType: "priority" | "progress") {
   return marker ? marker.slice(markerType.length + 1) : "";
 }
 
+function fitTopicImageSize(width: unknown, height: unknown) {
+  const naturalWidth = Number(width);
+  const naturalHeight = Number(height);
+  const safeWidth = Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : 220;
+  const safeHeight = Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : 140;
+  const scale = Math.min(1, 260 / safeWidth, 170 / safeHeight);
+  return {
+    width: Math.max(96, Math.round(safeWidth * scale)),
+    height: Math.max(64, Math.round(safeHeight * scale))
+  };
+}
+
 function applyTopicElementCommand(editor: any, activeNode: any, command: MindMapCommand, payload: MindMapCommandPayload = {}) {
   const nodes = getActiveNodes(editor, activeNode);
   if (nodes.length === 0) return;
@@ -302,13 +314,30 @@ function applyTopicElementCommand(editor: any, activeNode: any, command: MindMap
     }
     if (command === "set-image") {
       const imageUrl = normalizePanelText(payload.imageUrl, 1200);
+      const imageAssetId = normalizePanelText(payload.imageAssetId, 96);
+      const imageSize = fitTopicImageSize(payload.imageWidth, payload.imageHeight);
       editor.execCommand("SET_NODE_IMAGE", node, imageUrl ? {
         url: imageUrl,
         title: normalizePanelText(payload.imageTitle, 80),
-        width: 220,
-        height: 140,
+        width: imageSize.width,
+        height: imageSize.height,
         custom: false
       } : { url: null });
+      editor.execCommand("SET_NODE_DATA", node, imageUrl ? {
+        aistudyAssetId: imageAssetId,
+        aistudyAssetUrl: imageUrl,
+        aistudyAssetMimeType: normalizePanelText(payload.imageMimeType, 120),
+        aistudyAssetFileName: normalizePanelText(payload.imageFileName, 255),
+        aistudyAssetWidth: payload.imageWidth,
+        aistudyAssetHeight: payload.imageHeight
+      } : {
+        aistudyAssetId: "",
+        aistudyAssetUrl: "",
+        aistudyAssetMimeType: "",
+        aistudyAssetFileName: "",
+        aistudyAssetWidth: undefined,
+        aistudyAssetHeight: undefined
+      });
     }
     if (command === "set-marker" && (payload.markerType === "priority" || payload.markerType === "progress")) {
       editor.execCommand("SET_NODE_ICON", node, replaceMarker(data.icon, payload.markerType, payload.markerValue));
@@ -449,6 +478,7 @@ function toSelectedNode(node: unknown): MindMapSelectedNode {
       hyperlinkTitle: typeof data.hyperlinkTitle === "string" ? data.hyperlinkTitle : "",
       imageUrl: typeof data.image === "string" ? data.image : "",
       imageTitle: typeof data.imageTitle === "string" ? data.imageTitle : "",
+      imageAssetId: typeof data.aistudyAssetId === "string" ? data.aistudyAssetId : "",
       priority: readMarker(data.icon, "priority"),
       progress: readMarker(data.icon, "progress"),
       expanded: data.expand !== false

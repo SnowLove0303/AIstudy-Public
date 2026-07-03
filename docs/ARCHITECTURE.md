@@ -184,6 +184,7 @@ Word-like documents:
 - Store images and attachments in `assets`, not inside JSON payloads.
 - Hash assets by SHA-256 to avoid duplicates.
 - Store asset references in `knowledge_asset_links`; `document_id` uses an empty string for non-document scoped references so uniqueness stays enforceable in MySQL.
+- Document images and mind-map node images are selected through the Electron asset bridge, stored under `AIstudyPublicData/assets/knowledge-images`, served through the `aistudy-asset://` protocol, and linked back with relation types `document-image` and `mindmap-node-image`.
 
 ## Memory Policy
 

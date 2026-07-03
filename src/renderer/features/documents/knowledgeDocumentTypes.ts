@@ -69,6 +69,15 @@ export type KnowledgeDocumentInlineElement = {
   type?: "text" | "superscript" | "subscript";
 };
 
+export type KnowledgeDocumentImageInput = {
+  assetId: string;
+  url: string;
+  fileName?: string;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+};
+
 export type KnowledgeDocumentFormatState = {
   fontFamily: string;
   fontSize: number;
@@ -97,6 +106,7 @@ export type KnowledgeDocumentEditorHandle = {
   setAlignment: (alignment: KnowledgeDocumentAlignment) => void;
   setList: (type: KnowledgeDocumentListType) => void;
   insertInlineElements: (elements: KnowledgeDocumentInlineElement[]) => void;
+  insertImage: (image: KnowledgeDocumentImageInput) => void;
   cancelBlankListOnEnter: () => boolean;
   insertTable: (rows: number, cols: number) => void;
   insertColumnBlock: (columns: KnowledgeDocumentColumnCount) => void;

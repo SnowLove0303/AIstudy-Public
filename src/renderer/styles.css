@@ -2682,6 +2682,29 @@ h3 {
   resize: vertical;
 }
 
+.mindmap-topic-upload-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(123, 145, 169, 0.24);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17466f;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mindmap-topic-upload-button:hover:not(:disabled) {
+  border-color: rgba(31, 111, 209, 0.42);
+  background: #f7fbff;
+}
+
+.mindmap-topic-upload-button:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
 .mindmap-topic-field input:focus,
 .mindmap-topic-field select:focus,
 .mindmap-topic-field textarea:focus {

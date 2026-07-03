@@ -14,6 +14,7 @@ import {
   Columns3,
   FileDown,
   Highlighter,
+  Image as ImageIcon,
   Italic,
   List,
   ListOrdered,
@@ -94,6 +95,17 @@ type AiPanelSize = {
   height: number;
 };
 
+type KnowledgeAssetImageResult = {
+  canceled: boolean;
+  assetId?: string;
+  url?: string;
+  fileName?: string;
+  mimeType?: string;
+  byteSize?: number;
+  width?: number;
+  height?: number;
+};
+
 type DocumentFormatBrushState = {
   reusable: boolean;
 };
@@ -149,6 +161,14 @@ declare global {
       listStatuses: (request: StatusRequest) => Promise<KnowledgeDocumentStatus[]>;
       save: (input: KnowledgeDocumentSaveInput) => Promise<KnowledgeDocumentRecord>;
       exportDocx: (request: { title: string; snapshot: KnowledgeDocumentSnapshot }) => Promise<{ canceled: boolean; filePath: string }>;
+    };
+    aistudyKnowledgeAssets?: {
+      chooseImage: (request: {
+        courseId: string;
+        mindMapId: string;
+        nodeId: string;
+        relationType: "document-image" | "mindmap-node-image";
+      }) => Promise<KnowledgeAssetImageResult>;
     };
   }
 }
@@ -603,6 +623,7 @@ export function KnowledgeDocumentWorkspace({
   const [isLoading, setIsLoading] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
   const [isExportingDocx, setIsExportingDocx] = React.useState(false);
+  const [isChoosingImage, setIsChoosingImage] = React.useState(false);
   const [isEditorReady, setIsEditorReady] = React.useState(false);
   const isFormatPanelOpen = detailPaneMode === "format";
   const [formatPanelSlot, setFormatPanelSlot] = React.useState<HTMLElement | null>(null);
@@ -1296,6 +1317,34 @@ export function KnowledgeDocumentWorkspace({
     }
   }, [documentBinding, isExportingDocx, selectedNode.title, snapshot]);
 
+  const insertImage = React.useCallback(async () => {
+    if (!documentBinding || !window.aistudyKnowledgeAssets?.chooseImage || isChoosingImage) return;
+    setIsChoosingImage(true);
+    setError("");
+    try {
+      const result = await window.aistudyKnowledgeAssets.chooseImage({
+        ...documentBinding,
+        relationType: "document-image"
+      });
+      if (result.canceled || !result.assetId || !result.url) return;
+      editorRef.current?.insertImage({
+        assetId: result.assetId,
+        url: result.url,
+        fileName: result.fileName,
+        mimeType: result.mimeType,
+        width: result.width,
+        height: result.height
+      });
+      documentDirtyRef.current = true;
+      editorRef.current?.focus();
+      void saveNow();
+    } catch (error) {
+      setError(getErrorMessage(error, "图片插入失败"));
+    } finally {
+      setIsChoosingImage(false);
+    }
+  }, [documentBinding, isChoosingImage, saveNow]);
+
   const storageText = storageMode === "mysql" ? "已连接" : storageMode === "local" ? "本地副本" : "未保存";
 
   const loadDocumentForNavigation = React.useCallback(
@@ -1614,6 +1663,10 @@ export function KnowledgeDocumentWorkspace({
         <button type="button" title="导入文档" onClick={() => setIsImporterOpen(true)} disabled={!canUseDocument || isSaving}>
           <Upload size={15} />
           <span>导入</span>
+        </button>
+        <button type="button" title="图片" onClick={() => void insertImage()} disabled={!canUseDocument || !isEditorReady || isSaving || isChoosingImage}>
+          {isChoosingImage ? <Loader2 className="spin-icon" size={15} /> : <ImageIcon size={15} />}
+          <span>图片</span>
         </button>
         <button type="button" title="导出 Word" onClick={() => void exportDocx()} disabled={!canUseDocument || isSaving || isExportingDocx}>
           {isExportingDocx ? <Loader2 className="spin-icon" size={15} /> : <FileDown size={15} />}

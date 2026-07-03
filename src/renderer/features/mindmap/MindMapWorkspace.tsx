@@ -113,9 +113,21 @@ const EMPTY_TOPIC_ELEMENTS: TopicElements = {
   hyperlinkTitle: "",
   imageUrl: "",
   imageTitle: "",
+  imageAssetId: "",
   priority: "",
   progress: "",
   expanded: true
+};
+
+type KnowledgeAssetImageResult = {
+  canceled: boolean;
+  assetId?: string;
+  url?: string;
+  fileName?: string;
+  mimeType?: string;
+  byteSize?: number;
+  width?: number;
+  height?: number;
 };
 
 const PRIORITY_OPTIONS = ["", "1", "2", "3", "4", "5"];
@@ -147,6 +159,14 @@ declare global {
     aistudyMindMaps?: {
       load: (courseId: string) => Promise<MindMapDocument | null>;
       save: (document: MindMapSaveInput) => Promise<MindMapDocument>;
+    };
+    aistudyKnowledgeAssets?: {
+      chooseImage: (request: {
+        courseId: string;
+        mindMapId: string;
+        nodeId: string;
+        relationType: "document-image" | "mindmap-node-image";
+      }) => Promise<KnowledgeAssetImageResult>;
     };
   }
 }
@@ -1204,6 +1224,18 @@ export function MindMapWorkspace({
     [canUseEditor, selectedNode.id]
   );
 
+  const chooseTopicImage = React.useCallback(async () => {
+    if (!courseId || !mapId || !selectedNode.id || !window.aistudyKnowledgeAssets?.chooseImage) return null;
+    const result = await window.aistudyKnowledgeAssets.chooseImage({
+      courseId,
+      mindMapId: mapId,
+      nodeId: selectedNode.id,
+      relationType: "mindmap-node-image"
+    });
+    if (result.canceled || !result.assetId || !result.url) return null;
+    return result;
+  }, [courseId, mapId, selectedNode.id]);
+
   const selectDocumentNode = React.useCallback(
     (nodeId: string) => {
       const item = findOutlineItem(outline, nodeId);
@@ -1378,6 +1410,7 @@ export function MindMapWorkspace({
           value={topicElements}
           onCancel={() => setTopicPanel(null)}
           onApply={runTopicElementCommand}
+          onChooseImage={chooseTopicImage}
         />
       ) : null}
 
@@ -1631,12 +1664,14 @@ function TopicElementPopover({
   panel,
   value,
   onCancel,
-  onApply
+  onApply,
+  onChooseImage
 }: {
   panel: TopicElementPanel;
   value: TopicElements;
   onCancel: () => void;
   onApply: (command: MindMapCommandPayload & { type: "set-note" | "set-tags" | "set-hyperlink" | "set-image" | "set-marker" }) => void;
+  onChooseImage: () => Promise<KnowledgeAssetImageResult | null>;
 }) {
   const [note, setNote] = React.useState(value.note);
   const [tags, setTags] = React.useState(value.tags.join("，"));
@@ -1644,6 +1679,9 @@ function TopicElementPopover({
   const [hyperlinkTitle, setHyperlinkTitle] = React.useState(value.hyperlinkTitle);
   const [imageUrl, setImageUrl] = React.useState(value.imageUrl);
   const [imageTitle, setImageTitle] = React.useState(value.imageTitle);
+  const [imageAssetId, setImageAssetId] = React.useState(value.imageAssetId);
+  const [imageSize, setImageSize] = React.useState<{ width?: number; height?: number; mimeType?: string; fileName?: string }>({});
+  const [isChoosingImage, setIsChoosingImage] = React.useState(false);
   const [priority, setPriority] = React.useState(value.priority);
   const [progress, setProgress] = React.useState(value.progress);
 
@@ -1654,9 +1692,33 @@ function TopicElementPopover({
     setHyperlinkTitle(value.hyperlinkTitle);
     setImageUrl(value.imageUrl);
     setImageTitle(value.imageTitle);
+    setImageAssetId(value.imageAssetId);
+    setImageSize({});
     setPriority(value.priority);
     setProgress(value.progress);
   }, [value]);
+
+  const chooseImage = async () => {
+    if (isChoosingImage) return;
+    setIsChoosingImage(true);
+    try {
+      const result = await onChooseImage();
+      if (!result) return;
+      setImageUrl(result.url ?? "");
+      setImageTitle((current) => current || result.fileName || "");
+      setImageAssetId(result.assetId ?? "");
+      setImageSize({
+        width: result.width,
+        height: result.height,
+        mimeType: result.mimeType,
+        fileName: result.fileName
+      });
+    } catch {
+      // The main process already records the failure; keep the popover usable.
+    } finally {
+      setIsChoosingImage(false);
+    }
+  };
 
   const submit = () => {
     if (panel === "note") {
@@ -1669,7 +1731,16 @@ function TopicElementPopover({
       onApply({ type: "set-hyperlink", hyperlink, hyperlinkTitle });
     }
     if (panel === "image") {
-      onApply({ type: "set-image", imageUrl, imageTitle });
+      onApply({
+        type: "set-image",
+        imageUrl,
+        imageTitle,
+        imageAssetId,
+        imageWidth: imageSize.width,
+        imageHeight: imageSize.height,
+        imageMimeType: imageSize.mimeType,
+        imageFileName: imageSize.fileName
+      });
     }
     if (panel === "marker") {
       onApply({ type: "set-marker", markerType: "priority", markerValue: priority || null });
@@ -1709,6 +1780,9 @@ function TopicElementPopover({
             <span>图片</span>
             <input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} />
           </label>
+          <button className="mindmap-topic-upload-button" type="button" onClick={() => void chooseImage()} disabled={isChoosingImage}>
+            {isChoosingImage ? "选择中" : "选择"}
+          </button>
           <label className="mindmap-topic-field">
             <span>标题</span>
             <input value={imageTitle} onChange={(event) => setImageTitle(event.target.value)} />

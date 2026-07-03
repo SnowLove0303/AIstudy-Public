@@ -4,6 +4,7 @@ export type SimpleMindMapNodeData = {
   note?: string;
   expand?: boolean;
   aistudyCatalogBoundary?: boolean;
+  aistudyAssetId?: string;
   [key: string]: unknown;
 };
 
@@ -71,6 +72,11 @@ export type MindMapCommandPayload = {
   hyperlinkTitle?: string;
   imageUrl?: string;
   imageTitle?: string;
+  imageAssetId?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  imageMimeType?: string;
+  imageFileName?: string;
   markerType?: "priority" | "progress";
   markerValue?: string | null;
 };
@@ -113,6 +119,7 @@ export type MindMapSelectedNode = {
     hyperlinkTitle: string;
     imageUrl: string;
     imageTitle: string;
+    imageAssetId: string;
     priority: string;
     progress: string;
     expanded: boolean;

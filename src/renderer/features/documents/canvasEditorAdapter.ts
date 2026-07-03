@@ -6,6 +6,7 @@ import type {
   KnowledgeDocumentContent,
   KnowledgeDocumentEditorHandle,
   KnowledgeDocumentFormatState,
+  KnowledgeDocumentImageInput,
   KnowledgeDocumentInlineElement,
   KnowledgeDocumentListType,
   KnowledgeDocumentSnapshot
@@ -62,7 +63,18 @@ type KnowledgeDocumentColumnTableRow = {
   tdList?: KnowledgeDocumentColumnTableCell[];
 };
 const DOCUMENT_GET_VALUE_OPTIONS = {
-  extraPickAttrs: ["aistudyBlockKind", "aistudyColumnCount", "href", "url"] as unknown as Array<keyof IElement>
+  extraPickAttrs: [
+    "aistudyBlockKind",
+    "aistudyColumnCount",
+    "aistudyAssetId",
+    "aistudyAssetUrl",
+    "aistudyAssetMimeType",
+    "aistudyAssetFileName",
+    "aistudyAssetWidth",
+    "aistudyAssetHeight",
+    "href",
+    "url"
+  ] as unknown as Array<keyof IElement>
 };
 
 type CanvasDocumentEvents = {
@@ -723,6 +735,28 @@ export async function createCanvasDocumentEditor(
   const getPageInnerWidth = () => {
     const margins = Array.isArray(editorOptions.margins) ? editorOptions.margins : [0, 0, 0, 0];
     return Math.max(240, pageSize.width - Number(margins[1] ?? 0) - Number(margins[3] ?? 0));
+  };
+  const createImageElement = (image: KnowledgeDocumentImageInput): IElement => {
+    const naturalWidth = Number(image.width);
+    const naturalHeight = Number(image.height);
+    const safeNaturalWidth = Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : 520;
+    const safeNaturalHeight = Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : 320;
+    const maxWidth = Math.min(560, getPageInnerWidth());
+    const maxHeight = 420;
+    const scale = Math.min(1, maxWidth / safeNaturalWidth, maxHeight / safeNaturalHeight);
+    return {
+      value: image.url,
+      type: ElementType.IMAGE,
+      width: Math.max(120, Math.round(safeNaturalWidth * scale)),
+      height: Math.max(80, Math.round(safeNaturalHeight * scale)),
+      rowFlex: RowFlex.CENTER,
+      aistudyAssetId: image.assetId,
+      aistudyAssetUrl: image.url,
+      aistudyAssetMimeType: image.mimeType,
+      aistudyAssetFileName: image.fileName,
+      aistudyAssetWidth: image.width,
+      aistudyAssetHeight: image.height
+    } as IElement;
   };
   const getColumnDividerGap = (pageInnerWidth: number, columns: KnowledgeDocumentColumnCount) => {
     const sectionWidth = pageInnerWidth / columns;
@@ -1494,6 +1528,10 @@ export async function createCanvasDocumentEditor(
       const canvasElements = toCanvasInlineElements(elements);
       if (canvasElements.length === 0) return;
       runFormatCommand(() => editor.command.executeInsertElementList(canvasElements));
+    },
+    insertImage: (image) => {
+      if (!image.assetId || !image.url) return;
+      runFormatCommand(() => editor.command.executeInsertElementList([createImageElement(image)]));
     },
     cancelBlankListOnEnter,
     insertTable: (rows, cols) => {

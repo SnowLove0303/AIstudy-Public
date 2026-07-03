@@ -21,6 +21,7 @@ Current files:
 - Node titles can repeat; `data.uid` is the stable node key.
 - Renderer code must save through `window.aistudyMindMaps` or the local snapshot fallback.
 - Topic bubble sizing must be stored in node data and rendered through the adapter so text, shape, snapshot, undo, export, and reopen stay aligned.
+- Node images selected from local files must enter `knowledge_assets` first, then store only `aistudy-asset://...` and `aistudyAssetId` on node data. Saving the mind map synchronizes those node image references into `knowledge_asset_links` with relation type `mindmap-node-image`.
 - Catalog boundary uses `data.aistudyCatalogBoundary` to stop only the right-side catalog projection at that node; the real mind-map children remain editable and persisted.
 
 ## User Flow
