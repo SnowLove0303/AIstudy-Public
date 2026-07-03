@@ -44,6 +44,10 @@ fs.writeFileSync(
 const mathClipboard = await import(pathToFileURL(path.join(tempDir, "mathClipboard.mjs")).href);
 const documentClipboard = await import(pathToFileURL(path.join(tempDir, "documentClipboard.mjs")).href);
 const adapterSource = fs.readFileSync(adapterSourcePath, "utf8");
+const handlePasteStart = adapterSource.indexOf("const handlePaste = (event: ClipboardEvent) =>");
+const handlePasteEnd = adapterSource.indexOf("const normalizeOrderedLists = (content: IEditorData) =>");
+assert(handlePasteStart >= 0 && handlePasteEnd > handlePasteStart, "document adapter should keep handlePaste before normalizeOrderedLists");
+const handlePasteSource = adapterSource.slice(handlePasteStart, handlePasteEnd);
 
 function flatten(elements) {
   return elements.map((element) => element.value).join("");
@@ -128,6 +132,10 @@ assert(adapterSource.includes("setData(DOCUMENT_CLIPBOARD_MIME"), "copy should w
 assert(adapterSource.includes('setData("text/html"'), "copy should write HTML for rich-text targets");
 assert(adapterSource.includes('setData("text/plain"'), "copy should write plain text fallback");
 assert(adapterSource.includes("readClipboardElementList(event.clipboardData)"), "paste should prefer AIstudy structured document data");
+assert(adapterSource.includes("readElementListByRange(elementList, range)"), "copy should fall back to range-based element extraction");
+assert(adapterSource.includes("const runUserInsertCommand = (action: () => void)"), "paste should use a dedicated user insert path");
+assert(handlePasteSource.includes("runUserInsertCommand"), "paste should insert through the user insert path");
+assert(!handlePasteSource.includes("runFormatCommand"), "paste must not restore the remembered toolbar range before inserting");
 assert(adapterSource.includes('container.addEventListener("copy", handleCopy, true)'), "document editor should intercept copy in capture phase");
 
 console.log("document clipboard regression policy: ok");

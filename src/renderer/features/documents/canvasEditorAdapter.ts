@@ -682,6 +682,22 @@ function restoreRange(editor: CanvasEditorInstance, range: CanvasRange, mainLeng
   );
 }
 
+function clampDocumentRangeIndex(value: unknown, maxIndex: number) {
+  const index = Number(value);
+  if (!Number.isFinite(index)) return 0;
+  return Math.max(0, Math.min(Math.trunc(index), maxIndex));
+}
+
+function readElementListByRange(elementList: IElement[], range: CanvasRange | null | undefined) {
+  if (!range || range.tableId || range.isCrossRowCol || (range.zone && range.zone !== "main")) return [];
+  if (elementList.length === 0 || range.startIndex === range.endIndex) return [];
+
+  const maxIndex = Math.max(0, elementList.length - 1);
+  const startIndex = clampDocumentRangeIndex(Math.min(range.startIndex, range.endIndex), maxIndex);
+  const endIndex = clampDocumentRangeIndex(Math.max(range.startIndex, range.endIndex), maxIndex);
+  return elementList.slice(startIndex, endIndex + 1);
+}
+
 function normalizeSnapshot(value: unknown): KnowledgeDocumentSnapshot {
   if (value && typeof value === "object") {
     const candidate = value as Partial<KnowledgeDocumentSnapshot>;
@@ -1287,6 +1303,13 @@ export async function createCanvasDocumentEditor(
     rememberRange();
     scheduleSnapshot();
   };
+  const runUserInsertCommand = (action: () => void) => {
+    hasUserEdited = true;
+    rememberRange();
+    action();
+    rememberRange();
+    scheduleSnapshot();
+  };
   const handlePaste = (event: ClipboardEvent) => {
     markUserEdited();
     const aistudyClipboardElements = readClipboardElementList(event.clipboardData);
@@ -1294,7 +1317,7 @@ export async function createCanvasDocumentEditor(
       event.preventDefault();
       event.stopPropagation();
       const canvasElements = normalizeDocumentUrlLinksInElementList(aistudyClipboardElements).elements;
-      runFormatCommand(() =>
+      runUserInsertCommand(() =>
         editor.command.executeInsertElementList(canvasElements, {
           ignoreContextKeys: ["level", "listType", "listStyle", "listId", "rowFlex"] as Array<keyof IElement>
         })
@@ -1307,7 +1330,7 @@ export async function createCanvasDocumentEditor(
       if (canvasElements.length > 0) {
         event.preventDefault();
         event.stopPropagation();
-        runFormatCommand(() =>
+        runUserInsertCommand(() =>
           editor.command.executeInsertElementList(canvasElements, {
             ignoreContextKeys: ["level", "listType", "listStyle", "listId", "rowFlex"] as Array<keyof IElement>
           })
@@ -1322,7 +1345,7 @@ export async function createCanvasDocumentEditor(
     event.stopPropagation();
     const canvasElements = normalizeDocumentUrlLinksInElementList(toCanvasInlineElements(elements)).elements;
     if (canvasElements.length === 0) return;
-    runFormatCommand(() => editor.command.executeInsertElementList(canvasElements));
+    runUserInsertCommand(() => editor.command.executeInsertElementList(canvasElements));
   };
   const normalizeOrderedLists = (content: IEditorData) => {
     let changed = false;
@@ -1436,7 +1459,11 @@ export async function createCanvasDocumentEditor(
   };
   const readCurrentSelectionElementList = () => {
     try {
-      return editor.command.getRangeContext()?.selectionElementList ?? [];
+      const contextElements = editor.command.getRangeContext()?.selectionElementList ?? [];
+      if (contextElements.length > 0) return contextElements;
+      const range = editor.command.getRange();
+      const elementList = normalizeLiveEditorData(editor.command.getValue(DOCUMENT_GET_VALUE_OPTIONS).data).main;
+      return readElementListByRange(elementList, range);
     } catch {
       return [];
     }
