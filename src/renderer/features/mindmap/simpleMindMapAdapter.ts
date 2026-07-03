@@ -159,7 +159,7 @@ function toSnapshot(editor: any): MindMapSnapshot {
     theme?: MindMapSnapshot["theme"];
     view?: unknown;
   };
-  const root = editor.renderer?.root?.getPureData?.(true, false) ?? data.root;
+  const root = data.root ?? editor.renderer?.root?.getPureData?.(true, false);
   const layout = normalizeLayout(data.layout);
 
   return {
