@@ -246,6 +246,29 @@ const toolDefinitions = [
     inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 } } }
   },
   {
+    name: "read_node_context",
+    mode: "read",
+    description: "Read a structured node context in one call: target node, ancestor chain, bounded descendant subtree, and linked node documents.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["courseId", "nodeId"],
+      properties: {
+        courseId: { type: "string", maxLength: 120 },
+        mindMapId: { type: "string", maxLength: 120 },
+        nodeId: { type: "string", maxLength: 120 },
+        includeAncestors: { type: "boolean", description: "Default true. Include root-to-parent context." },
+        includeDescendants: { type: "boolean", description: "Default true. Include a nested subtree rooted at nodeId." },
+        includeDocuments: { type: "boolean", description: "Default true. Attach current node documents for returned nodes." },
+        documentMode: { type: "string", enum: ["none", "summary", "text"], description: "Default text. summary omits body text; text returns cleaned text with truncation." },
+        maxDepth: { type: "integer", minimum: 0, maximum: 32, description: "Default 8. Descendant depth relative to target." },
+        maxNodes: { type: "integer", minimum: 1, maximum: 500, description: "Default 160. Maximum returned descendant nodes." },
+        maxDocumentChars: { type: "integer", minimum: 200, maximum: 20000, description: "Default 4000. Maximum cleaned text chars per document." }
+      }
+    }
+  },
+  {
     name: "write_node_document",
     mode: "edit",
     description: "Create a node document from clean plain text or Markdown headings. If the node already has content, this refuses to overwrite unless replaceExisting=true is explicitly passed. Do not use this for formatting-only changes. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
@@ -320,7 +343,7 @@ function createMcpInstructions() {
     "AIstudy MCP gives external AI clients controlled access to local AIstudy knowledge bases, mind maps, and node documents.",
     "Start every new session with mcp_get_started. It returns health status, available library scope, safety rules, and the recommended next tool order.",
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
-    "For read work: use read_courses, read_current_mindmap, search_nodes, list_node_documents, and read_node_document.",
+    "For read work: use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
     "For document writes: pass clean plain text or Markdown-style headings to write_node_document or append_node_document. Separate independent knowledge points with exactly one blank line. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
@@ -369,7 +392,7 @@ function createMcpResourceText(uri) {
       "1. `health_check` 确认本地数据和数据库状态。",
       "2. `read_courses` 读取全库分区和知识库。",
       "3. `mcp_resolve_target` 用知识库名或节点关键词解析目标。",
-      "4. 读取任务走 `read_current_mindmap`、`search_nodes`、`list_node_documents`、`read_node_document`。",
+      "4. 读取任务优先走 `read_node_context`；全库摘要用 `read_current_mindmap`，定位用 `search_nodes`，单文档完整快照用 `read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
       "7. 写入文档时传干净文本或 Markdown 标题即可，AIstudy 会自动套用统一排版模板。独立知识点之间必须空一行；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
@@ -389,7 +412,7 @@ function createMcpResourceText(uri) {
       "`read_courses` -> `mcp_resolve_target` -> `read_current_mindmap({ courseId })`。",
       "",
       "## 搜索节点",
-      "`mcp_resolve_target({ courseName, nodeQuery })`。如果范围不明确，再调用 `search_nodes({ query })` 做全库搜索。",
+      "`mcp_resolve_target({ courseName, nodeQuery })`。如果范围不明确，再调用 `search_nodes({ query })` 做全库搜索；拿到 nodeId 后优先调用 `read_node_context({ courseId, nodeId })`。",
       "",
       "## 编辑导图",
       "`mcp_plan_task({ intent, allowEdit: true })` -> `mcp_resolve_target` -> 具体编辑工具。",
@@ -489,11 +512,12 @@ function createMcpTaskPlan(args = {}) {
     steps.push({ order: order++, tool: "resolve_course_locator", arguments: { courseId: courseId || undefined }, purpose: "生成本地 locatorPath 给其他智能体使用。" });
   } else if (documentLike) {
     steps.push({ order: order++, tool: "list_node_documents", arguments: { courseId: courseId || undefined }, purpose: "查看节点文档范围。" });
-    steps.push({ order: order++, tool: "read_node_document", arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" }, purpose: "编辑前先读取现有文档。" });
+    steps.push({ order: order++, tool: "read_node_context", arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" }, purpose: "编辑前先读取父级、子树和文档上下文。" });
+    steps.push({ order: order++, tool: "read_node_document", arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" }, purpose: "需要完整单文档快照时再读取现有文档。" });
   } else if (searchLike) {
     steps.push({ order: order++, tool: "search_nodes", arguments: { courseId: courseId || undefined, query: nodeQuery || targetName || "关键词" }, purpose: "按关键词搜索节点。" });
   } else {
-    steps.push({ order: order++, tool: "read_current_mindmap", arguments: { courseId: courseId || undefined }, purpose: "读取导图摘要或指定导图。" });
+    steps.push({ order: order++, tool: "read_current_mindmap", arguments: { courseId: courseId || undefined }, purpose: "读取导图摘要或指定导图；已知 nodeId 时优先 read_node_context。" });
   }
   if (editLike) {
     steps.push({
@@ -1002,6 +1026,19 @@ async function findMindMapByCourse(runtime, courseId) {
      ORDER BY updated_at DESC
      LIMIT 1`,
     [courseId]
+  );
+  return rows[0] ?? null;
+}
+
+async function findMindMapById(runtime, courseId, mindMapId) {
+  const { pool, config } = runtime;
+  const [rows] = await pool.execute(
+    `SELECT id, course_id AS courseId, title, root_node_id AS rootNodeId,
+            current_snapshot_id AS currentSnapshotId, node_count AS nodeCount, updated_at AS updatedAt
+     FROM ${escapeIdentifier(config.mindMapTable, "mind map table")}
+     WHERE course_id = ? AND id = ? AND deleted_at IS NULL
+     LIMIT 1`,
+    [courseId, mindMapId]
   );
   return rows[0] ?? null;
 }
@@ -2503,6 +2540,207 @@ async function readNodeDocument(runtime, args) {
   };
 }
 
+function normalizeContextInteger(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isInteger(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalizeContextDocumentMode(args) {
+  if (args.includeDocuments === false) return "none";
+  const mode = normalizeText(args.documentMode, "text");
+  return ["none", "summary", "text"].includes(mode) ? mode : "text";
+}
+
+function buildContextNodeSummary(row, childCount, document) {
+  return {
+    nodeId: row.nodeId,
+    parentNodeId: row.parentNodeId || null,
+    title: row.title || "",
+    depth: Number(row.depth) || 0,
+    positionIndex: Number(row.positionIndex) || 0,
+    pathText: row.pathText || row.title || "",
+    isCollapsed: Boolean(Number(row.isCollapsed)),
+    childCount,
+    hasDocument: Boolean(document?.hasContent),
+    document: document || null,
+    updatedAt: toIsoTimestamp(row.updatedAt)
+  };
+}
+
+async function readContextDocuments(runtime, courseId, mindMapId, nodeIds, documentMode, maxDocumentChars) {
+  if (documentMode === "none" || nodeIds.length === 0) return new Map();
+  const placeholders = nodeIds.map(() => "?").join(", ");
+  const snapshotJoin = documentMode === "text"
+    ? `LEFT JOIN ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")} s
+         ON s.id = d.current_snapshot_id AND s.document_id = d.id`
+    : "";
+  const [rows] = await runtime.pool.execute(
+    `SELECT d.id, d.course_id AS courseId, d.mind_map_id AS mindMapId, d.node_id AS nodeId, d.title,
+            d.current_byte_size AS byteSize, d.has_content AS hasContent, d.updated_at AS updatedAt
+            ${documentMode === "text" ? ", s.payload_json AS payloadJson" : ""}
+     FROM ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")} d
+     ${snapshotJoin}
+     WHERE d.course_id = ? AND d.mind_map_id = ? AND d.node_id IN (${placeholders}) AND d.deleted_at IS NULL`,
+    [courseId, mindMapId, ...nodeIds]
+  );
+  const documents = new Map();
+  for (const row of rows) {
+    let text = "";
+    let textTruncated = false;
+    let textLength = 0;
+    if (documentMode === "text" && row.payloadJson) {
+      try {
+        const snapshot = normalizeDocumentSnapshot(JSON.parse(row.payloadJson));
+        text = cleanExtractedDocumentText(extractDocumentText(snapshot?.content || ""));
+        textLength = text.length;
+        if (text.length > maxDocumentChars) {
+          text = text.slice(0, maxDocumentChars);
+          textTruncated = true;
+        }
+      } catch {
+        text = "";
+      }
+    }
+    documents.set(row.nodeId, {
+      documentId: row.id,
+      title: row.title || "",
+      updatedAt: toIsoTimestamp(row.updatedAt),
+      byteSize: Number(row.byteSize) || 0,
+      hasContent: Boolean(Number(row.hasContent)),
+      ...(documentMode === "text" ? { text, textLength, textTruncated } : {})
+    });
+  }
+  return documents;
+}
+
+async function readNodeContext(runtime, args) {
+  const { course } = await resolveCourse(runtime, args, true);
+  const nodeId = normalizeName(args.nodeId, "nodeId");
+  const requestedMindMapId = normalizeText(args.mindMapId, "");
+  const map = requestedMindMapId
+    ? await findMindMapById(runtime, course.id, requestedMindMapId)
+    : await findMindMapByCourse(runtime, course.id);
+  if (!map) throw new Error("Mind map is missing.");
+
+  const [rows] = await runtime.pool.execute(
+    `SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
+            depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt
+     FROM ${escapeIdentifier(runtime.config.mindMapNodeTable, "node table")}
+     WHERE course_id = ? AND mind_map_id = ? AND deleted_at IS NULL
+     ORDER BY depth ASC, position_index ASC`,
+    [course.id, map.id]
+  );
+  const nodeById = new Map(rows.map((row) => [row.nodeId, row]));
+  const targetRow = nodeById.get(nodeId);
+  if (!targetRow) throw new Error("MCP node id is invalid.");
+
+  const childrenByParent = new Map();
+  for (const row of rows) {
+    const parentId = row.parentNodeId || "";
+    const list = childrenByParent.get(parentId) || [];
+    list.push(row);
+    childrenByParent.set(parentId, list);
+  }
+
+  const includeAncestors = args.includeAncestors !== false;
+  const includeDescendants = args.includeDescendants !== false;
+  const maxDepth = normalizeContextInteger(args.maxDepth, 8, 0, 32);
+  const maxNodes = normalizeContextInteger(args.maxNodes, 160, 1, 500);
+  const maxDocumentChars = normalizeContextInteger(args.maxDocumentChars, 4000, 200, 20000);
+  const documentMode = normalizeContextDocumentMode(args);
+
+  const ancestors = [];
+  if (includeAncestors) {
+    let current = targetRow.parentNodeId ? nodeById.get(targetRow.parentNodeId) : null;
+    while (current) {
+      ancestors.unshift(current);
+      current = current.parentNodeId ? nodeById.get(current.parentNodeId) : null;
+    }
+  }
+
+  const subtreeRows = [];
+  let subtreeTruncated = false;
+  const visit = (row, relativeDepth) => {
+    if (subtreeRows.length >= maxNodes) {
+      subtreeTruncated = true;
+      return;
+    }
+    subtreeRows.push(row);
+    const children = childrenByParent.get(row.nodeId) || [];
+    if (relativeDepth >= maxDepth) {
+      if (children.length > 0) subtreeTruncated = true;
+      return;
+    }
+    for (const child of children) visit(child, relativeDepth + 1);
+  };
+  if (includeDescendants) visit(targetRow, 0);
+
+  const returnedRows = new Map();
+  for (const row of ancestors) returnedRows.set(row.nodeId, row);
+  returnedRows.set(targetRow.nodeId, targetRow);
+  for (const row of subtreeRows) returnedRows.set(row.nodeId, row);
+  const documents = await readContextDocuments(runtime, course.id, map.id, [...returnedRows.keys()], documentMode, maxDocumentChars);
+
+  const childCount = (row) => (childrenByParent.get(row.nodeId) || []).length;
+  const toSummary = (row) => buildContextNodeSummary(row, childCount(row), documents.get(row.nodeId));
+  const buildTree = (row, relativeDepth) => {
+    const summary = toSummary(row);
+    const children = childrenByParent.get(row.nodeId) || [];
+    if (relativeDepth >= maxDepth) return { ...summary, children: [] };
+    const nested = [];
+    for (const child of children) {
+      if (!returnedRows.has(child.nodeId)) continue;
+      nested.push(buildTree(child, relativeDepth + 1));
+    }
+    return { ...summary, children: nested };
+  };
+
+  const allDescendants = [];
+  const collectDescendants = (row) => {
+    for (const child of childrenByParent.get(row.nodeId) || []) {
+      allDescendants.push(child);
+      collectDescendants(child);
+    }
+  };
+  collectDescendants(targetRow);
+
+  return {
+    scope: "node",
+    course,
+    mindMap: {
+      mapId: map.id,
+      title: map.title,
+      nodeCount: Number(map.nodeCount) || rows.length,
+      updatedAt: toIsoTimestamp(map.updatedAt)
+    },
+    request: {
+      nodeId,
+      includeAncestors,
+      includeDescendants,
+      documentMode,
+      maxDepth,
+      maxNodes,
+      maxDocumentChars
+    },
+    target: toSummary(targetRow),
+    ancestors: ancestors.map(toSummary),
+    subtree: includeDescendants ? {
+      root: buildTree(targetRow, 0),
+      returnedNodeCount: subtreeRows.length,
+      totalDescendantCount: allDescendants.length,
+      truncated: subtreeTruncated,
+      truncatedReason: subtreeTruncated ? "maxDepth or maxNodes reached; narrow the target or increase limits within the schema caps." : null
+    } : null,
+    documents: {
+      mode: documentMode,
+      returnedCount: documents.size,
+      nodeIds: [...documents.keys()]
+    },
+    readingGuidance: "Use read_node_context for fast structured parent/subtree context. Use read_node_document only when a full single document snapshot is needed."
+  };
+}
+
 async function nextDocumentSequence(connection, runtime, documentId) {
   const [rows] = await connection.execute(
     `SELECT COALESCE(MAX(sequence_no), 0) + 1 AS nextSequence
@@ -2799,7 +3037,8 @@ async function runMcpGetStarted(getRuntime) {
       { tool: "mcp_resolve_target", when: "用户给了知识库名、节点关键词或自然语言目标。" },
       { tool: "read_current_mindmap", when: "需要读取全库导图摘要或指定导图。" },
       { tool: "search_nodes", when: "需要按关键词搜索节点。" },
-      { tool: "list_node_documents / read_node_document", when: "需要读取文档。" },
+      { tool: "read_node_context", when: "已知 courseId/nodeId，需要一次读取父级、子树和文档上下文。" },
+      { tool: "list_node_documents / read_node_document", when: "需要列出文档或读取单节点完整文档快照。" },
       { tool: "mcp_plan_task", when: "准备编辑前先规划工具顺序。" }
     ],
     safety: {
@@ -2847,7 +3086,7 @@ async function resolveMcpTarget(runtime, args = {}) {
     nextTools: [
       primaryCourse ? { tool: "read_current_mindmap", arguments: { courseId: primaryCourse.id } } : { tool: "read_courses", arguments: {} },
       nodeQuery ? { tool: "search_nodes", arguments: { courseId: primaryCourse?.id, query: nodeQuery } } : null,
-      nodeQuery ? { tool: "read_node_document", arguments: { courseId: primaryCourse?.id || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" } } : null
+      nodeQuery ? { tool: "read_node_context", arguments: { courseId: primaryCourse?.id || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" } } : null
     ].filter(Boolean)
   };
 }
@@ -2887,6 +3126,7 @@ async function runTool(getRuntime, name, args = {}) {
   if (name === "update_mindmap_layout") return updateMindMapLayout(runtime, args);
   if (name === "list_node_documents") return listNodeDocuments(runtime, args);
   if (name === "read_node_document") return readNodeDocument(runtime, args);
+  if (name === "read_node_context") return readNodeContext(runtime, args);
   if (name === "write_node_document") return writeNodeDocument(runtime, args);
   if (name === "append_node_document") return appendNodeDocument(runtime, args);
   if (name === "format_node_document") return formatNodeDocument(runtime, args);

@@ -98,6 +98,7 @@ const REMOTE_READ_TOOLS = new Set([
   "search_nodes",
   "list_node_documents",
   "read_node_document",
+  "read_node_context",
   "health_check",
   "chrome_ports_status",
   "chrome_port_open_page"
@@ -509,6 +510,23 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
         message = "搜索节点";
         return;
       }
+      const contextMatch = url.pathname.match(/^\/api\/courses\/([^/]+)\/nodes\/([^/]+)\/context$/);
+      if (request.method === "GET" && contextMatch) {
+        tool = "read_node_context";
+        toolArgs = {
+          courseId: decodeURIComponent(contextMatch[1]),
+          nodeId: decodeURIComponent(contextMatch[2]),
+          mindMapId: url.searchParams.get("mindMapId") || undefined,
+          documentMode: url.searchParams.get("documentMode") || undefined,
+          maxDepth: url.searchParams.get("maxDepth") ? Number(url.searchParams.get("maxDepth")) : undefined,
+          maxNodes: url.searchParams.get("maxNodes") ? Number(url.searchParams.get("maxNodes")) : undefined,
+          maxDocumentChars: url.searchParams.get("maxDocumentChars") ? Number(url.searchParams.get("maxDocumentChars")) : undefined
+        };
+        sendJson(response, 200, await callReadOnlyTool("read_node_context", toolArgs));
+        statusCode = 200;
+        message = "Read node context";
+        return;
+      }
       const documentMatch = url.pathname.match(/^\/api\/courses\/([^/]+)\/nodes\/([^/]+)\/document$/);
       if (request.method === "GET" && documentMatch) {
         tool = "read_node_document";
@@ -731,6 +749,7 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
     if (rawUrl === "/api/courses") return "read_courses";
     if (/^\/api\/courses\/[^/]+\/mindmap/.test(rawUrl)) return "read_current_mindmap";
     if (/^\/api\/courses\/[^/]+\/search/.test(rawUrl)) return "search_nodes";
+    if (/^\/api\/courses\/[^/]+\/nodes\/[^/]+\/context/.test(rawUrl)) return "read_node_context";
     if (/^\/api\/courses\/[^/]+\/nodes\/[^/]+\/document/.test(rawUrl)) return "read_node_document";
     if (rawUrl === "/mcp") return "mcp";
     return "request";

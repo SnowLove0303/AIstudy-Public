@@ -28,6 +28,7 @@ export type McpToolId =
   | "update_mindmap_layout"
   | "list_node_documents"
   | "read_node_document"
+  | "read_node_context"
   | "write_node_document"
   | "append_node_document"
   | "format_node_document"
@@ -191,6 +192,23 @@ const documentSchema = {
     bold: { type: "boolean" },
     italic: { type: "boolean" },
     underline: { type: "boolean" }
+  }
+};
+const nodeContextSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["courseId", "nodeId"],
+  properties: {
+    courseId: { type: "string", maxLength: 120 },
+    mindMapId: { type: "string", maxLength: 120 },
+    nodeId: { type: "string", maxLength: 120 },
+    includeAncestors: { type: "boolean" },
+    includeDescendants: { type: "boolean" },
+    includeDocuments: { type: "boolean" },
+    documentMode: { type: "string", enum: ["none", "summary", "text"] },
+    maxDepth: { type: "integer", minimum: 0, maximum: 32 },
+    maxNodes: { type: "integer", minimum: 1, maximum: 500 },
+    maxDocumentChars: { type: "integer", minimum: 200, maximum: 20000 }
   }
 };
 const mcpPlanSchema = {
@@ -429,6 +447,14 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     inputSchema: documentSchema
   },
   {
+    id: "read_node_context",
+    mode: "read",
+    title: "Read node context",
+    description: "Read target node, ancestors, bounded descendant subtree, and linked documents in one structured call.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: nodeContextSchema
+  },
+  {
     id: "write_node_document",
     mode: "edit",
     title: "写入节点文档",
@@ -514,7 +540,7 @@ function createMcpInstructions() {
     "AIstudy MCP gives external AI clients controlled access to local AIstudy knowledge bases, mind maps, and node documents.",
     "Start every new session with mcp_get_started. It returns health status, available library scope, safety rules, and the recommended next tool order.",
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
-    "For read work: use read_courses, read_current_mindmap, search_nodes, list_node_documents, and read_node_document.",
+    "For read work: use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
     "For document writes: use write_node_document only for new content or explicit whole-document replacement with replaceExisting=true. Use append_node_document for additions. Separate independent knowledge points with exactly one blank line. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. Use format_node_document for style cleanup that preserves every value, and update_node_document_style for simple whole-document style changes.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
@@ -563,7 +589,7 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "1. `health_check` 确认本地数据和数据库状态。",
       "2. `read_courses` 读取全库分区和知识库。",
       "3. `mcp_resolve_target` 用知识库名或节点关键词解析目标。",
-      "4. 读取任务走 `read_current_mindmap`、`search_nodes`、`list_node_documents`、`read_node_document`。",
+      "4. 读取任务优先走 `read_node_context`；全库摘要用 `read_current_mindmap`，定位用 `search_nodes`，单文档完整快照用 `read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
       "7. 写入文档时独立知识点之间必须空一行；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
@@ -582,7 +608,7 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "`read_courses` -> `mcp_resolve_target` -> `read_current_mindmap({ courseId })`。",
       "",
       "## 搜索节点",
-      "`mcp_resolve_target({ courseName, nodeQuery })`。如果范围不明确，再调用 `search_nodes({ query })` 做全库搜索。",
+      "`mcp_resolve_target({ courseName, nodeQuery })`。如果范围不明确，再调用 `search_nodes({ query })` 做全库搜索；拿到 nodeId 后优先调用 `read_node_context({ courseId, nodeId })`。",
       "",
       "## 编辑导图",
       "`mcp_plan_task({ intent, allowEdit: true })` -> `mcp_resolve_target` -> 具体编辑工具。",
@@ -725,11 +751,12 @@ function createMcpTaskPlan(args: Record<string, unknown>) {
     steps.push({ order: order++, tool: "resolve_course_locator", arguments: { courseId: courseId || undefined }, purpose: "生成本地 locatorPath 给其他智能体使用。" });
   } else if (documentLike) {
     steps.push({ order: order++, tool: "list_node_documents", arguments: { courseId: courseId || undefined }, purpose: "查看节点文档范围。" });
-    steps.push({ order: order++, tool: "read_node_document", arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" }, purpose: "编辑前先读取现有文档。" });
+    steps.push({ order: order++, tool: "read_node_context", arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" }, purpose: "编辑前先读取父级、子树和文档上下文。" });
+    steps.push({ order: order++, tool: "read_node_document", arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" }, purpose: "需要完整单文档快照时再读取现有文档。" });
   } else if (searchLike) {
     steps.push({ order: order++, tool: "search_nodes", arguments: { courseId: courseId || undefined, query: nodeQuery || targetName || "关键词" }, purpose: "按关键词搜索节点。" });
   } else {
-    steps.push({ order: order++, tool: "read_current_mindmap", arguments: { courseId: courseId || undefined }, purpose: "读取导图摘要或指定导图。" });
+    steps.push({ order: order++, tool: "read_current_mindmap", arguments: { courseId: courseId || undefined }, purpose: "读取导图摘要或指定导图；已知 nodeId 时优先 read_node_context。" });
   }
   if (editLike) {
     steps.push({
@@ -893,7 +920,8 @@ export function createMcpController(dependencies: McpControllerDependencies) {
         { tool: "mcp_resolve_target", when: "用户给了知识库名、节点关键词或自然语言目标。" },
         { tool: "read_current_mindmap", when: "需要读取全库导图摘要或指定导图。" },
         { tool: "search_nodes", when: "需要按关键词搜索节点。" },
-        { tool: "list_node_documents / read_node_document", when: "需要读取文档。" },
+        { tool: "read_node_context", when: "已知 courseId/nodeId，需要一次读取父级、子树和文档上下文。" },
+        { tool: "list_node_documents / read_node_document", when: "需要列出文档或读取单节点完整文档快照。" },
         { tool: "mcp_plan_task", when: "准备编辑前先规划工具顺序。" }
       ],
       safety: {
@@ -953,7 +981,7 @@ export function createMcpController(dependencies: McpControllerDependencies) {
       nextTools: [
         primaryCourseId ? { tool: "read_current_mindmap", arguments: { courseId: primaryCourseId } } : { tool: "read_courses", arguments: {} },
         nodeQuery ? { tool: "search_nodes", arguments: { courseId: primaryCourseId || undefined, query: nodeQuery } } : null,
-        nodeQuery ? { tool: "read_node_document", arguments: { courseId: primaryCourseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" } } : null
+        nodeQuery ? { tool: "read_node_context", arguments: { courseId: primaryCourseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" } } : null
       ].filter(Boolean)
     };
   }
@@ -1016,7 +1044,7 @@ export function createMcpController(dependencies: McpControllerDependencies) {
         data = await dependencies.appendMindMapNode(candidate.title, candidate.courseId);
         const nodeTitle = typeof data === "object" && data && "nodeTitle" in data ? (data as { nodeTitle?: unknown }).nodeTitle : "";
         summary = `已追加节点：${String(nodeTitle || "")}`;
-      } else if (tool.mode === "edit" || tool.id === "list_node_documents" || tool.id === "read_node_document") {
+      } else if (tool.mode === "edit" || tool.id === "list_node_documents" || tool.id === "read_node_document" || tool.id === "read_node_context") {
         data = await dependencies.runAdvancedTool(tool.id, candidate);
         summary = "调用完成";
       } else if (tool.id === "health_check") {
@@ -1335,7 +1363,8 @@ function createOnboardingGuide(config: McpConfigDraft, nodeCommand: string, serv
     "2. read_courses：读取全库分区和知识库清单，记住目标知识库的 courseId。",
     "3. mcp_resolve_target：按知识库名、courseId、节点关键词解析真实操作目标。",
     "4. read_current_mindmap / search_nodes：读取全库或指定知识库导图，或搜索节点。",
-    "5. list_node_documents / read_node_document：读取节点文档。",
+    "5. read_node_context：一次读取目标节点父级、子树和文档上下文。",
+    "6. list_node_documents / read_node_document：列出节点文档或读取单节点完整文档。",
     "6. mcp_plan_task：编辑前规划具体工具顺序。",
     "7. 具体编辑工具：必须传 courseId/nodeId，并先把 AISTUDY_MCP_ALLOW_EDIT 改成 1。",
     "",

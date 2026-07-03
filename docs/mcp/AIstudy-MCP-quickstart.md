@@ -66,7 +66,8 @@ AISTUDY_MCP_ALLOW_EDIT = "0"
 3. 调用 `mcp_resolve_target`。按知识库名、`courseId` 或节点关键词解析真实目标，减少猜参数。
 4. 调用 `read_current_mindmap`。不传 `courseId` 时读取全库导图摘要，传 `courseId` 时读取指定知识库的完整导图。
 5. 调用 `search_nodes`。不传 `courseId` 时全库搜索，传 `courseId` 时只搜索目标知识库。
-6. 需要看文档时，先用 `list_node_documents` 找已有文档，再用 `read_node_document` 按 `courseId + nodeId` 读取。
+6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`，一次读取父级路径、子树和关联文档。
+7. 需要单节点完整文档快照时，再用 `list_node_documents` 找已有文档，并用 `read_node_document` 按 `courseId + nodeId` 读取。
 7. 需要打开网页端口时，先用 `chrome_ports_status` 读取平台和端口，再用 `chrome_port_open_page` 打开页面。
 8. 需要编辑时，先调用 `mcp_plan_task` 规划工具顺序；写入必须传 `courseId`，节点文档写入还必须传 `nodeId`。
 
@@ -96,6 +97,7 @@ AISTUDY_MCP_ALLOW_EDIT = "0"
 
 - `read_current_mindmap`
 - `search_nodes`
+- `read_node_context`
 - `create_mindmap_node`
 - `append_mindmap_node`
 - `update_mindmap_node_text`
@@ -198,7 +200,9 @@ AISTUDY_MCP_ALLOW_EDIT = "0"
 
 ### 搜索节点并读文档
 
-`mcp_resolve_target({ courseName, nodeQuery })` -> `search_nodes` -> `list_node_documents` -> `read_node_document`
+`mcp_resolve_target({ courseName, nodeQuery })` -> `search_nodes` -> `read_node_context`
+
+`read_node_context` 是节点级读取的优先工具：已知 `courseId + nodeId` 时，它会一次返回目标节点、父级路径、受限子树和关联文档。只有需要单节点完整编辑器快照时，再调用 `read_node_document`。
 
 ### 编辑导图
 

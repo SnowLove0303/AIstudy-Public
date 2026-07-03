@@ -83,6 +83,7 @@ MCP 现在按独立模块管理，主进程不再直接维护 MCP 工具状态�
 
 - `read_current_mindmap`
 - `search_nodes`
+- `read_node_context`
 - `append_mindmap_node`
 - `create_mindmap_node`
 - `update_mindmap_node_text`

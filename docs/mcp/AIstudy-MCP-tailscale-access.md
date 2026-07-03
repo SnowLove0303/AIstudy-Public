@@ -26,6 +26,7 @@
 - `read_courses`
 - `read_current_mindmap`
 - `search_nodes`
+- `read_node_context`
 - `list_node_documents`
 - `read_node_document`
 - `health_check`

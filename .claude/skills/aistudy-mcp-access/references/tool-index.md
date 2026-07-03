@@ -17,6 +17,7 @@ Keep this file synchronized with `electron/mcp/controller.ts`, `electron/mcp/rem
 - `search_nodes`
 - `list_node_documents`
 - `read_node_document`: returns `text`/`textClean` for human-readable content, `textRaw` for audit, and `document.snapshot` as editor JSON for advanced tooling.
+- `read_node_context`: preferred node-level read. Given `courseId + nodeId`, returns the target node, ancestor chain, bounded descendant subtree, and linked documents in one structured response. Use this before `read_current_mindmap` when the target node is known.
 
 ## Course And Section Edits
 

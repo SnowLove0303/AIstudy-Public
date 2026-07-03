@@ -21,10 +21,12 @@ Never guess `courseId` from a display name.
 ```text
 mcp_resolve_target({ courseName, nodeQuery })
 -> search_nodes({ courseId, query })
--> read_node_document({ courseId, nodeId })
+-> read_node_context({ courseId, nodeId })
 ```
 
 If multiple nodes match, present candidates or ask the user to choose.
+
+Use `read_node_context` as the default node-level read. It returns the target node, root-to-parent ancestors, a bounded child subtree, and linked documents in one structured payload. Use `read_node_document` only when you need the full editor snapshot for one specific node document.
 
 For `read_node_document`, use `text` or `textClean` as the readable document body. `document.snapshot` is the editor JSON payload and can contain style or structure metadata such as list types, colors, and separators.
 

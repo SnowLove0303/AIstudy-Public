@@ -32,7 +32,8 @@ Workflow:
 4. Read in this order.
    - read_current_mindmap with courseId for the target knowledge base.
    - search_nodes with courseId and the user's keyword.
-   - list_node_documents, then read_node_document for node-bound documents.
+   - read_node_context when courseId and nodeId are known; it returns ancestors, subtree, and node-bound documents in one structured payload.
+   - list_node_documents, then read_node_document only when a full single-node document snapshot is required.
 5. Open browser ports only through AIstudy port management.
    - Call chrome_ports_status first.
    - Call chrome_port_open_page with platformId and optional url.
@@ -150,6 +151,7 @@ Authorization: Bearer ...
 - `read_courses`
 - `read_current_mindmap`
 - `search_nodes`
+- `read_node_context`
 - `list_node_documents`
 - `read_node_document`
 
@@ -169,6 +171,7 @@ Authorization: Bearer ...
 
 - `read_current_mindmap`：不传 `courseId` 时读取全库导图摘要；传 `courseId` 时读取目标导图。
 - `search_nodes`：不传 `courseId` 时全库搜索；传 `courseId` 时只搜目标知识库。
+- `read_node_context`：已知 `courseId + nodeId` 时优先使用；一次返回目标节点、父级路径、受限子树和关联文档。
 - `append_mindmap_node`：在指定知识库导图根节点追加节点。
 - `create_mindmap_node`：在指定父节点下新增节点。
 - `update_mindmap_node_text`：修改节点标题。
@@ -180,7 +183,7 @@ Authorization: Bearer ...
 ### 节点文档
 
 - `list_node_documents`：列出全库或指定知识库里已有节点文档。
-- `read_node_document`：读取指定节点绑定的文档。
+- `read_node_document`：读取指定节点绑定的完整文档快照。
 - `write_node_document`：创建节点文档或在明确授权时覆盖整篇。节点已有内容时，必须显式传 `replaceExisting: true` 才允许覆盖；不要把它当作“排版工具”使用。
 - `append_node_document`：在节点文档末尾追加干净文本或 Markdown 标题。
 - `format_node_document`：只做已有节点文档的样式清理。它必须逐字保留每一个编辑器元素的 `value`，不得改写文字、修剪空白、删除空行、插入空行、缩进、拆段或合段。
