@@ -8740,10 +8740,13 @@ async function resolveCourseLocatorForMcp(courseIdValue: unknown) {
 }
 
 const MCP_DOCUMENT_STYLE = {
-  section: { size: 26, color: "#ea580c", bold: true },
-  subsection: { size: 26, color: "#7c3aed", bold: true },
-  article: { size: 24, color: "#2563eb", bold: true },
-  body: { size: 24, color: "#111827", bold: false }
+  section: { size: 22, color: "#2563eb", bold: true },
+  subsection: { size: 20, color: "#1f2937", bold: true },
+  article: { size: 20, color: "#2563eb", bold: true },
+  label: { size: 20, color: "#1f2937", bold: true },
+  list: { size: 20, color: "#1f2937", bold: false },
+  body: { size: 20, color: "#1f2937", bold: false },
+  spacer: { size: 8, color: "#111827", bold: false }
 } as const;
 const MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const MCP_DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
@@ -8834,6 +8837,50 @@ function splitMcpDocumentHeadingLine(line: string): { kind: keyof typeof MCP_DOC
     }
   }
   return null;
+}
+
+function isStructuredMcpDocumentNumberHeading(value: string) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d+)[.)．、]\s*(\S.{0,60})$/);
+  if (!match) return false;
+  const title = match[2].trim();
+  if (!title || /[。；;，,：:]$/.test(title)) return false;
+  if (/^[A-Za-z0-9_.:/-]{12,}$/.test(title)) return false;
+  return title.length <= 42;
+}
+
+function isStructuredMcpDocumentLabelLine(value: string) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 80) return false;
+  if (/^https?:\/\//i.test(text)) return false;
+  return /^[^:：\n]{2,24}[:：]\s*\S{0,80}$/.test(text);
+}
+
+function splitStructuredMcpDocumentLabelLine(value: string) {
+  const text = String(value || "").trim();
+  const match = text.match(/^([^:：\n]{2,24}[:：])\s*(.*)$/);
+  if (!match) return null;
+  return { label: match[1], rest: match[2] || "" };
+}
+
+function classifyStructuredMcpDocumentLine(line: string, previousKind = ""): keyof typeof MCP_DOCUMENT_STYLE | null {
+  const plain = stripMcpMarkdownHeading(line);
+  if (!plain) return null;
+  if (/^#{1,2}\s+/.test(line) || /^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(plain)) return "section";
+  if (/^#{3,6}\s+/.test(line)) return "subsection";
+  if (/^[-*+]\s+\S/.test(plain)) return "list";
+  if (/^\d+[.)．、]\s+\S/.test(plain)) {
+    if (previousKind === "label") return "list";
+    return isStructuredMcpDocumentNumberHeading(plain) ? "subsection" : "list";
+  }
+  if (isStructuredMcpDocumentLabelLine(plain)) return "label";
+  return "body";
+}
+
+function appendMcpDocumentSpacer(elements: Record<string, unknown>[]) {
+  const previous = elements[elements.length - 1];
+  if (!previous || previous.value === "\n") return;
+  elements.push(createMcpDocumentElement("\n", "spacer"));
 }
 
 function toMcpDocumentUnicodeScript(value: string, map: Record<string, string>) {
@@ -8975,12 +9022,14 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
   const lines = normalizeMcpDocumentTemplateSource(text).split("\n");
   const elements: Record<string, unknown>[] = [];
   let bodyLines: string[] = [];
+  let previousKind = "";
   const flushBody = () => {
     const body = bodyLines.join("\n").trim();
     bodyLines = [];
     if (!body) return;
     elements.push(...createMcpDocumentElements(`${body}\n`, "body"));
-    elements.push(createMcpDocumentElement("\n", "body"));
+    appendMcpDocumentSpacer(elements);
+    previousKind = "body";
   };
 
   for (const rawLine of lines) {
@@ -8992,17 +9041,38 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
     const splitHeading = splitMcpDocumentHeadingLine(rawLine);
     if (splitHeading) {
       flushBody();
+      if (previousKind && previousKind !== "section") appendMcpDocumentSpacer(elements);
       elements.push(createMcpDocumentElement(`${splitHeading.heading}\n`, splitHeading.kind));
       bodyLines.push(splitHeading.rest);
+      previousKind = splitHeading.kind;
       continue;
     }
-    const kind = classifyMcpDocumentLine(rawLine);
+    const kind = classifyStructuredMcpDocumentLine(rawLine, previousKind);
+    if (kind === "label") {
+      flushBody();
+      const label = splitStructuredMcpDocumentLabelLine(rawLine);
+      if (label) {
+        elements.push(createMcpDocumentElement(label.rest ? label.label : `${label.label}\n`, "label"));
+        if (label.rest) elements.push(...createMcpDocumentElements(` ${label.rest}\n`, "body"));
+        previousKind = "label";
+        continue;
+      }
+    }
+    if (kind === "list") {
+      flushBody();
+      elements.push(...createMcpDocumentElements(`${stripMcpMarkdownHeading(rawLine)}\n`, "list"));
+      previousKind = "list";
+      continue;
+    }
     if (kind && kind !== "body") {
       flushBody();
+      if (previousKind && previousKind !== "section") appendMcpDocumentSpacer(elements);
       elements.push(createMcpDocumentElement(`${stripMcpMarkdownHeading(rawLine)}\n`, kind));
+      previousKind = kind;
       continue;
     }
     bodyLines.push(line);
+    previousKind = "body";
   }
   flushBody();
   return elements.length > 0 ? elements : [createMcpDocumentElement("", "body")];
@@ -9052,7 +9122,7 @@ function appendMcpDocumentText(snapshot: KnowledgeDocumentSnapshot, text: string
   const last = main[main.length - 1];
   const lastValue = isRecord(last) && typeof last.value === "string" ? last.value : "";
   if (main.length > 0 && !lastValue.endsWith("\n\n")) {
-    main.push(createMcpDocumentElement("\n\n", "body"));
+    main.push(createMcpDocumentElement("\n", "spacer"));
   }
   main.push(...appended);
   return {
@@ -9090,15 +9160,20 @@ function getMcpDocumentCoreText(value: unknown) {
 }
 
 function isMcpDocumentMainHeadingText(value: unknown) {
+  const text = getMcpDocumentCoreText(value);
+  if (/^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(text)) return true;
   return /^[一二三四五六七八九十]+[、.．]/.test(getMcpDocumentCoreText(value));
 }
 
 function isMcpDocumentNumberHeadingText(value: unknown) {
+  const text = getMcpDocumentCoreText(value);
+  if (/^\d+[.)．、]\s+\S/.test(text)) return isStructuredMcpDocumentNumberHeading(text);
   return /^\d+[.．]\s*\S/.test(getMcpDocumentCoreText(value));
 }
 
 function isMcpDocumentLabelText(value: unknown) {
   const text = getMcpDocumentCoreText(value);
+  if (isStructuredMcpDocumentLabelLine(text)) return !isMcpDocumentMainHeadingText(text);
   return text.length > 0 && text.length <= 40 && /[:：]$/.test(text) && !isMcpDocumentMainHeadingText(text);
 }
 
@@ -9115,7 +9190,7 @@ function formatMcpDocumentElementPreservingValue(element: unknown): unknown {
   const value = next.value;
   const text = getMcpDocumentCoreText(value);
   if (!text) {
-    next.size = Number.isFinite(Number(next.size)) ? Number(next.size) : 20;
+    next.size = 8;
     next.bold = false;
     next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
     delete next.underline;

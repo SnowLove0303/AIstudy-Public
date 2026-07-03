@@ -53,7 +53,7 @@ mcp_resolve_target({ courseName, nodeQuery })
 
 Use `write_node_document` for replacement only when the user explicitly asks for whole-document overwrite and `replaceExisting: true` is passed.
 
-For `write_node_document` and `append_node_document` text, separate independent knowledge points with exactly one blank line. Prefer a compact structure: one heading line, one to three content lines, then one blank line before the next point.
+For `write_node_document` and `append_node_document` text, use structured plain text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line, but do not add extra blank lines merely for visual spacing.
 
 For math-heavy notes, write standard symbols or readable formula text in the final content: `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, `|x_n-a| < ε`. Do not leave degraded chat text such as `epsilon`, `delta`, `infinity`, `->`, or `lim_{n->infinity}` in the document.
 

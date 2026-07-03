@@ -39,4 +39,27 @@ assert(!text.includes("->"), "MCP document template should not keep degraded arr
 assert(text.includes("xₙ = f(n), n = 1,2,3,...\n\n2. 数列极限定义"), "independent knowledge points should be separated by one blank line");
 assert.equal(normalizeDocumentMathText("f:Xarrow Y"), "f:X → Y");
 
+const workflowSource = [
+  "四、标准执行流程",
+  "1. 选品池读取",
+  "目标：获得可进入筛选的真实商品候选。",
+  "数据来源：",
+  "1. 旺店通/慧策供销找货页。",
+  "2. 热销推荐接口。",
+  "推荐 Action:",
+  "1. huice-wdt.hot.goods.recommend.query",
+  "2. huice-wdt.goods.analysis.query"
+].join("\n");
+
+const workflowElements = buildDocumentTemplateElements(workflowSource);
+const workflowByValue = new Map(workflowElements.map((element) => [element.value, element]));
+
+assert.equal(workflowByValue.get("四、标准执行流程\n")?.size, 22, "top-level workflow heading should use compact section style");
+assert.equal(workflowByValue.get("1. 选品池读取\n")?.bold, true, "short numbered workflow steps should be subsection headings");
+assert.equal(workflowByValue.get("目标：")?.bold, true, "field labels should be bold labels");
+assert.equal(workflowByValue.get(" 获得可进入筛选的真实商品候选。\n")?.bold, false, "field label content should stay body text");
+assert.equal(workflowByValue.get("1. 旺店通/慧策供销找货页。\n")?.bold, false, "numbered data-source items should not be promoted to headings");
+assert.equal(workflowByValue.get("1. huice-wdt.hot.goods.recommend.query\n")?.bold, false, "API action lines should remain list text");
+assert(!workflowElements.some((element) => element.value === "\n\n" && element.size >= 20), "MCP template must not create large blank spacer elements");
+
 console.log("MCP document template validation passed.");

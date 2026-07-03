@@ -345,7 +345,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
-    "For document writes: pass clean plain text or Markdown-style headings to write_node_document or append_node_document. Separate independent knowledge points with exactly one blank line. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
+    "For document writes: pass structured plain text or Markdown-style headings to write_node_document or append_node_document. Use section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line; do not add blank lines only for visual spacing. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -422,7 +422,7 @@ function createMcpResourceText(uri) {
       "",
       "传入 `text` 时使用干净文本或 Markdown 标题；系统会自动生成统一排版：章节标题蓝色加粗，条款标题蓝色加粗，正文为深色常规文本。",
       "",
-      "独立知识点之间保留且只保留一个空行。推荐结构是：小节标题一行，正文一到三行，然后空一行再写下一个知识点。",
+      "文档 text 使用结构化纯文本：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 这类字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。",
       "",
       "数学表达优先使用规范符号和可读公式文本：例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。避免把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入；AIstudy 会尽量自动规范化，但调用方仍应输出干净内容。",
       "",
@@ -471,7 +471,7 @@ function createMcpPrompt(name, args = {}) {
     aistudy_start: "你已经接入 AIstudy MCP。请先调用 mcp_get_started，再按返回的 nextSteps 做只读探测，不要进行编辑。",
     aistudy_read_knowledge: `请用 AIstudy MCP 读取知识库内容。目标：${target || "由用户当前问题决定"}。先 mcp_get_started，再 mcp_resolve_target，不要猜 courseId 或 nodeId。`,
     aistudy_edit_mindmap: `请用 AIstudy MCP 编辑思维导图。需求：${intent || "未提供"}。先 mcp_plan_task，再 mcp_resolve_target，确认 AISTUDY_MCP_ALLOW_EDIT=1 后只调用必要的编辑工具。`,
-    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；独立知识点之间空一行；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本。整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
+    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；text 按“标题、短步骤标题、目标/数据来源/推荐 Action 字段标签、编号或项目列表、简洁正文”组织，独立知识点之间空一行，不要用额外空行制造间距；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本。整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
   };
   const text = textByName[name];
   if (!text) throw new Error("Unknown MCP prompt.");
@@ -1731,7 +1731,10 @@ const DOCUMENT_TEMPLATE_STYLE = {
   section: { size: 22, color: "#2563eb", bold: true },
   subsection: { size: 20, color: "#1f2937", bold: true },
   article: { size: 20, color: "#2563eb", bold: true },
-  body: { size: 20, color: "#1f2937", bold: false }
+  label: { size: 20, color: "#1f2937", bold: true },
+  list: { size: 20, color: "#1f2937", bold: false },
+  body: { size: 20, color: "#1f2937", bold: false },
+  spacer: { size: 8, color: "#1f2937", bold: false }
 };
 const DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
@@ -1975,6 +1978,50 @@ function splitDocumentTemplateHeadingLine(line) {
   return null;
 }
 
+function isStructuredDocumentNumberHeading(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d+)[.)．、]\s*(\S.{0,60})$/);
+  if (!match) return false;
+  const title = match[2].trim();
+  if (!title || /[。；;，,：:]$/.test(title)) return false;
+  if (/^[A-Za-z0-9_.:/-]{12,}$/.test(title)) return false;
+  return title.length <= 42;
+}
+
+function isStructuredDocumentLabelLine(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 80) return false;
+  if (/^https?:\/\//i.test(text)) return false;
+  return /^[^:：\n]{2,24}[:：]\s*\S{0,80}$/.test(text);
+}
+
+function splitStructuredDocumentLabelLine(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^([^:：\n]{2,24}[:：])\s*(.*)$/);
+  if (!match) return null;
+  return { label: match[1], rest: match[2] || "" };
+}
+
+function classifyStructuredDocumentLine(line, previousKind = "") {
+  const plain = stripMarkdownHeading(line);
+  if (!plain) return null;
+  if (/^#{1,2}\s+/.test(line) || /^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(plain)) return "section";
+  if (/^#{3,6}\s+/.test(line)) return "subsection";
+  if (/^[-*+]\s+\S/.test(plain)) return "list";
+  if (/^\d+[.)．、]\s+\S/.test(plain)) {
+    if (previousKind === "label") return "list";
+    return isStructuredDocumentNumberHeading(plain) ? "subsection" : "list";
+  }
+  if (isStructuredDocumentLabelLine(plain)) return "label";
+  return "body";
+}
+
+function appendDocumentTemplateSpacer(elements) {
+  const previous = elements[elements.length - 1];
+  if (!previous || previous.value === "\n") return;
+  elements.push(createTemplateElement("\n", "spacer"));
+}
+
 function toDocumentUnicodeScript(value, map) {
   const text = String(value || "").replace(/^\{|\}$/g, "");
   if (!text || text.length > 24) return value;
@@ -2121,12 +2168,14 @@ function buildDocumentTemplateElements(text) {
   const lines = normalizeDocumentTemplateSource(text).split("\n");
   const elements = [];
   let bodyLines = [];
+  let previousKind = "";
   const flushBody = () => {
     const body = normalizeDocumentTemplateValue(bodyLines.join("\n"));
     bodyLines = [];
     if (body) {
       elements.push(...createTemplateElements(`${body}\n`, "body"));
-      elements.push(createTemplateElement("\n", "body"));
+      appendDocumentTemplateSpacer(elements);
+      previousKind = "body";
     }
   };
   for (const rawLine of lines) {
@@ -2138,17 +2187,38 @@ function buildDocumentTemplateElements(text) {
     const splitHeading = splitDocumentTemplateHeadingLine(rawLine);
     if (splitHeading) {
       flushBody();
+      if (previousKind && previousKind !== "section") appendDocumentTemplateSpacer(elements);
       elements.push(createTemplateElement(`${splitHeading.heading}\n`, splitHeading.kind));
       bodyLines.push(splitHeading.rest);
+      previousKind = splitHeading.kind;
       continue;
     }
-    const kind = classifyDocumentTemplateLine(rawLine);
+    const kind = classifyStructuredDocumentLine(rawLine, previousKind);
+    if (kind === "label") {
+      flushBody();
+      const label = splitStructuredDocumentLabelLine(rawLine);
+      if (label) {
+        elements.push(createTemplateElement(label.rest ? label.label : `${label.label}\n`, "label"));
+        if (label.rest) elements.push(...createTemplateElements(` ${label.rest}\n`, "body"));
+        previousKind = "label";
+        continue;
+      }
+    }
+    if (kind === "list") {
+      flushBody();
+      elements.push(...createTemplateElements(`${stripMarkdownHeading(rawLine)}\n`, "list"));
+      previousKind = "list";
+      continue;
+    }
     if (kind && kind !== "body") {
       flushBody();
+      if (previousKind && previousKind !== "section") appendDocumentTemplateSpacer(elements);
       elements.push(createTemplateElement(`${stripMarkdownHeading(rawLine)}\n`, kind));
+      previousKind = kind;
       continue;
     }
     bodyLines.push(line);
+    previousKind = "body";
   }
   flushBody();
   return elements.length > 0 ? elements : [createTemplateElement("", "body")];
@@ -2360,15 +2430,20 @@ function getDocumentElementCoreText(value) {
 }
 
 function isDocumentMainHeadingText(value) {
+  const text = getDocumentElementCoreText(value);
+  if (/^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(text)) return true;
   return /^[一二三四五六七八九十]+[、.．]/.test(getDocumentElementCoreText(value));
 }
 
 function isDocumentNumberHeadingText(value) {
+  const text = getDocumentElementCoreText(value);
+  if (/^\d+[.)．、]\s+\S/.test(text)) return isStructuredDocumentNumberHeading(text);
   return /^\d+[.．]\s*\S/.test(getDocumentElementCoreText(value));
 }
 
 function isDocumentLabelText(value) {
   const text = getDocumentElementCoreText(value);
+  if (isStructuredDocumentLabelLine(text)) return !isDocumentMainHeadingText(text);
   return text.length > 0 && text.length <= 40 && /[:：]$/.test(text) && !isDocumentMainHeadingText(text);
 }
 
@@ -2388,7 +2463,7 @@ function stylePreservedDocumentElement(element) {
   const text = getDocumentElementCoreText(value);
   if (!text) {
     if (typeof next.value === "string") {
-      next.size = Number.isFinite(Number(next.size)) ? Number(next.size) : 20;
+      next.size = 8;
       next.bold = false;
       next.color = DOCUMENT_FORMAT_TEXT_COLOR;
       delete next.underline;
@@ -2867,7 +2942,7 @@ async function appendNodeDocument(runtime, args) {
   const last = snapshot.content.main[snapshot.content.main.length - 1];
   const lastValue = last && typeof last === "object" && typeof last.value === "string" ? last.value : "";
   if (snapshot.content.main.length > 0 && !lastValue.endsWith("\n\n")) {
-    snapshot.content.main.push(createTemplateElement("\n\n", "body"));
+    snapshot.content.main.push(createTemplateElement("\n", "spacer"));
   }
   snapshot.content.main.push(...buildDocumentTemplateElements(args.text || ""));
   return writeNodeDocumentSnapshot(runtime, target, normalizeText(args.title, existing.document?.title || "节点文档"), snapshot);

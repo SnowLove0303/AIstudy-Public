@@ -45,6 +45,8 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 
 ## Document Editing Rules
 
+- Write structured text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, then concise body paragraphs.
+- Do not add blank lines merely for visual spacing; AIstudy applies compact spacing automatically.
 - Use `write_node_document` only for new content or explicit whole-document replacement with `replaceExisting: true`.
 - Use `append_node_document` for additions.
 - Separate independent knowledge points with exactly one blank line.
