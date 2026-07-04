@@ -49,6 +49,7 @@ const MIN_NODE_BUBBLE_HEIGHT = 30;
 const MAX_NODE_BUBBLE_WIDTH = 960;
 const MAX_NODE_BUBBLE_HEIGHT = 520;
 const INITIAL_VIEW_SCALE = 1;
+const SUMMARY_BRACKET_ARM_LENGTH = 22;
 
 let xmindExportPluginPromise: Promise<SimpleMindMapPlugin> | null = null;
 let simpleMindMapConstructorPromise: Promise<SimpleMindMapConstructor> | null = null;
@@ -187,6 +188,76 @@ function getActiveNodes(editor: any, fallbackNode: any = null) {
   const activeNodes = Array.isArray(editor.renderer?.activeNodeList) ? editor.renderer.activeNodeList : [];
   if (activeNodes.length > 0) return activeNodes;
   return fallbackNode ? [fallbackNode] : [];
+}
+
+function addNativeGeneralization(editor: any, activeNode: any = null) {
+  const activeNodes = getActiveNodes(editor, activeNode);
+  if (activeNodes.length === 1) {
+    const directChildren = Array.isArray(activeNodes[0]?.children)
+      ? activeNodes[0].children.filter((child: any) => child && !child.isGeneralization)
+      : [];
+    if (directChildren.length > 0) {
+      editor.renderer?.clearActiveNodeList?.();
+      if (typeof editor.renderer?.activeMultiNode === "function") {
+        editor.renderer.activeMultiNode(directChildren);
+      } else {
+        directChildren.forEach((child: any) => editor.renderer?.addNodeToActiveList?.(child, true));
+        editor.renderer?.emitNodeActiveEvent?.(directChildren[0], directChildren);
+      }
+      editor.execCommand("ADD_GENERALIZATION");
+      return;
+    }
+  }
+  editor.execCommand("ADD_GENERALIZATION");
+}
+
+function readFiniteNumber(value: unknown) {
+  const nextValue = Number(value);
+  return Number.isFinite(nextValue) ? nextValue : null;
+}
+
+function createRightBracketGeneralizationPath(editor: any, item: any) {
+  const layout = editor.renderer?.layout;
+  const bounds = layout?.getNodeGeneralizationRenderBoundaries?.(item, "h");
+  const summaryNode = item?.generalizationNode;
+  if (!bounds || !summaryNode) return "";
+
+  const left = readFiniteNumber(bounds.left);
+  const right = readFiniteNumber(bounds.right);
+  const top = readFiniteNumber(bounds.top);
+  const bottom = readFiniteNumber(bounds.bottom);
+  const lineMargin = readFiniteNumber(bounds.generalizationLineMargin) ?? 0;
+  const summaryLeft = readFiniteNumber(summaryNode.left);
+  const summaryWidth = readFiniteNumber(summaryNode.width) ?? 0;
+  if (left === null || right === null || top === null || bottom === null || summaryLeft === null) return "";
+
+  const middleY = top + (bottom - top) / 2;
+  const summaryCenterX = summaryLeft + summaryWidth / 2;
+  const groupCenterX = left + (right - left) / 2;
+  const isLeftSummary = summaryCenterX < groupCenterX;
+  const bracketX = isLeftSummary ? left - lineMargin : right + lineMargin;
+  const armX = isLeftSummary ? bracketX + SUMMARY_BRACKET_ARM_LENGTH : bracketX - SUMMARY_BRACKET_ARM_LENGTH;
+  const connectorX = isLeftSummary ? summaryLeft + summaryWidth : summaryLeft;
+
+  return [
+    `M ${armX},${top}`,
+    `L ${bracketX},${top}`,
+    `L ${bracketX},${bottom}`,
+    `L ${armX},${bottom}`,
+    `M ${bracketX},${middleY}`,
+    `L ${connectorX},${middleY}`
+  ].join(" ");
+}
+
+function renderRightBracketGeneralizations(editor: any) {
+  walkRenderTree(editor.renderer?.renderTree ?? editor.renderer?.root, (node) => {
+    const summaryItems = Array.isArray(node?._generalizationList) ? node._generalizationList : [];
+    summaryItems.forEach((item: any) => {
+      const path = createRightBracketGeneralizationPath(editor, item);
+      if (!path || typeof item?.generalizationLine?.plot !== "function") return;
+      item.generalizationLine.plot(path);
+    });
+  });
 }
 
 function createRuntimeNodeId() {
@@ -373,7 +444,7 @@ function runCommand(editor: any, command: MindMapCommand, selectedNode: any = nu
       editor.execCommand("ADD_OUTER_FRAME");
       break;
     case "add-summary":
-      editor.execCommand("ADD_GENERALIZATION");
+      addNativeGeneralization(editor, activeNode);
       break;
     case "toggle-expand":
     case "set-note":
@@ -897,6 +968,7 @@ export async function createSimpleMindMapEditor(
     defaultInsertBelowSecondLevelNodeText: "新主题",
     defaultAssociativeLineText: "关系",
     defaultOuterFrameText: "边界",
+    defaultGeneralizationText: "摘要",
     errorHandler: (_code: unknown, error: unknown) => {
       events.onError?.(error instanceof Error ? error.message : "导图编辑器异常");
     }
@@ -1172,6 +1244,7 @@ export async function createSimpleMindMapEditor(
     nodeResizeDragState = null;
     setBubbleResizeEdgeCursor(false);
     editor.render?.();
+    renderRightBracketGeneralizations(editor);
     ensureStableRenderTreeNodeIds(editor);
     syncSelectionFromActiveList();
     scheduleViewportSync();
@@ -1333,8 +1406,12 @@ export async function createSimpleMindMapEditor(
   document.addEventListener("compositionend", syncTextEditBeforeImeEvent, true);
   document.addEventListener("input", syncTextEditBeforeImeEvent, true);
   document.addEventListener("keydown", syncTextEditBeforeImeEvent, true);
+  const syncAfterTreeRender = () => {
+    renderRightBracketGeneralizations(editor);
+    syncSelectionFromActiveList();
+  };
   editor.on("node_active", emitSelectionWithCache);
-  editor.on("node_tree_render_end", syncSelectionFromActiveList);
+  editor.on("node_tree_render_end", syncAfterTreeRender);
   editor.on("before_show_text_edit", hideEditingNodeText);
   editor.on("hide_text_edit", syncAfterTextEdit);
   editor.on("node_dragend", syncAfterNodeDrag);
@@ -1344,6 +1421,7 @@ export async function createSimpleMindMapEditor(
   window.setTimeout(() => {
     if (destroyed) return;
     installRuntimeNodeExtensions();
+    renderRightBracketGeneralizations(editor);
   }, 0);
   if (editor.renderer?.root) {
     selectedRenderNode = editor.renderer.root;
@@ -1359,6 +1437,7 @@ export async function createSimpleMindMapEditor(
       if (destroyed) return;
       editor.setFullData(toEditorData(nextSnapshot));
       ensureStableRenderTreeNodeIds(editor);
+      renderRightBracketGeneralizations(editor);
       editor.scrollbar?.updateScrollbar?.();
       scheduleViewportSync();
     },
@@ -1374,6 +1453,7 @@ export async function createSimpleMindMapEditor(
     setLayout: (layout) => {
       if (destroyed) return null;
       const nextSnapshot = applyLayout(editor, layout);
+      renderRightBracketGeneralizations(editor);
       scheduleViewportSync();
       return nextSnapshot;
     },
@@ -1390,6 +1470,7 @@ export async function createSimpleMindMapEditor(
         window.setTimeout(() => {
           if (!destroyed) {
             ensureStableRenderTreeNodeIds(editor);
+            renderRightBracketGeneralizations(editor);
             syncSelectionFromActiveList();
             scheduleSnapshotSync(0);
           }
@@ -1409,6 +1490,7 @@ export async function createSimpleMindMapEditor(
     resize: () => {
       if (destroyed) return;
       editor.resize();
+      renderRightBracketGeneralizations(editor);
       setScrollbarWrapSize(el.clientWidth, el.clientHeight);
       editor.scrollbar?.updateScrollbar?.();
     },
@@ -1457,7 +1539,7 @@ export async function createSimpleMindMapEditor(
       editor.off("layout_change", emitSnapshot);
       editor.off("scrollbar_change", emitPluginViewportState);
       editor.off("node_active", emitSelectionWithCache);
-      editor.off("node_tree_render_end", syncSelectionFromActiveList);
+      editor.off("node_tree_render_end", syncAfterTreeRender);
       if (textEditPositionSyncFrame !== null) {
         window.cancelAnimationFrame(textEditPositionSyncFrame);
         textEditPositionSyncFrame = null;

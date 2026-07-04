@@ -146,10 +146,37 @@ function Restore-PortableRuntimeData {
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $portableFullPath) | Out-Null
     if (Test-Path -LiteralPath $portableFullPath) {
-      Remove-Item -LiteralPath $portableFullPath -Recurse -Force
+      Remove-PortableRuntimeDataPath $portableFullPath
     }
     Move-Item -LiteralPath $preservedFullPath -Destination $portableFullPath
     Write-Host ("[AIstudy] Restored portable runtime data: {0}" -f (Split-Path -Leaf $portableFullPath))
+  }
+}
+
+function Remove-PortableRuntimeDataPath {
+  param([string] $Path)
+
+  $portableFullPath = [System.IO.Path]::GetFullPath($Path)
+  $releaseFullPath = [System.IO.Path]::GetFullPath($releaseRoot)
+  if (-not $portableFullPath.StartsWith($releaseFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove runtime data outside release: $portableFullPath"
+  }
+
+  if (-not (Test-Path -LiteralPath $portableFullPath)) {
+    return
+  }
+
+  for ($attempt = 1; $attempt -le 10; $attempt++) {
+    try {
+      Remove-Item -LiteralPath $portableFullPath -Recurse -Force -ErrorAction Stop
+      return
+    } catch {
+      if ($attempt -eq 10) {
+        throw
+      }
+      Stop-ProjectRuntimeProcesses $portableDataDirs
+      Start-Sleep -Milliseconds (500 * $attempt)
+    }
   }
 }
 
@@ -166,7 +193,7 @@ function Remove-PortableRuntimeDataFromAppOutDir {
       continue
     }
 
-    Remove-Item -LiteralPath $portableFullPath -Recurse -Force
+    Remove-PortableRuntimeDataPath $portableFullPath
     Write-Host ("[AIstudy] Removed runtime data from installer source: {0}" -f (Split-Path -Leaf $portableFullPath))
   }
 }

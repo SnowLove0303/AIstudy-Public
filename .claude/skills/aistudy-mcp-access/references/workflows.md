@@ -55,7 +55,7 @@ Use `write_node_document` for replacement only when the user explicitly asks for
 
 For `write_node_document` and `append_node_document` text, use structured plain text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line, but do not add extra blank lines merely for visual spacing.
 
-Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map edit tools for actual mind map structure. When a document needs to describe a diagram, convert it into headings, field labels, and lists so the AIstudy document renderer shows structured content instead of source code.
+Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map edit tools for actual mind map structure. When a document needs to describe a diagram, convert it into headings, field labels, and stable numbered outlines so the AIstudy document renderer shows structured content instead of source code or whitespace-dependent trees.
 
 For math-heavy notes, write standard symbols or readable formula text in the final content: `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, `|x_n-a| < ε`. Do not leave degraded chat text such as `epsilon`, `delta`, `infinity`, `->`, or `lim_{n->infinity}` in the document.
 

@@ -83,7 +83,8 @@ assert(!mermaidText.includes("```"), "MCP document template must not expose mark
 assert(!mermaidText.toLowerCase().includes("mermaid"), "MCP document template must not expose raw mermaid language markers");
 assert(mermaidText.includes("旺店通选品页"), "Mermaid mindmap root should be preserved as document text");
 assert(mermaidText.includes("找爆款"), "Mermaid mindmap child nodes should be preserved as document text");
-assert(mermaidText.includes("- 选品渠道"), "Mermaid mindmap should be converted to structured list text");
+assert(mermaidText.includes("1.1. 选品渠道"), "Mermaid mindmap should be converted to stable numbered outline text");
+assert(mermaidText.includes("1.1.1. 找爆款"), "Mermaid mindmap child depth should survive without whitespace indentation");
 
 const tildeMermaidSource = mermaidSource.replace(/```/g, "~~~");
 const tildeMermaidElements = buildDocumentTemplateElements(tildeMermaidSource);
@@ -91,7 +92,7 @@ const tildeMermaidText = tildeMermaidElements.map((element) => element.value).jo
 assert(!tildeMermaidText.includes("~~~"), "MCP document template must not expose tilde fence markers");
 assert(!tildeMermaidText.toLowerCase().includes("mermaid"), "MCP document template must not expose tilde mermaid language markers");
 assert(tildeMermaidText.includes("旺店通选品页"), "Tilde Mermaid mindmap root should be preserved as document text");
-assert(tildeMermaidText.includes("- 选品渠道"), "Tilde Mermaid mindmap should be converted to structured list text");
+assert(tildeMermaidText.includes("1.1. 选品渠道"), "Tilde Mermaid mindmap should be converted to stable numbered outline text");
 
 const codeSource = [
   "调试片段：",

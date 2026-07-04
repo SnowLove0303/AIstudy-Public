@@ -50,7 +50,7 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 - Use `write_node_document` only for new content or explicit whole-document replacement with `replaceExisting: true`.
 - Use `append_node_document` for additions.
 - Separate independent knowledge points with exactly one blank line.
-- Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map tools for actual mind map structure; if a diagram must appear in a document, convert it to headings, field labels, and lists.
+- Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map tools for actual mind map structure; if a diagram must appear in a document, convert it to headings, field labels, and stable numbered outlines instead of whitespace-dependent trees.
 - For math content, use standard symbols or readable formula text such as `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, and `|x_n-a| < ε`; do not leave degraded tokens such as `epsilon`, `infinity`, `->`, or `lim_{n->infinity}` in the final document text.
 - Use `format_node_document` only for style cleanup that preserves every editor element `value` exactly.
 - Use `update_node_document_style` only for simple full-document style changes.

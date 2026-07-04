@@ -234,6 +234,19 @@ export function getMindMapSummarySnapshot(node: SimpleMindMapNode | null | undef
   return normalizeSummarySnapshot(snapshot, readNodeTitle(node ?? createRootNode(MIND_MAP_SUMMARY_TITLE)));
 }
 
+function cloneSummarySourceNode(node: SimpleMindMapNode): SimpleMindMapNode {
+  return {
+    data: {
+      uid: createStableNodeId(),
+      text: readNodeTitle(node),
+      expand: node.data?.expand !== false
+    },
+    children: getMindMapChildren(node)
+      .filter((child) => !isMindMapSummaryNode(child))
+      .map(cloneSummarySourceNode)
+  };
+}
+
 function normalizeSummarySnapshot(value: unknown, fallbackTitle: string): MindMapSnapshot {
   if (!value || typeof value !== "object") {
     return createInitialSnapshot(fallbackTitle);
@@ -255,6 +268,9 @@ export function createMindMapSummaryNode(anchorNode: SimpleMindMapNode): SimpleM
   const summaryNodeId = createStableNodeId();
   const anchorNodeId = typeof anchorNode.data?.uid === "string" && anchorNode.data.uid ? anchorNode.data.uid : null;
   const anchorTitle = readNodeTitle(anchorNode);
+  const summaryChildren = getMindMapChildren(anchorNode)
+    .filter((child) => !isMindMapSummaryNode(child))
+    .map(cloneSummarySourceNode);
   const summarySnapshot: MindMapSnapshot = {
     ...createInitialSnapshot(anchorTitle),
     root: {
@@ -263,7 +279,7 @@ export function createMindMapSummaryNode(anchorNode: SimpleMindMapNode): SimpleM
         text: anchorTitle,
         expand: true
       },
-      children: []
+      children: summaryChildren
     }
   };
 
@@ -389,6 +405,19 @@ export function countNodes(root: SimpleMindMapNode | null | undefined): number {
   return count;
 }
 
+function createNativeSummarySignature(value: unknown): string {
+  const summaries = Array.isArray(value) ? value : value ? [value] : [];
+  return summaries.map((summary) => {
+    if (!summary || typeof summary !== "object") return "";
+    const data = summary as Record<string, unknown>;
+    const uid = typeof data.uid === "string" ? data.uid : "";
+    const text = typeof data.text === "string" ? data.text : "";
+    const richText = typeof data.richText === "string" ? data.richText : "";
+    const range = Array.isArray(data.range) ? data.range.map((item) => String(item)).join(",") : "";
+    return `${uid.length}:${uid}:${text.length}:${text}:${richText.length}:${richText}:${range.length}:${range}`;
+  }).join("~");
+}
+
 export function createMindMapStructureSignature(root: SimpleMindMapNode | null | undefined): string {
   if (!root) return "";
   const parts: string[] = [];
@@ -405,7 +434,8 @@ export function createMindMapStructureSignature(root: SimpleMindMapNode | null |
     const summarySignature = isMindMapSummaryNode(node)
       ? createMindMapStructureSignature(getMindMapSummarySnapshot(node)?.root)
       : "";
-    parts.push(`${depth}:${uid.length}:${uid}:${text.length}:${text}:${catalogBoundary}:${isMindMapSummaryNode(node) ? "summary" : "topic"}:${summarySignature.length}:${summarySignature}:${children.length}`);
+    const nativeSummarySignature = createNativeSummarySignature(node.data?.generalization);
+    parts.push(`${depth}:${uid.length}:${uid}:${text.length}:${text}:${catalogBoundary}:${isMindMapSummaryNode(node) ? "summary" : "topic"}:${summarySignature.length}:${summarySignature}:${nativeSummarySignature.length}:${nativeSummarySignature}:${children.length}`);
 
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push({ node: children[index], depth: depth + 1 });

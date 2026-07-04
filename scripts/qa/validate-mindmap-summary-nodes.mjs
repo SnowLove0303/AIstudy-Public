@@ -49,11 +49,6 @@ const {
   countNodes,
   createEditorSafeMindMapTree,
   createMindMapStructureSignature,
-  createMindMapSummaryNode,
-  getMindMapSummarySnapshot,
-  isMindMapSummaryNode,
-  MIND_MAP_SUMMARY_SNAPSHOT_KEY,
-  preserveMindMapSummarySnapshots,
   normalizeMindMapTree
 } = await import(`${pathToFileURL(snapshotModulePath).href}?qa=${Date.now()}`);
 
@@ -61,7 +56,17 @@ const root = normalizeMindMapTree({
   data: { uid: "root", text: "Pynes", expand: true },
   children: [
     {
-      data: { uid: "channel", text: "渠道", expand: true },
+      data: {
+        uid: "channel",
+        text: "渠道",
+        expand: true,
+        generalization: {
+          uid: "generalization-visible-summary",
+          text: "选定方式",
+          expand: true,
+          range: [0, 2]
+        }
+      },
       children: [
         { data: { uid: "hot", text: "找爆款", expand: true }, children: [] },
         { data: { uid: "new", text: "有上新", expand: true }, children: [] },
@@ -71,57 +76,32 @@ const root = normalizeMindMapTree({
   ]
 });
 
-const channel = root.children[0];
-const summaryNode = createMindMapSummaryNode(channel);
-const rootWithSummary = normalizeMindMapTree({
-  ...root,
-  children: [
-    {
-      ...channel,
-      children: [summaryNode, ...channel.children]
-    }
-  ]
-});
-
-const outline = buildMindMapOutline(rootWithSummary);
+const outline = buildMindMapOutline(root);
 const channelItem = outline[0].children[0];
-const summaryItem = channelItem.children[0];
-const hotItem = channelItem.children[1];
-const summarySnapshot = getMindMapSummarySnapshot(rootWithSummary.children[0].children[0]);
 
-assert(isMindMapSummaryNode(rootWithSummary.children[0].children[0]), "summary node kind should survive normalization");
-assert(channelItem.title === "渠道", "anchor should stay in the main outline");
-assert(summaryItem.title === "摘要", "summary should appear as a catalog node");
-assert(summaryItem.nodeKind === "summary", "summary outline item should expose nodeKind=summary");
-assert(summaryItem.childCount === 0, "summary internals must not appear in the main catalog");
-assert(hotItem.title === "找爆款", "original first business child should remain after the summary");
-assert(countNodes(rootWithSummary) === 6, "summary should add only one main mind map node");
-assert(summarySnapshot?.root?.data?.text === "渠道", "summary mind map root should use the nearest multi-child parent title");
-assert(summarySnapshot?.root?.data?.uid === rootWithSummary.children[0].children[0].data.uid, "summary root id should match the summary node id for selection");
-
-const beforeSignature = createMindMapStructureSignature(rootWithSummary);
-summarySnapshot.root.children.push({
-  data: { uid: "summary-child", text: "筛选方式", expand: true },
-  children: []
-});
-rootWithSummary.children[0].children[0].data.aistudySummarySnapshot = summarySnapshot;
-const afterSignature = createMindMapStructureSignature(rootWithSummary);
-assert(beforeSignature !== afterSignature, "summary map edits should update the structure signature");
-
-const editorSafeRoot = createEditorSafeMindMapTree(rootWithSummary);
-const editorSafeSummaryNode = editorSafeRoot.children[0].children[0];
-assert(isMindMapSummaryNode(editorSafeSummaryNode), "summary node marker should stay in editor-safe data");
+assert(channelItem.title === "渠道", "summary anchor should stay in the main outline");
+assert(channelItem.childCount === 3, "native summary must not add outline children");
 assert(
-  !editorSafeSummaryNode.data[MIND_MAP_SUMMARY_SNAPSHOT_KEY],
-  "summary inner snapshot must not be sent into the simple-mind-map editor"
+  channelItem.children.map((child) => child.title).join(",") === "找爆款,有上新,找供应商",
+  "outline should contain only real child topics"
+);
+assert(countNodes(root) === 5, "native summary should not increase topic node count");
+assert(root.children[0].data.generalization?.text === "选定方式", "native summary text should stay on the anchor node");
+assert(root.children[0].data.generalization?.range?.join(",") === "0,2", "native summary range should be preserved");
+
+const beforeSignature = createMindMapStructureSignature(root);
+root.children[0].data.generalization.text = "商品入库清单";
+const afterSignature = createMindMapStructureSignature(root);
+assert(beforeSignature !== afterSignature, "native summary text edits should update the structure signature");
+
+const editorSafeRoot = createEditorSafeMindMapTree(root);
+assert(
+  editorSafeRoot.children[0].data.generalization?.text === "商品入库清单",
+  "native summary must be sent to simple-mind-map for visible bracket rendering"
+);
+assert(
+  editorSafeRoot.children[0].data.generalization?.range?.join(",") === "0,2",
+  "native summary range must remain editor-safe"
 );
 
-const preservedRoot = preserveMindMapSummarySnapshots(rootWithSummary, editorSafeRoot);
-const preservedSummaryNode = preservedRoot.children[0].children[0];
-const preservedSummarySnapshot = getMindMapSummarySnapshot(preservedSummaryNode);
-assert(
-  preservedSummarySnapshot?.root.children[0]?.data?.uid === "summary-child",
-  "summary inner snapshot should be restored before saving the master map"
-);
-
-console.log("mind map summary node policy: ok");
+console.log("mind map native summary policy: ok");

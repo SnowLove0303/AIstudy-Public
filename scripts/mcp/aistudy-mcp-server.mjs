@@ -349,7 +349,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
-    "For document writes: pass structured plain text or Markdown-style headings to write_node_document or append_node_document. Use section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line; do not add blank lines only for visual spacing. Do not write raw Mermaid or Markdown fenced blocks as document body; use mind map tools for mind maps, or convert diagrams into headings and lists. If fenced blocks are included, AIstudy normalizes them and converts Mermaid mindmap blocks into structured lists instead of showing source code. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
+    "For document writes: pass structured plain text or Markdown-style headings to write_node_document or append_node_document. Use section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line; do not add blank lines only for visual spacing. Do not write raw Mermaid or Markdown fenced blocks as document body; use mind map tools for mind maps, or convert diagrams into headings and lists. If fenced blocks are included, AIstudy normalizes them and converts Mermaid mindmap blocks into stable numbered outlines instead of showing source code or whitespace-dependent trees. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -399,7 +399,7 @@ function createMcpResourceText(uri) {
       "4. 读取任务优先走 `read_node_context`；全库摘要用 `read_current_mindmap`，定位用 `search_nodes`，单文档完整快照用 `read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
-      "7. 写入文档时传干净文本或 Markdown 标题即可，AIstudy 会自动套用统一排版模板。独立知识点之间必须空一行；不要把 Mermaid/Markdown fenced block 原样作为正文，导图结构优先用导图工具，文档里需要呈现时改写成标题和列表；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
+      "7. 写入文档时传干净文本或 Markdown 标题即可，AIstudy 会自动套用统一排版模板。独立知识点之间必须空一行；不要把 Mermaid/Markdown fenced block 原样作为正文，导图结构优先用导图工具，文档里需要呈现时改写成标题和稳定编号大纲；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
       "8. 只做不改内容的样式清理时调用 `format_node_document`；只改全文字号/颜色/粗斜体时调用 `update_node_document_style`；不要为了排版调用 `write_node_document` 重写整篇文档。",
       "",
       "不要把 UI 面包屑当成本地路径。需要给其他 Codex/Claude Code 定位时，调用 `resolve_course_locator`。"
@@ -426,7 +426,7 @@ function createMcpResourceText(uri) {
       "",
       "传入 `text` 时使用干净文本或 Markdown 标题；系统会自动生成统一排版：章节标题蓝色加粗，条款标题蓝色加粗，正文为深色常规文本。",
       "",
-      "文档 text 使用结构化纯文本：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 这类字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。不要把 Mermaid/Markdown fenced block 当正文；导图结构应写入导图工具，文档内只保留结构化标题和列表。",
+      "文档 text 使用结构化纯文本：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 这类字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。不要把 Mermaid/Markdown fenced block 当正文；导图结构应写入导图工具，文档内只保留结构化标题和稳定编号大纲。",
       "",
       "数学表达优先使用规范符号和可读公式文本：例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。避免把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入；AIstudy 会尽量自动规范化，但调用方仍应输出干净内容。",
       "",
@@ -475,7 +475,7 @@ function createMcpPrompt(name, args = {}) {
     aistudy_start: "你已经接入 AIstudy MCP。请先调用 mcp_get_started，再按返回的 nextSteps 做只读探测，不要进行编辑。",
     aistudy_read_knowledge: `请用 AIstudy MCP 读取知识库内容。目标：${target || "由用户当前问题决定"}。先 mcp_get_started，再 mcp_resolve_target，不要猜 courseId 或 nodeId。`,
     aistudy_edit_mindmap: `请用 AIstudy MCP 编辑思维导图。需求：${intent || "未提供"}。先 mcp_plan_task，再 mcp_resolve_target，确认 AISTUDY_MCP_ALLOW_EDIT=1 后只调用必要的编辑工具。`,
-    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；text 按“标题、短步骤标题、目标/数据来源/推荐 Action 字段标签、编号或项目列表、简洁正文”组织，独立知识点之间空一行，不要用额外空行制造间距；不要把 Mermaid/Markdown fenced block 原样写进文档，导图结构优先用导图工具，文档里只保留结构化标题和列表；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本。整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
+    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；text 按“标题、短步骤标题、目标/数据来源/推荐 Action 字段标签、编号或项目列表、简洁正文”组织，独立知识点之间空一行，不要用额外空行制造间距；不要把 Mermaid/Markdown fenced block 原样写进文档，导图结构优先用导图工具，文档里只保留结构化标题和稳定编号大纲；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本。整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
   };
   const text = textByName[name];
   if (!text) throw new Error("Unknown MCP prompt.");
@@ -2229,14 +2229,23 @@ function stripMermaidMindMapNodeSyntax(value) {
 
 function createMermaidMindMapElements(lines) {
   const items = [];
+  const counters = [];
+  let baseIndent = null;
+  let lastDepth = 0;
   for (const rawLine of lines) {
     const source = String(rawLine || "").replace(/\t/g, "  ");
     if (!source.trim() || /^\s*mindmap\s*$/i.test(source)) continue;
     const indent = source.match(/^\s*/)?.[0].length ?? 0;
-    const depth = Math.max(0, Math.floor(indent / 2));
     const title = stripMermaidMindMapNodeSyntax(source);
     if (!title) continue;
-    items.push(`${"  ".repeat(depth)}- ${title}`);
+    if (baseIndent === null) baseIndent = indent;
+    const rawDepth = Math.max(0, Math.floor((indent - baseIndent) / 2));
+    const depth = items.length === 0 ? 0 : Math.min(rawDepth, lastDepth + 1);
+    while (counters.length <= depth) counters.push(0);
+    counters.length = depth + 1;
+    counters[depth] += 1;
+    lastDepth = depth;
+    items.push(`${counters.join(".")}. ${title}`);
   }
   if (items.length === 0) return [];
   return [

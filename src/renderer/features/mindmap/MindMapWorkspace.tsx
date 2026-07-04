@@ -29,14 +29,12 @@ import { isImeComposingEvent } from "../../lib/ime";
 import {
   buildMindMapOutline,
   countNodes,
-  createMindMapSummaryNode,
   createInitialSnapshot,
   createMindMapStructureSignature,
   getMindMapSummarySnapshot,
   isMindMapSummaryNode,
   MIND_MAP_CATALOG_BOUNDARY_KEY,
   MIND_MAP_LAYOUT_OPTIONS,
-  MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY,
   MIND_MAP_SUMMARY_SNAPSHOT_KEY,
   normalizeLayout,
   normalizeSnapshot,
@@ -376,36 +374,6 @@ function findNodeInTree(root: SimpleMindMapNode | null | undefined, nodeId: stri
   return null;
 }
 
-function findNodePathInTree(
-  root: SimpleMindMapNode | null | undefined,
-  nodeId: string | null,
-  path: SimpleMindMapNode[] = []
-): SimpleMindMapNode[] {
-  if (!root) return [];
-  const nextPath = [...path, root];
-  if (!nodeId || getNodeId(root) === nodeId) return nextPath;
-  const children = Array.isArray(root.children) ? root.children : [];
-  for (const child of children) {
-    const found = findNodePathInTree(child, nodeId, nextPath);
-    if (found.length > 0 && getNodeId(found[found.length - 1]) === nodeId) return found;
-  }
-  return [];
-}
-
-function countTopicChildren(node: SimpleMindMapNode | null | undefined) {
-  const children = Array.isArray(node?.children) ? node.children : [];
-  return children.filter((child) => !isMindMapSummaryNode(child)).length;
-}
-
-function findNearestSummaryAnchor(root: SimpleMindMapNode, selectedNodeId: string | null) {
-  const path = findNodePathInTree(root, selectedNodeId);
-  const candidates = path.length > 0 ? path : [root];
-  for (let index = candidates.length - 1; index >= 0; index -= 1) {
-    if (countTopicChildren(candidates[index]) > 1) return candidates[index];
-  }
-  return candidates[candidates.length - 1] ?? root;
-}
-
 function cloneSummarySnapshotForNode(summaryNode: SimpleMindMapNode): MindMapSnapshot | null {
   const snapshot = getMindMapSummarySnapshot(summaryNode);
   if (!snapshot) return null;
@@ -598,63 +566,6 @@ function replaceSummarySnapshotInTree(
       children
     },
     replaced
-  };
-}
-
-function upsertSummaryNodeForAnchor(
-  root: SimpleMindMapNode,
-  anchorNodeId: string
-): { root: SimpleMindMapNode; summaryNodeId: string | null; changed: boolean } {
-  if (getNodeId(root) === anchorNodeId) {
-    const children = Array.isArray(root.children) ? root.children : [];
-    const existingSummary = children.find((child) =>
-      isMindMapSummaryNode(child) && child.data[MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY] === anchorNodeId
-    );
-    const summaryNode = existingSummary ?? createMindMapSummaryNode(root);
-    const summaryNodeId = getNodeId(summaryNode);
-    const nonSummaryChildren = children.filter((child) => getNodeId(child) !== summaryNodeId);
-    const nextChildren = [summaryNode, ...nonSummaryChildren];
-    const changed =
-      !existingSummary ||
-      children.length !== nextChildren.length ||
-      children.some((child, index) => getNodeId(child) !== getNodeId(nextChildren[index]));
-
-    return {
-      root: {
-        ...root,
-        data: {
-          ...root.data
-        },
-        children: nextChildren
-      },
-      summaryNodeId,
-      changed
-    };
-  }
-
-  let summaryNodeId: string | null = null;
-  let changed = false;
-  const children = Array.isArray(root.children)
-    ? root.children.map((child) => {
-        const result = upsertSummaryNodeForAnchor(child, anchorNodeId);
-        if (result.summaryNodeId) {
-          summaryNodeId = result.summaryNodeId;
-          changed = changed || result.changed;
-        }
-        return result.root;
-      })
-    : [];
-
-  return {
-    root: {
-      ...root,
-      data: {
-        ...root.data
-      },
-      children
-    },
-    summaryNodeId,
-    changed
   };
 }
 
@@ -1407,54 +1318,13 @@ export function MindMapWorkspace({
     return result;
   }, [courseId, mapId, selectedNode.id]);
 
-  const createIndependentSummary = React.useCallback(async () => {
-    if (!courseId || !canUseEditor) return;
-    const currentCanvasSnapshot = canvasRef.current?.getSnapshot();
-    const currentMasterSnapshot = currentCanvasSnapshot
-      ? mergeFocusedSnapshot(snapshotRef.current, focusedNodeId, currentCanvasSnapshot)
-      : snapshotRef.current;
-    if (!currentMasterSnapshot) return;
-
-    const selectedId = selectedNodeRef.current.id ?? focusedNodeId ?? getNodeId(currentMasterSnapshot.root);
-    const anchorNode = findNearestSummaryAnchor(currentMasterSnapshot.root, selectedId);
-    const anchorNodeId = getNodeId(anchorNode);
-    if (!anchorNodeId) return;
-
-    const result = upsertSummaryNodeForAnchor(currentMasterSnapshot.root, anchorNodeId);
-    if (!result.summaryNodeId) return;
-
-    const nextSnapshot: MindMapSnapshot = {
-      ...currentMasterSnapshot,
-      root: result.root,
-      view: undefined,
-      updatedAt: new Date().toISOString()
-    };
-    const nextMapId = mapId ?? createMindMapId();
-    if (!mapId) {
-      setMapId(nextMapId);
-    }
-
-    commitSnapshotForUi(nextSnapshot, true);
-    setFocusedNodeId(result.summaryNodeId);
-    publishSelectedNode({ id: result.summaryNodeId, title: "摘要" });
+  const createIndependentSummary = React.useCallback(() => {
+    if (!courseId || !canUseEditor || !selectedNodeRef.current.id) return;
     setTextFormatMenu(null);
     setTopicPanel(null);
     setError("");
-
-    const summarySnapshot = createFocusedSnapshot(nextSnapshot, result.summaryNodeId);
-    canvasRef.current?.setSnapshot(summarySnapshot);
-    canvasRef.current?.selectNode(result.summaryNodeId);
-
-    if (result.changed) {
-      pendingSaveRef.current = {
-        courseId,
-        mapId: nextMapId,
-        title: courseName,
-        snapshot: nextSnapshot
-      };
-      await flushPendingSave(false);
-    }
-  }, [canUseEditor, commitSnapshotForUi, courseId, courseName, flushPendingSave, focusedNodeId, mapId, publishSelectedNode]);
+    canvasRef.current?.exec("add-summary");
+  }, [canUseEditor, courseId]);
 
   const selectDocumentNode = React.useCallback(
     (nodeId: string) => {
@@ -1536,6 +1406,10 @@ export function MindMapWorkspace({
         </button>
         <button type="button" title={topicElements.expanded ? "折叠主题" : "展开主题"} onClick={() => canvasRef.current?.exec("toggle-expand")} disabled={topicElementDisabled}>
           <Rows3 size={15} />
+        </button>
+        <button type="button" title="摘要" aria-label="摘要" onClick={createIndependentSummary} disabled={topicElementDisabled}>
+          <GitBranch size={15} />
+          <span>摘要</span>
         </button>
         <button type="button" title="删除选中主题" onClick={() => selectedNode.id && void deleteMindMapBranch(selectedNode.id)} disabled={!canUseEditor || !selectedNode.id}>
           <Trash2 size={15} />
@@ -1867,8 +1741,7 @@ function MindMapFormatPanel({
         </div>
         <div className="mindmap-format-actions">
           <button type="button" disabled={nodeDisabled} onClick={() => onRunCommand("add-boundary")}>边界</button>
-          <button type="button" disabled={nodeDisabled} onClick={() => onRunCommand("add-summary")}>概要</button>
-          <button type="button" disabled={nodeDisabled} onClick={() => void onCreateIndependentSummary()}>独立摘要</button>
+          <button type="button" disabled={nodeDisabled} onClick={() => void onCreateIndependentSummary()}>摘要</button>
         </div>
       </section>
 

@@ -101,7 +101,7 @@ MCP 现在按独立模块管理，主进程不再直接维护 MCP 工具状态�
 - `format_node_document`
 - `update_node_document_style`
 
-节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；内容应拆成一级标题、短步骤标题、字段标签、编号/项目列表和简洁正文；独立知识点之间必须空一行但不得用额外空行制造视觉间距；不得把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和列表；数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`，不得把 `epsilon`、`infinity`、`->` 这类退化文本作为最终内容。
+节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；内容应拆成一级标题、短步骤标题、字段标签、编号/项目列表和简洁正文；独立知识点之间必须空一行但不得用额外空行制造视觉间距；不得把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符；数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`，不得把 `epsilon`、`infinity`、`->` 这类退化文本作为最终内容。
 
 定位与交接：
 
