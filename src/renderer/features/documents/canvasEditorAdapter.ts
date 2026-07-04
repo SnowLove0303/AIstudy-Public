@@ -676,7 +676,13 @@ function toCanvasInlineElements(elements: KnowledgeDocumentInlineElement[]): IEl
       const value = toElementText(element.value);
       if (!value) return null;
       const type = element.type && element.type !== "text" ? element.type : undefined;
-      return { value, ...(type ? { type } : {}) } as IElement;
+      return {
+        value,
+        ...(type ? { type } : {}),
+        ...(Number.isFinite(Number(element.size)) ? { size: Number(element.size) } : {}),
+        ...(element.bold ? { bold: true } : {}),
+        ...(element.color ? { color: element.color } : {})
+      } as IElement;
     })
     .filter((element): element is IElement => Boolean(element));
 }
@@ -962,7 +968,7 @@ export async function createCanvasDocumentEditor(
   };
   const updateEmbeddedMindMapElement = (blockId: string, input: EmbeddedMindMapData, height?: number) => {
     const data = normalizeEmbeddedMindMapData(input);
-    const nextHeight = Number.isFinite(height) ? Math.max(220, Math.min(540, Math.round(Number(height)))) : getEmbeddedMindMapHeight(data);
+    const nextHeight = Number.isFinite(height) ? Math.max(220, Math.min(780, Math.round(Number(height)))) : getEmbeddedMindMapHeight(data);
     const properties = {
       value: "",
       block: {

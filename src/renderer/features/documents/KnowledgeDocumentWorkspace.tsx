@@ -34,7 +34,7 @@ import {
   X
 } from "lucide-react";
 import { createCanvasDocumentEditor, createEmptyKnowledgeDocumentSnapshot } from "./canvasEditorAdapter";
-import { parseEmbeddedMindMapText } from "./documentEmbeddedMindMap";
+import { createMindMapOutlineElements, parseEmbeddedMindMapText } from "./documentEmbeddedMindMap";
 import { AiAssistantPanel } from "../assistant/AiAssistantPanel";
 import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
@@ -1481,7 +1481,7 @@ export function KnowledgeDocumentWorkspace({
     setIsInsertingMindMap(true);
     setError("");
     try {
-      editorRef.current?.insertEmbeddedMindMap(parseEmbeddedMindMapText(selectedText));
+      editorRef.current?.insertInlineElements(createMindMapOutlineElements(parseEmbeddedMindMapText(selectedText)));
       documentDirtyRef.current = true;
       editorRef.current?.focus();
       void saveNow();

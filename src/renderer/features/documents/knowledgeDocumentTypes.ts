@@ -67,6 +67,9 @@ export type KnowledgeDocumentColumnLayout = 1 | KnowledgeDocumentColumnCount;
 export type KnowledgeDocumentInlineElement = {
   value: string;
   type?: "text" | "superscript" | "subscript";
+  size?: number;
+  bold?: boolean;
+  color?: string;
 };
 
 export type KnowledgeDocumentImageInput = {

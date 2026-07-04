@@ -46,10 +46,10 @@ function stripTreeDecorations(value: string) {
 
 function readLineDepth(value: string) {
   const source = value.replace(/\t/g, "    ");
-  const prefix = source.match(/^[\s│|]*/)?.[0] ?? "";
-  const barDepth = (prefix.match(/[│|]/g) || []).length;
-  const spaceDepth = Math.floor(prefix.replace(/[│|]/g, "").length / 3);
-  const treeDepth = /^[\s│|]*[├└]/.test(source) ? 1 : 0;
+  const prefix = source.match(/^[\s│]*/)?.[0] ?? "";
+  const barDepth = (prefix.match(/[│]/g) || []).length;
+  const spaceDepth = Math.floor(prefix.replace(/[│]/g, "").length / 3);
+  const treeDepth = /^[\s│]*[├└]/.test(source) ? 1 : 0;
   return Math.max(treeDepth, barDepth + spaceDepth);
 }
 
@@ -109,6 +109,26 @@ export function parseEmbeddedMindMapText(source: string): EmbeddedMindMapData {
   });
 }
 
+export function createMindMapOutlineElements(input: EmbeddedMindMapData) {
+  const data = normalizeEmbeddedMindMapData(input);
+  const elements: Array<{ value: string; size?: number; bold?: boolean; color?: string }> = [
+    { value: `${data.root}\n`, size: 16, bold: true, color: "#2563eb" }
+  ];
+
+  data.groups.forEach((group) => {
+    const groupHasSameTitleAsRoot = group.title === data.root;
+    if (!groupHasSameTitleAsRoot) {
+      elements.push({ value: `  ${group.title}\n`, size: 15, bold: true, color: "#2563eb" });
+    }
+    group.children.forEach((child) => {
+      elements.push({ value: `    • ${child.title}\n`, size: 14, color: "#172033" });
+    });
+  });
+
+  elements.push({ value: "\n" });
+  return elements;
+}
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char] ?? char);
 }
@@ -118,8 +138,9 @@ function escapeScriptJson(value: unknown) {
 }
 
 export function getEmbeddedMindMapHeight(data: EmbeddedMindMapData) {
-  const maxChildren = data.groups.reduce((max, group) => Math.max(max, group.children.length), 1);
-  return Math.max(260, Math.min(520, 112 + data.groups.length * 56 + maxChildren * 12));
+  const normalized = normalizeEmbeddedMindMapData(data);
+  const wrappedChildRows = normalized.groups.reduce((total, group) => total + Math.max(1, Math.ceil(group.children.length / 4)), 0);
+  return Math.max(240, Math.min(760, 110 + normalized.groups.length * 58 + wrappedChildRows * 22));
 }
 
 export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMindMapData) {
@@ -130,7 +151,6 @@ export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMind
         <section class="group" data-group-id="${escapeHtml(group.id)}">
           <div class="group-title" contenteditable="true" spellcheck="false">${escapeHtml(group.title)}</div>
           <button class="icon remove-group" type="button" title="删除分支">×</button>
-          <div class="brace"></div>
           <div class="children">
             ${group.children
               .map(
@@ -142,7 +162,7 @@ export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMind
                 `
               )
               .join("")}
-            <button class="add-child" type="button" title="添加节点">＋</button>
+            <button class="add-child" type="button" title="添加节点">+</button>
           </div>
         </section>
       `
@@ -154,33 +174,39 @@ export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMind
 <head>
 <meta charset="utf-8" />
 <style>
-  *{box-sizing:border-box} body{margin:0;background:#fff;color:#172033;font-family:"Microsoft YaHei",Arial,sans-serif;font-size:14px;overflow:hidden}
-  .map{min-height:100vh;padding:18px 20px;display:flex;align-items:center;gap:28px}
-  .root{min-width:118px;max-width:150px;padding:11px 16px;border-radius:8px;background:#2563eb;color:#fff;text-align:center;font-size:18px;font-weight:700;outline:none}
-  .trunk{width:42px;height:2px;background:#2563eb;flex:0 0 auto}
-  .groups{display:flex;flex-direction:column;gap:12px;min-width:420px}
-  .group{display:grid;grid-template-columns:148px 22px 28px 1fr;align-items:center;gap:10px;min-height:44px}
-  .group-title{padding:7px 12px;border:1px solid #93c5fd;background:#eff6ff;border-radius:8px;text-align:center;font-weight:700;outline:none}
-  .brace{height:100%;min-height:42px;border:2px solid #2563eb;border-left:0;border-radius:0 12px 12px 0}
-  .children{display:flex;flex-direction:column;gap:6px}
-  .child{display:flex;align-items:center;gap:6px;min-height:22px}
-  .child:before{content:"";width:7px;height:7px;border-radius:50%;background:#60a5fa;flex:0 0 auto}
-  .child span{min-width:80px;max-width:260px;padding:2px 4px;outline:none;border-radius:4px}
+  *{box-sizing:border-box}
+  body{margin:0;background:transparent;color:#172033;font-family:"Microsoft YaHei",Arial,sans-serif;font-size:14px;overflow:hidden}
+  .map{width:100%;padding:18px 24px 22px;display:grid;grid-template-columns:112px 56px minmax(0,1fr);align-items:start}
+  .root{grid-column:1;justify-self:end;margin-top:4px;min-width:96px;max-width:112px;padding:10px 14px;border-radius:9px;background:#2563eb;color:#fff;text-align:center;font-size:18px;font-weight:700;line-height:1.25;outline:none;box-shadow:0 8px 18px rgba(37,99,235,.14)}
+  .spine{grid-column:2;position:relative;align-self:stretch;min-height:120px}
+  .spine:before{content:"";position:absolute;left:0;right:8px;top:24px;height:2px;background:#2563eb}
+  .spine:after{content:"";position:absolute;right:8px;top:24px;bottom:24px;width:2px;background:#2563eb;border-radius:999px}
+  .groups{grid-column:3;display:flex;flex-direction:column;gap:14px;min-width:0}
+  .group{position:relative;display:grid;grid-template-columns:126px minmax(0,1fr);align-items:start;gap:18px;min-height:42px}
+  .group:before{content:"";position:absolute;left:-48px;top:21px;width:48px;height:2px;background:#2563eb}
+  .group-title{min-width:106px;padding:7px 12px;border:1px solid #93c5fd;background:#eff6ff;border-radius:8px;text-align:center;font-weight:700;line-height:1.35;outline:none;box-shadow:0 2px 8px rgba(37,99,235,.08)}
+  .children{position:relative;display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;min-width:0;padding-top:2px}
+  .children:before{content:"";position:absolute;left:-18px;top:20px;width:18px;height:2px;background:#93c5fd}
+  .child{display:flex;align-items:center;gap:4px;min-height:28px;padding:3px 8px;border:1px solid #bfdbfe;background:#fff;border-radius:999px;box-shadow:0 2px 7px rgba(15,23,42,.04)}
+  .child:before{content:"";width:6px;height:6px;border-radius:50%;background:#60a5fa;flex:0 0 auto}
+  .child span{max-width:160px;line-height:1.35;outline:none;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   [contenteditable="true"]:focus{box-shadow:0 0 0 2px rgba(37,99,235,.16);background:#fff}
   button{border:0;background:transparent;color:#64748b;cursor:pointer;font:inherit}
-  .icon{width:22px;height:22px;border-radius:5px}
+  .icon,.add-child,.add-group{opacity:0;transition:opacity .12s ease,background .12s ease,color .12s ease}
+  .group:hover .icon,.group:focus-within .icon,.group:hover .add-child,.group:focus-within .add-child,.map:hover .add-group,.map:focus-within .add-group{opacity:1}
+  .icon{width:18px;height:18px;border-radius:999px;line-height:18px;padding:0}
   .icon:hover,.add-child:hover,.add-group:hover{background:#e0ecff;color:#2563eb}
-  .add-child{align-self:flex-start;padding:1px 8px;border-radius:5px}
-  .add-group{margin-left:calc(118px + 42px + 28px);padding:4px 10px;border-radius:6px;background:#f8fafc}
+  .add-child{width:26px;height:26px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb}
+  .add-group{margin-top:10px;margin-left:2px;padding:4px 10px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb;background:#fff}
 </style>
 </head>
 <body>
   <main class="map">
     <div class="root" contenteditable="true" spellcheck="false">${escapeHtml(data.root)}</div>
-    <div class="trunk"></div>
+    <div class="spine"></div>
     <div>
       <div class="groups">${groupHtml}</div>
-      <button class="add-group" type="button" title="添加分支">＋</button>
+      <button class="add-group" type="button" title="添加分支">+</button>
     </div>
   </main>
 <script>
@@ -208,7 +234,7 @@ function collect(){
 }
 function notify(){
   const next = collect();
-  parent.postMessage({ source, blockId, data: next, height: Math.max(260, Math.min(520, document.documentElement.scrollHeight + 12)) }, "*");
+  parent.postMessage({ source, blockId, data: next, height: Math.max(240, Math.min(780, document.documentElement.scrollHeight + 12)) }, "*");
 }
 document.addEventListener("blur", (event) => {
   if (event.target?.isContentEditable) notify();
@@ -244,7 +270,7 @@ document.addEventListener("click", (event) => {
     const wrapper = document.createElement("section");
     wrapper.className = "group";
     wrapper.dataset.groupId = createId("group");
-    wrapper.innerHTML = '<div class="group-title" contenteditable="true" spellcheck="false">分支</div><button class="icon remove-group" type="button" title="删除分支">×</button><div class="brace"></div><div class="children"><div class="child" data-child-id="' + createId("node") + '"><span contenteditable="true" spellcheck="false">节点</span><button class="icon remove-child" type="button" title="删除节点">×</button></div><button class="add-child" type="button" title="添加节点">＋</button></div>';
+    wrapper.innerHTML = '<div class="group-title" contenteditable="true" spellcheck="false">分支</div><button class="icon remove-group" type="button" title="删除分支">×</button><div class="children"><div class="child" data-child-id="' + createId("node") + '"><span contenteditable="true" spellcheck="false">节点</span><button class="icon remove-child" type="button" title="删除节点">×</button></div><button class="add-child" type="button" title="添加节点">+</button></div>';
     document.querySelector(".groups").append(wrapper);
     wrapper.querySelector(".group-title").focus();
     notify();
