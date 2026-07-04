@@ -125,6 +125,14 @@ if (!main.includes("ensureChromePortProfileDir") || !main.includes("AIstudyPubli
   fail("Chrome port profiles must use the stable public clean runtime root and migrate legacy exe-adjacent profiles");
 }
 
+if (
+  !main.includes("repairCourseIndexFromCache")
+  || !main.includes("Course database returned an empty course index while local courses exist")
+  || !main.includes("SELECT COUNT(*) AS liveCount")
+) {
+  fail("course database reads must guard against stale cache overwrites and recover missing course indexes");
+}
+
 const mcpServer = read("scripts/mcp/aistudy-mcp-server.mjs");
 if (!mcpServer.includes("AIstudyPublicCleanData") || !mcpServer.includes("xiaohongshu")) {
   fail("external MCP chrome ports must share the stable runtime root and full platform list");

@@ -374,6 +374,11 @@ type CourseRow = RowDataPacket & {
   updatedAt: Date | string;
 };
 
+type CourseDeletedStateRow = RowDataPacket & {
+  id: string;
+  deletedAt: Date | string | null;
+};
+
 type CourseSectionRow = RowDataPacket & {
   id: string;
   name: string;
@@ -381,6 +386,14 @@ type CourseSectionRow = RowDataPacket & {
   collapsed: number;
   createdAt: Date | string;
   updatedAt: Date | string;
+};
+
+type MindMapCourseIdRow = RowDataPacket & {
+  courseId: string;
+};
+
+type CourseCountRow = RowDataPacket & {
+  liveCount: number | string;
 };
 
 type MysqlRuntime = ExamMysqlRuntime & TextbookMysqlRuntime & {
@@ -5410,6 +5423,15 @@ async function canUseCourseMysqlRuntime() {
   try {
     const runtime = await getMysqlRuntime();
     await runtime.pool.query("SELECT 1");
+    const cache = await readLocalCourseStore();
+    if (cache.courses.length > 0) {
+      const [rows] = await runtime.pool.execute<CourseCountRow[]>(
+        `SELECT COUNT(*) AS liveCount FROM ${runtime.courseTable} WHERE deleted_at IS NULL`
+      );
+      if (Number(rows[0]?.liveCount ?? 0) === 0) {
+        return false;
+      }
+    }
     return true;
   } catch {
     return false;
@@ -6339,6 +6361,7 @@ async function getUpdateManagerInfo(): Promise<UpdateManagerInfo> {
 async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore> {
   const runtime = await getMysqlRuntime();
   await replayPendingCourseOperations(runtime);
+  await repairCourseIndexFromCache(runtime, cache);
   const { pool, courseTable, courseSectionTable } = runtime;
   const [sectionRows] = await pool.execute<CourseSectionRow[]>(
     `SELECT id, name, sort_order AS sortOrder, collapsed, created_at AS createdAt, updated_at AS updatedAt
@@ -6353,6 +6376,9 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
      WHERE deleted_at IS NULL
      ORDER BY COALESCE(section_id, ''), sort_order ASC, updated_at DESC`
   );
+  if (rows.length === 0 && cache.courses.length > 0) {
+    throw new Error("Course database returned an empty course index while local courses exist.");
+  }
   const sections = sectionRows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -6376,6 +6402,98 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
     ? cache.activeCourseId
     : courses[0]?.id ?? null;
   return normalizeCourseStore({ sections, courses, activeCourseId });
+}
+
+async function repairCourseIndexFromCache(runtime: MysqlRuntime, cache: CourseStore) {
+  const normalized = normalizeCourseStore(cache);
+  if (normalized.courses.length === 0) return;
+
+  const cachedCourseById = new Map(normalized.courses.map((course) => [course.id, course]));
+  const candidateIds = [...cachedCourseById.keys()];
+  const placeholders = candidateIds.map(() => "?").join(", ");
+  const [mapRows] = await runtime.pool.execute<MindMapCourseIdRow[]>(
+    `SELECT DISTINCT course_id AS courseId
+     FROM ${runtime.mindMapTable}
+     WHERE deleted_at IS NULL AND course_id IN (${placeholders})`,
+    candidateIds
+  );
+  if (mapRows.length === 0) return;
+
+  const courseIdsWithMindMap = new Set(mapRows.map((row) => row.courseId));
+  const [existingRows] = await runtime.pool.execute<CourseDeletedStateRow[]>(
+    `SELECT id, deleted_at AS deletedAt
+     FROM ${runtime.courseTable}
+     WHERE id IN (${placeholders})`,
+    candidateIds
+  );
+  const existingById = new Map(existingRows.map((row) => [row.id, row]));
+  const recoverableCourses = normalized.courses.filter((course) => {
+    if (!courseIdsWithMindMap.has(course.id)) return false;
+    const existing = existingById.get(course.id);
+    if (!existing) return true;
+    if (!existing.deletedAt) return false;
+    return new Date(course.updatedAt).getTime() >= new Date(existing.deletedAt).getTime();
+  });
+  if (recoverableCourses.length === 0) return;
+
+  const requestedSectionIds = new Set(recoverableCourses.map((course) => course.sectionId).filter((id): id is string => Boolean(id)));
+  const recoverableSections = normalized.sections.filter((section) => requestedSectionIds.has(section.id));
+  const recoverableSectionIds = new Set(recoverableSections.map((section) => section.id));
+  const connection = await runtime.pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    for (const section of recoverableSections) {
+      await connection.execute(
+        `INSERT INTO ${runtime.courseSectionTable} (id, name, sort_order, collapsed, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           sort_order = VALUES(sort_order),
+           collapsed = VALUES(collapsed),
+           updated_at = VALUES(updated_at),
+           deleted_at = NULL`,
+        [
+          section.id,
+          section.name,
+          section.sortOrder,
+          section.collapsed ? 1 : 0,
+          toMysqlDate(section.createdAt),
+          toMysqlDate(section.updatedAt)
+        ]
+      );
+    }
+    for (const course of recoverableCourses) {
+      const sectionId = course.sectionId && recoverableSectionIds.has(course.sectionId) ? course.sectionId : null;
+      await connection.execute(
+        `INSERT INTO ${runtime.courseTable} (id, name, description, section_id, last_workspace_mode, sort_order, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           description = VALUES(description),
+           section_id = VALUES(section_id),
+           last_workspace_mode = VALUES(last_workspace_mode),
+           sort_order = VALUES(sort_order),
+           updated_at = VALUES(updated_at),
+           deleted_at = NULL`,
+        [
+          course.id,
+          course.name,
+          course.description,
+          sectionId,
+          course.lastWorkspaceMode,
+          course.sortOrder,
+          toMysqlDate(course.createdAt),
+          toMysqlDate(course.updatedAt)
+        ]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 async function writeCourseStoreToMysql(store: CourseStore): Promise<CourseStore> {
