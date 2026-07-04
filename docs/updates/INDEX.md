@@ -4,14 +4,22 @@
 
 ## 最新版本
 
-- 版本号：0.1.89
-- 更新时间：2026-07-04 20:34:28
+- 版本号：0.1.90
+- 更新时间：2026-07-04 21:13:18
 - 功能更新：一键打包生成安装包
 - GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
 - 分支：main
-- 提交：2f18a64
+- 提交：fe4efa5
 
 ## 更新记录
+
+### 0.1.90 - 2026-07-04 21:13:18
+
+- 一键打包生成安装包
+- GitHub：https://github.com/SnowLove0303/AIstudy-Public.git
+- 分支：main
+- 提交：fe4efa5
+
 
 ### 0.1.89 - 2026-07-04 20:34:28
 

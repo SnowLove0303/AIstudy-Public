@@ -34,7 +34,7 @@ import {
   X
 } from "lucide-react";
 import { createCanvasDocumentEditor, createEmptyKnowledgeDocumentSnapshot } from "./canvasEditorAdapter";
-import { parseEmbeddedMindMapText } from "./documentEmbeddedMindMap";
+import { createBlankEmbeddedMindMapData } from "./documentEmbeddedMindMap";
 import { AiAssistantPanel } from "../assistant/AiAssistantPanel";
 import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
@@ -1473,15 +1473,10 @@ export function KnowledgeDocumentWorkspace({
 
   const insertDiagram = React.useCallback(async () => {
     if (!documentBinding || isInsertingMindMap) return;
-    const selectedText = readSelectedText().trim();
-    if (!selectedText) {
-      setError("请先选中层级文本");
-      return;
-    }
     setIsInsertingMindMap(true);
     setError("");
     try {
-      editorRef.current?.insertEmbeddedMindMap(parseEmbeddedMindMapText(selectedText));
+      editorRef.current?.insertEmbeddedMindMap(createBlankEmbeddedMindMapData());
       documentDirtyRef.current = true;
       editorRef.current?.focus();
       void saveNow();
@@ -1490,7 +1485,7 @@ export function KnowledgeDocumentWorkspace({
     } finally {
       setIsInsertingMindMap(false);
     }
-  }, [documentBinding, isInsertingMindMap, readSelectedText, saveNow]);
+  }, [documentBinding, isInsertingMindMap, saveNow]);
 
   const openAssistantPanel = React.useCallback((point: { x: number; y: number }, text?: string) => {
     const selectedText = text?.trim() || readSelectedText().trim() || lastSelectedTextRef.current;

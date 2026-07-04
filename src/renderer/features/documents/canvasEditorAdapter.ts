@@ -964,9 +964,10 @@ export async function createCanvasDocumentEditor(
       aistudyMindMapData: data
     } as IElement;
   };
+  const createLineBreakElement = (): IElement => ({ value: "\n" } as IElement);
   const updateEmbeddedMindMapElement = (blockId: string, input: EmbeddedMindMapData, height?: number) => {
     const data = normalizeEmbeddedMindMapData(input);
-    const nextHeight = Number.isFinite(height) ? Math.max(180, Math.min(1280, Math.round(Number(height)))) : getEmbeddedMindMapHeight(data);
+    const nextHeight = Number.isFinite(height) ? Math.max(120, Math.min(1600, Math.round(Number(height)))) : getEmbeddedMindMapHeight(data);
     const properties = {
       value: "",
       block: {
@@ -1817,7 +1818,7 @@ export async function createCanvasDocumentEditor(
       runFormatCommand(() => editor.command.executeInsertElementList([createImageElement(image)]));
     },
     insertEmbeddedMindMap: (data) => {
-      runFormatCommand(() => editor.command.executeInsertElementList([createEmbeddedMindMapElement(data)]));
+      runFormatCommand(() => editor.command.executeInsertElementList([createLineBreakElement(), createEmbeddedMindMapElement(data), createLineBreakElement()]));
     },
     cancelBlankListOnEnter,
     insertTable: (rows, cols) => {

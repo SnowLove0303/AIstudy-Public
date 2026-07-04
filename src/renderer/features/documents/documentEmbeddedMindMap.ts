@@ -22,6 +22,14 @@ const MAX_GROUPS = 12;
 const MAX_CHILDREN_PER_GROUP = 16;
 const MAX_LABEL_LENGTH = 42;
 
+export function createBlankEmbeddedMindMapData(root = "中心主题"): EmbeddedMindMapData {
+  return {
+    version: 1,
+    root: cleanLabel(root, "中心主题"),
+    groups: []
+  };
+}
+
 function createId(prefix: string) {
   const random = globalThis.crypto?.randomUUID?.().replaceAll("-", "").slice(0, 12) || Math.random().toString(36).slice(2, 14);
   return `${prefix}_${random}`;
@@ -69,8 +77,8 @@ export function normalizeEmbeddedMindMapData(value: unknown): EmbeddedMindMapDat
   });
   return {
     version: 1,
-    root: cleanLabel(source.root, "导图"),
-    groups: normalizedGroups.length > 0 ? normalizedGroups : [{ id: createId("group"), title: "分支", children: [{ id: createId("node"), title: "节点" }] }]
+    root: cleanLabel(source.root, "中心主题"),
+    groups: normalizedGroups
   };
 }
 
@@ -120,7 +128,7 @@ function escapeScriptJson(value: unknown) {
 export function getEmbeddedMindMapHeight(input: EmbeddedMindMapData) {
   const data = normalizeEmbeddedMindMapData(input);
   const childRows = data.groups.reduce((total, group) => total + Math.max(1, Math.ceil(group.children.length / 3)), 0);
-  return Math.max(180, Math.min(1280, 58 + data.groups.length * 42 + childRows * 34));
+  return Math.max(120, Math.min(1600, 72 + data.groups.length * 42 + childRows * 34));
 }
 
 export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMindMapData) {
@@ -179,11 +187,14 @@ export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMind
   .remove-group{position:absolute;left:100px;top:7px}
   .remove-child:hover,.remove-group:hover,.add-child:hover,.add-group:hover{background:#e0ecff;color:#2563eb}
   .add-child{width:26px;height:26px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb}
-  .add-group{margin-top:10px;padding:4px 10px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb;background:#fff}
+  .add-group{margin-top:3px;padding:4px 10px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb;background:#fff}
+  .is-empty .spine:after{display:none}
+  .is-empty .body{align-self:center}
+  .is-empty .add-group{opacity:.82;margin-top:5px}
 </style>
 </head>
 <body>
-  <main class="map">
+  <main class="map${data.groups.length === 0 ? " is-empty" : ""}">
     <div class="root" contenteditable="true" spellcheck="false">${escapeHtml(data.root)}</div>
     <div class="spine"></div>
     <div class="body">
@@ -200,7 +211,7 @@ const textOf = (element, fallback) => (element?.textContent || "").replace(/\\s+
 function collect(){
   data = {
     version: 1,
-    root: textOf(document.querySelector(".root"), "导图").slice(0, ${MAX_LABEL_LENGTH}),
+    root: textOf(document.querySelector(".root"), "中心主题").slice(0, ${MAX_LABEL_LENGTH}),
     groups: [...document.querySelectorAll(".group")].slice(0, ${MAX_GROUPS}).map((group, index) => ({
       id: group.dataset.groupId || createId("group"),
       title: textOf(group.querySelector(".branch"), "分支 " + (index + 1)).slice(0, ${MAX_LABEL_LENGTH}),
@@ -210,16 +221,19 @@ function collect(){
       }))
     }))
   };
-  if (!data.groups.length) data.groups.push({ id: createId("group"), title: "分支", children: [{ id: createId("node"), title: "节点" }] });
   data.groups.forEach(group => { if (!group.children.length) group.children.push({ id: createId("node"), title: "节点" }); });
   return data;
 }
 function notify(){
   const next = collect();
-  parent.postMessage({ source, blockId, data: next, height: Math.max(180, Math.min(1280, document.documentElement.scrollHeight + 8)) }, "*");
+  parent.postMessage({ source, blockId, data: next, height: Math.max(120, Math.min(1600, document.documentElement.scrollHeight + 8)) }, "*");
 }
+const notifySoon = () => requestAnimationFrame(notify);
 document.addEventListener("blur", (event) => {
   if (event.target?.isContentEditable) notify();
+}, true);
+document.addEventListener("input", (event) => {
+  if (event.target?.isContentEditable) notifySoon();
 }, true);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target?.isContentEditable) {
@@ -237,16 +251,17 @@ document.addEventListener("click", (event) => {
     child.innerHTML = '<span contenteditable="true" spellcheck="false">节点</span><button class="ghost remove-child" type="button" title="删除节点">×</button>';
     target.before(child);
     child.querySelector("span").focus();
-    notify();
+    notifySoon();
   }
   if (target.classList?.contains("remove-child") && group) {
     const children = group.querySelectorAll(".node");
     if (children.length > 1) target.closest(".node").remove();
-    notify();
+    notifySoon();
   }
   if (target.classList?.contains("remove-group")) {
-    if (document.querySelectorAll(".group").length > 1) group.remove();
-    notify();
+    group.remove();
+    document.querySelector(".map").classList.toggle("is-empty", document.querySelectorAll(".group").length === 0);
+    notifySoon();
   }
   if (target.classList?.contains("add-group")) {
     const wrapper = document.createElement("section");
@@ -254,8 +269,9 @@ document.addEventListener("click", (event) => {
     wrapper.dataset.groupId = createId("group");
     wrapper.innerHTML = '<div class="branch" contenteditable="true" spellcheck="false">分支</div><button class="ghost remove-group" type="button" title="删除分支">×</button><div class="children"><div class="node" data-child-id="' + createId("node") + '"><span contenteditable="true" spellcheck="false">节点</span><button class="ghost remove-child" type="button" title="删除节点">×</button></div><button class="ghost add-child" type="button" title="添加节点">+</button></div>';
     document.querySelector(".groups").append(wrapper);
+    document.querySelector(".map").classList.remove("is-empty");
     wrapper.querySelector(".branch").focus();
-    notify();
+    notifySoon();
   }
 });
 </script>
