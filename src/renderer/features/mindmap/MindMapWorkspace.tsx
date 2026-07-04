@@ -29,10 +29,14 @@ import { isImeComposingEvent } from "../../lib/ime";
 import {
   buildMindMapOutline,
   countNodes,
+  createMindMapSummaryNode,
   createInitialSnapshot,
   createMindMapStructureSignature,
+  getMindMapSummarySnapshot,
+  isMindMapSummaryNode,
   MIND_MAP_CATALOG_BOUNDARY_KEY,
   MIND_MAP_LAYOUT_OPTIONS,
+  MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY,
   normalizeLayout,
   normalizeSnapshot
 } from "./mindMapSnapshot";
@@ -370,6 +374,46 @@ function findNodeInTree(root: SimpleMindMapNode | null | undefined, nodeId: stri
   return null;
 }
 
+function findNodePathInTree(
+  root: SimpleMindMapNode | null | undefined,
+  nodeId: string | null,
+  path: SimpleMindMapNode[] = []
+): SimpleMindMapNode[] {
+  if (!root) return [];
+  const nextPath = [...path, root];
+  if (!nodeId || getNodeId(root) === nodeId) return nextPath;
+  const children = Array.isArray(root.children) ? root.children : [];
+  for (const child of children) {
+    const found = findNodePathInTree(child, nodeId, nextPath);
+    if (found.length > 0 && getNodeId(found[found.length - 1]) === nodeId) return found;
+  }
+  return [];
+}
+
+function countTopicChildren(node: SimpleMindMapNode | null | undefined) {
+  const children = Array.isArray(node?.children) ? node.children : [];
+  return children.filter((child) => !isMindMapSummaryNode(child)).length;
+}
+
+function findNearestSummaryAnchor(root: SimpleMindMapNode, selectedNodeId: string | null) {
+  const path = findNodePathInTree(root, selectedNodeId);
+  const candidates = path.length > 0 ? path : [root];
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    if (countTopicChildren(candidates[index]) > 1) return candidates[index];
+  }
+  return candidates[candidates.length - 1] ?? root;
+}
+
+function cloneSummarySnapshotForNode(summaryNode: SimpleMindMapNode): MindMapSnapshot | null {
+  const snapshot = getMindMapSummarySnapshot(summaryNode);
+  if (!snapshot) return null;
+  return {
+    ...snapshot,
+    root: cloneMindMapNode(snapshot.root),
+    view: undefined
+  };
+}
+
 function collectNodeIds(root: SimpleMindMapNode | null | undefined) {
   const ids: string[] = [];
   if (!root) return ids;
@@ -510,6 +554,108 @@ function replaceNodeInTree(
   };
 }
 
+function replaceSummarySnapshotInTree(
+  root: SimpleMindMapNode,
+  summaryNodeId: string,
+  summarySnapshot: MindMapSnapshot
+): { root: SimpleMindMapNode; replaced: boolean } {
+  if (getNodeId(root) === summaryNodeId && isMindMapSummaryNode(root)) {
+    return {
+      root: {
+        ...root,
+        data: {
+          ...root.data,
+          aistudySummarySnapshot: {
+            ...summarySnapshot,
+            root: cloneMindMapNode(summarySnapshot.root),
+            view: undefined,
+            updatedAt: new Date().toISOString()
+          }
+        },
+        children: Array.isArray(root.children) ? root.children : []
+      },
+      replaced: true
+    };
+  }
+
+  let replaced = false;
+  const children = Array.isArray(root.children)
+    ? root.children.map((child) => {
+        const result = replaceSummarySnapshotInTree(child, summaryNodeId, summarySnapshot);
+        replaced = replaced || result.replaced;
+        return result.root;
+      })
+    : [];
+
+  return {
+    root: {
+      ...root,
+      data: {
+        ...root.data
+      },
+      children
+    },
+    replaced
+  };
+}
+
+function upsertSummaryNodeForAnchor(
+  root: SimpleMindMapNode,
+  anchorNodeId: string
+): { root: SimpleMindMapNode; summaryNodeId: string | null; changed: boolean } {
+  if (getNodeId(root) === anchorNodeId) {
+    const children = Array.isArray(root.children) ? root.children : [];
+    const existingSummary = children.find((child) =>
+      isMindMapSummaryNode(child) && child.data[MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY] === anchorNodeId
+    );
+    const summaryNode = existingSummary ?? createMindMapSummaryNode(root);
+    const summaryNodeId = getNodeId(summaryNode);
+    const nonSummaryChildren = children.filter((child) => getNodeId(child) !== summaryNodeId);
+    const nextChildren = [summaryNode, ...nonSummaryChildren];
+    const changed =
+      !existingSummary ||
+      children.length !== nextChildren.length ||
+      children.some((child, index) => getNodeId(child) !== getNodeId(nextChildren[index]));
+
+    return {
+      root: {
+        ...root,
+        data: {
+          ...root.data
+        },
+        children: nextChildren
+      },
+      summaryNodeId,
+      changed
+    };
+  }
+
+  let summaryNodeId: string | null = null;
+  let changed = false;
+  const children = Array.isArray(root.children)
+    ? root.children.map((child) => {
+        const result = upsertSummaryNodeForAnchor(child, anchorNodeId);
+        if (result.summaryNodeId) {
+          summaryNodeId = result.summaryNodeId;
+          changed = changed || result.changed;
+        }
+        return result.root;
+      })
+    : [];
+
+  return {
+    root: {
+      ...root,
+      data: {
+        ...root.data
+      },
+      children
+    },
+    summaryNodeId,
+    changed
+  };
+}
+
 function createFocusedSnapshot(masterSnapshot: MindMapSnapshot, focusedNodeId: string | null): MindMapSnapshot {
   if (!focusedNodeId || getNodeId(masterSnapshot.root) === focusedNodeId) {
     return masterSnapshot;
@@ -518,6 +664,11 @@ function createFocusedSnapshot(masterSnapshot: MindMapSnapshot, focusedNodeId: s
   const focusedNode = findNodeInTree(masterSnapshot.root, focusedNodeId);
   if (!focusedNode) {
     return masterSnapshot;
+  }
+
+  const summarySnapshot = cloneSummarySnapshotForNode(focusedNode);
+  if (summarySnapshot) {
+    return summarySnapshot;
   }
 
   return {
@@ -542,6 +693,18 @@ function mergeFocusedSnapshot(
 
   if (getNodeId(masterSnapshot.root) === focusedNodeId) {
     return focusedSnapshot;
+  }
+
+  const focusedNode = findNodeInTree(masterSnapshot.root, focusedNodeId);
+  if (isMindMapSummaryNode(focusedNode)) {
+    const result = replaceSummarySnapshotInTree(masterSnapshot.root, focusedNodeId, focusedSnapshot);
+    if (!result.replaced) return null;
+    return {
+      ...masterSnapshot,
+      root: result.root,
+      view: undefined,
+      updatedAt: new Date().toISOString()
+    };
   }
 
   const result = replaceNodeInTree(masterSnapshot.root, focusedNodeId, focusedSnapshot.root);
@@ -1073,9 +1236,10 @@ export function MindMapWorkspace({
 
   const handleNodeSelected = React.useCallback(
     (node: MindMapSelectedNode) => {
-      publishSelectedNode(node);
+      const item = node.id ? findOutlineItem(outline, node.id) : null;
+      publishSelectedNode(item?.nodeKind === "summary" ? { ...node, title: item.title } : node);
     },
-    [publishSelectedNode]
+    [outline, publishSelectedNode]
   );
 
   React.useEffect(() => {
@@ -1235,6 +1399,55 @@ export function MindMapWorkspace({
     if (result.canceled || !result.assetId || !result.url) return null;
     return result;
   }, [courseId, mapId, selectedNode.id]);
+
+  const createIndependentSummary = React.useCallback(async () => {
+    if (!courseId || !canUseEditor) return;
+    const currentCanvasSnapshot = canvasRef.current?.getSnapshot();
+    const currentMasterSnapshot = currentCanvasSnapshot
+      ? mergeFocusedSnapshot(snapshotRef.current, focusedNodeId, currentCanvasSnapshot)
+      : snapshotRef.current;
+    if (!currentMasterSnapshot) return;
+
+    const selectedId = selectedNodeRef.current.id ?? focusedNodeId ?? getNodeId(currentMasterSnapshot.root);
+    const anchorNode = findNearestSummaryAnchor(currentMasterSnapshot.root, selectedId);
+    const anchorNodeId = getNodeId(anchorNode);
+    if (!anchorNodeId) return;
+
+    const result = upsertSummaryNodeForAnchor(currentMasterSnapshot.root, anchorNodeId);
+    if (!result.summaryNodeId) return;
+
+    const nextSnapshot: MindMapSnapshot = {
+      ...currentMasterSnapshot,
+      root: result.root,
+      view: undefined,
+      updatedAt: new Date().toISOString()
+    };
+    const nextMapId = mapId ?? createMindMapId();
+    if (!mapId) {
+      setMapId(nextMapId);
+    }
+
+    commitSnapshotForUi(nextSnapshot, true);
+    setFocusedNodeId(result.summaryNodeId);
+    publishSelectedNode({ id: result.summaryNodeId, title: "摘要" });
+    setTextFormatMenu(null);
+    setTopicPanel(null);
+    setError("");
+
+    const summarySnapshot = createFocusedSnapshot(nextSnapshot, result.summaryNodeId);
+    canvasRef.current?.setSnapshot(summarySnapshot);
+    canvasRef.current?.selectNode(result.summaryNodeId);
+
+    if (result.changed) {
+      pendingSaveRef.current = {
+        courseId,
+        mapId: nextMapId,
+        title: courseName,
+        snapshot: nextSnapshot
+      };
+      await flushPendingSave(false);
+    }
+  }, [canUseEditor, commitSnapshotForUi, courseId, courseName, flushPendingSave, focusedNodeId, mapId, publishSelectedNode]);
 
   const selectDocumentNode = React.useCallback(
     (nodeId: string) => {
@@ -1439,6 +1652,7 @@ export function MindMapWorkspace({
           onChangeTextFormat={applyTextFormat}
           onToggleCanvasDrag={() => setCanvasDragEnabled((value) => !value)}
           onRunCommand={(command) => canvasRef.current?.exec(command)}
+          onCreateIndependentSummary={createIndependentSummary}
         />
       ) : null}
 
@@ -1505,7 +1719,8 @@ function MindMapFormatPanel({
   onChangeLayout,
   onChangeTextFormat,
   onToggleCanvasDrag,
-  onRunCommand
+  onRunCommand,
+  onCreateIndependentSummary
 }: {
   selectedNode: MindMapSelectedNode;
   disabled: boolean;
@@ -1516,6 +1731,7 @@ function MindMapFormatPanel({
   onChangeTextFormat: (patch: MindMapTextFormatPatch) => void;
   onToggleCanvasDrag: () => void;
   onRunCommand: (command: MindMapBranchShortcutCommand) => void;
+  onCreateIndependentSummary: () => Promise<void> | void;
 }) {
   const nodeDisabled = disabled || !selectedNode.id;
   const format = selectedNode.textFormat ?? {};
@@ -1645,6 +1861,7 @@ function MindMapFormatPanel({
         <div className="mindmap-format-actions">
           <button type="button" disabled={nodeDisabled} onClick={() => onRunCommand("add-boundary")}>边界</button>
           <button type="button" disabled={nodeDisabled} onClick={() => onRunCommand("add-summary")}>概要</button>
+          <button type="button" disabled={nodeDisabled} onClick={() => void onCreateIndependentSummary()}>独立摘要</button>
         </div>
       </section>
 

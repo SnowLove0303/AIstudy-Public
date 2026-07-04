@@ -4454,11 +4454,19 @@ h3 {
   color: #64748b;
 }
 
+.catalog-node.is-summary {
+  color: #1f6fd1;
+}
+
 .catalog-node-mark {
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: #b8c3cf;
+}
+
+.catalog-node.is-summary .catalog-node-mark {
+  background: #1f6fd1;
 }
 
 .catalog-node.selected .catalog-node-mark {

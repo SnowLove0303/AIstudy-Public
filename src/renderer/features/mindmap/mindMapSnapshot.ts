@@ -18,6 +18,11 @@ export const MIND_MAP_CATALOG_RELATION = Object.freeze({
   firstOrder: 1
 });
 export const MIND_MAP_CATALOG_BOUNDARY_KEY = "aistudyCatalogBoundary";
+export const MIND_MAP_NODE_KIND_KEY = "aistudyNodeKind";
+export const MIND_MAP_SUMMARY_KIND = "summary";
+export const MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY = "aistudySummaryAnchorNodeId";
+export const MIND_MAP_SUMMARY_SNAPSHOT_KEY = "aistudySummarySnapshot";
+export const MIND_MAP_SUMMARY_TITLE = "摘要";
 
 export const MIND_MAP_LAYOUT_OPTIONS: Array<{ value: MindMapLayoutType; label: string }> = [
   { value: "logicalStructure", label: "右向逻辑" },
@@ -218,6 +223,63 @@ export function isMindMapCatalogBoundary(node: SimpleMindMapNode | null | undefi
   return node?.data?.[MIND_MAP_CATALOG_BOUNDARY_KEY] === true;
 }
 
+export function isMindMapSummaryNode(node: SimpleMindMapNode | null | undefined) {
+  return node?.data?.[MIND_MAP_NODE_KIND_KEY] === MIND_MAP_SUMMARY_KIND;
+}
+
+export function getMindMapSummarySnapshot(node: SimpleMindMapNode | null | undefined): MindMapSnapshot | null {
+  if (!isMindMapSummaryNode(node)) return null;
+  const snapshot = node?.data?.[MIND_MAP_SUMMARY_SNAPSHOT_KEY];
+  if (!snapshot || typeof snapshot !== "object" || !(snapshot as MindMapSnapshot).root) return null;
+  return normalizeSummarySnapshot(snapshot, readNodeTitle(node ?? createRootNode(MIND_MAP_SUMMARY_TITLE)));
+}
+
+function normalizeSummarySnapshot(value: unknown, fallbackTitle: string): MindMapSnapshot {
+  if (!value || typeof value !== "object") {
+    return createInitialSnapshot(fallbackTitle);
+  }
+  const candidate = value as Partial<MindMapSnapshot>;
+  return {
+    schemaVersion: AISTUDY_CORE_CONTRACT.schemaVersion,
+    editor: AISTUDY_CORE_CONTRACT.editors.mindMap,
+    editorVersion: typeof candidate.editorVersion === "string" ? candidate.editorVersion : MIND_MAP_EDITOR_VERSION,
+    root: normalizeMindMapTree(candidate.root, fallbackTitle),
+    layout: normalizeLayout(candidate.layout),
+    theme: createDefaultTheme(),
+    view: candidate.view,
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date().toISOString()
+  };
+}
+
+export function createMindMapSummaryNode(anchorNode: SimpleMindMapNode): SimpleMindMapNode {
+  const summaryNodeId = createStableNodeId();
+  const anchorNodeId = typeof anchorNode.data?.uid === "string" && anchorNode.data.uid ? anchorNode.data.uid : null;
+  const anchorTitle = readNodeTitle(anchorNode);
+  const summarySnapshot: MindMapSnapshot = {
+    ...createInitialSnapshot(anchorTitle),
+    root: {
+      data: {
+        uid: summaryNodeId,
+        text: anchorTitle,
+        expand: true
+      },
+      children: []
+    }
+  };
+
+  return {
+    data: {
+      uid: summaryNodeId,
+      text: MIND_MAP_SUMMARY_TITLE,
+      expand: true,
+      [MIND_MAP_NODE_KIND_KEY]: MIND_MAP_SUMMARY_KIND,
+      ...(anchorNodeId ? { [MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY]: anchorNodeId } : {}),
+      [MIND_MAP_SUMMARY_SNAPSHOT_KEY]: summarySnapshot
+    },
+    children: []
+  };
+}
+
 export function normalizeMindMapTree(root: SimpleMindMapNode | null | undefined, fallbackTitle = "未命名导图"): SimpleMindMapNode {
   const source = root ?? createRootNode(fallbackTitle);
   const usedIds = new Set<string>();
@@ -275,7 +337,10 @@ export function createMindMapStructureSignature(root: SimpleMindMapNode | null |
     const uid = typeof node.data?.uid === "string" ? node.data.uid : "";
     const text = readNodeTitle(node, "");
     const catalogBoundary = isMindMapCatalogBoundary(node) ? "1" : "0";
-    parts.push(`${depth}:${uid.length}:${uid}:${text.length}:${text}:${catalogBoundary}:${children.length}`);
+    const summarySignature = isMindMapSummaryNode(node)
+      ? createMindMapStructureSignature(getMindMapSummarySnapshot(node)?.root)
+      : "";
+    parts.push(`${depth}:${uid.length}:${uid}:${text.length}:${text}:${catalogBoundary}:${isMindMapSummaryNode(node) ? "summary" : "topic"}:${summarySignature.length}:${summarySignature}:${children.length}`);
 
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push({ node: children[index], depth: depth + 1 });
@@ -300,9 +365,15 @@ export function buildMindMapOutline(root: SimpleMindMapNode | null | undefined):
     const title = readNodeTitle(node);
     const nodeId = typeof node.data?.uid === "string" && node.data.uid ? node.data.uid : createCatalogNodeId(path);
     const catalogBoundary = isMindMapCatalogBoundary(node);
-    const outlineChildren = catalogBoundary
+    const summaryNode = isMindMapSummaryNode(node);
+    const orderedChildren = [...children].sort((left, right) => {
+      const leftSummary = isMindMapSummaryNode(left) ? 0 : 1;
+      const rightSummary = isMindMapSummaryNode(right) ? 0 : 1;
+      return leftSummary - rightSummary;
+    });
+    const outlineChildren = catalogBoundary || summaryNode
       ? []
-      : children.map((child, index) => {
+      : orderedChildren.map((child, index) => {
           const childOrder = index + MIND_MAP_CATALOG_RELATION.firstOrder;
           return walk(
             child,
@@ -319,13 +390,14 @@ export function buildMindMapOutline(root: SimpleMindMapNode | null | undefined):
       nodeId,
       parentNodeId,
       title,
+      nodeKind: summaryNode ? "summary" : "topic",
       level,
       path,
       parentPath,
       order,
       source: MIND_MAP_CATALOG_RELATION.source,
       childCount: outlineChildren.length,
-      hiddenChildCount: catalogBoundary ? children.length : 0,
+      hiddenChildCount: catalogBoundary || summaryNode ? children.length : 0,
       catalogBoundary,
       children: outlineChildren
     };

@@ -94,9 +94,10 @@ function renderCatalogItems(items: MindMapOutlineItem[], options: CatalogRenderO
         return (
           <li key={item.path} className="catalog-tree-item">
             <div
-              className={`${getCatalogDepthClass(item.level)}${hasChildren ? " has-children" : " is-leaf"}${isSelected ? " selected" : ""}`}
+              className={`${getCatalogDepthClass(item.level)}${hasChildren ? " has-children" : " is-leaf"}${isSelected ? " selected" : ""}${item.nodeKind === "summary" ? " is-summary" : ""}`}
               style={{ paddingLeft: 8 + item.level * 14 }}
               data-catalog-source={item.source}
+              data-catalog-node-kind={item.nodeKind}
               data-catalog-path={item.path}
               data-catalog-node-id={item.nodeId ?? ""}
               data-catalog-parent-path={item.parentPath ?? ""}

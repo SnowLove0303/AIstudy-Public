@@ -12,6 +12,10 @@ import mysql from "mysql2/promise";
 const SCHEMA_VERSION = 1;
 const MINDMAP_EDITOR = "simple-mind-map";
 const DEFAULT_LAYOUT = "logicalStructure";
+const MIND_MAP_NODE_KIND_KEY = "aistudyNodeKind";
+const MIND_MAP_SUMMARY_KIND = "summary";
+const MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY = "aistudySummaryAnchorNodeId";
+const MIND_MAP_SUMMARY_SNAPSHOT_KEY = "aistudySummarySnapshot";
 const DOCUMENT_EDITOR = "aistudy-word";
 const DOCUMENT_EDITOR_VERSION = "mcp-text";
 const PUBLIC_MYSQL_DATABASE = "aistudy_public";
@@ -1088,6 +1092,62 @@ async function summarizeMindMap(runtime, course) {
 function getNodeTitle(node, fallback = "New node") {
   const text = node?.data?.text;
   return (typeof text === "string" && text.trim() ? text.trim() : fallback).slice(0, 255);
+}
+
+function isMindMapSummaryNode(node) {
+  return node?.data?.[MIND_MAP_NODE_KIND_KEY] === MIND_MAP_SUMMARY_KIND;
+}
+
+function getMindMapSummarySnapshot(node) {
+  const snapshot = node?.data?.[MIND_MAP_SUMMARY_SNAPSHOT_KEY];
+  return isMindMapSummaryNode(node) && snapshot && typeof snapshot === "object" && snapshot.root ? snapshot : null;
+}
+
+function readMindMapNodeId(node) {
+  return typeof node?.data?.uid === "string" && node.data.uid.trim() ? node.data.uid.trim() : null;
+}
+
+function indexMindMapSnapshotNodes(node, output = new Map()) {
+  const nodeId = readMindMapNodeId(node);
+  if (nodeId) output.set(nodeId, node);
+  const children = Array.isArray(node?.children) ? node.children : [];
+  for (const child of children) indexMindMapSnapshotNodes(child, output);
+  return output;
+}
+
+function flattenSummarySnapshot(root, maxDepth = 4, maxNodes = 80) {
+  if (!root) return null;
+  let returnedNodeCount = 0;
+  let truncated = false;
+  const visit = (node, relativeDepth) => {
+    if (returnedNodeCount >= maxNodes) {
+      truncated = true;
+      return null;
+    }
+    returnedNodeCount += 1;
+    const children = Array.isArray(node?.children) ? node.children : [];
+    const visibleChildren = [];
+    if (relativeDepth < maxDepth) {
+      for (const child of children) {
+        const childNode = visit(child, relativeDepth + 1);
+        if (childNode) visibleChildren.push(childNode);
+      }
+    } else if (children.length > 0) {
+      truncated = true;
+    }
+    return {
+      nodeId: readMindMapNodeId(node),
+      title: getNodeTitle(node, ""),
+      childCount: children.length,
+      children: visibleChildren
+    };
+  };
+
+  return {
+    root: visit(root, 0),
+    returnedNodeCount,
+    truncated
+  };
 }
 
 function normalizeMindMapSnapshot(value) {
@@ -2627,11 +2687,13 @@ function normalizeContextDocumentMode(args) {
   return ["none", "summary", "text"].includes(mode) ? mode : "text";
 }
 
-function buildContextNodeSummary(row, childCount, document) {
+function buildContextNodeSummary(row, childCount, document, snapshotNode = null) {
+  const summarySnapshot = getMindMapSummarySnapshot(snapshotNode);
   return {
     nodeId: row.nodeId,
     parentNodeId: row.parentNodeId || null,
     title: row.title || "",
+    nodeKind: isMindMapSummaryNode(snapshotNode) ? "summary" : "topic",
     depth: Number(row.depth) || 0,
     positionIndex: Number(row.positionIndex) || 0,
     pathText: row.pathText || row.title || "",
@@ -2639,6 +2701,14 @@ function buildContextNodeSummary(row, childCount, document) {
     childCount,
     hasDocument: Boolean(document?.hasContent),
     document: document || null,
+    summary: summarySnapshot ? {
+      anchorNodeId: typeof snapshotNode?.data?.[MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY] === "string"
+        ? snapshotNode.data[MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY]
+        : null,
+      rootNodeId: readMindMapNodeId(summarySnapshot.root),
+      rootTitle: getNodeTitle(summarySnapshot.root, ""),
+      subtree: flattenSummarySnapshot(summarySnapshot.root, 4, 80)
+    } : null,
     updatedAt: toIsoTimestamp(row.updatedAt)
   };
 }
@@ -2697,6 +2767,25 @@ async function readNodeContext(runtime, args) {
     ? await findMindMapById(runtime, course.id, requestedMindMapId)
     : await findMindMapByCourse(runtime, course.id);
   if (!map) throw new Error("Mind map is missing.");
+
+  let snapshotNodeById = new Map();
+  if (map.currentSnapshotId) {
+    try {
+      const [snapshotRows] = await runtime.pool.execute(
+        `SELECT payload_json AS payloadJson
+         FROM ${escapeIdentifier(runtime.config.mindMapSnapshotTable, "snapshot table")}
+         WHERE id = ? AND mind_map_id = ?
+         LIMIT 1`,
+        [map.currentSnapshotId, map.id]
+      );
+      if (snapshotRows[0]?.payloadJson) {
+        const currentSnapshot = normalizeMindMapSnapshot(JSON.parse(snapshotRows[0].payloadJson));
+        snapshotNodeById = indexMindMapSnapshotNodes(currentSnapshot.root);
+      }
+    } catch {
+      snapshotNodeById = new Map();
+    }
+  }
 
   const [rows] = await runtime.pool.execute(
     `SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
@@ -2758,7 +2847,7 @@ async function readNodeContext(runtime, args) {
   const documents = await readContextDocuments(runtime, course.id, map.id, [...returnedRows.keys()], documentMode, maxDocumentChars);
 
   const childCount = (row) => (childrenByParent.get(row.nodeId) || []).length;
-  const toSummary = (row) => buildContextNodeSummary(row, childCount(row), documents.get(row.nodeId));
+  const toSummary = (row) => buildContextNodeSummary(row, childCount(row), documents.get(row.nodeId), snapshotNodeById.get(row.nodeId));
   const buildTree = (row, relativeDepth) => {
     const summary = toSummary(row);
     const children = childrenByParent.get(row.nodeId) || [];

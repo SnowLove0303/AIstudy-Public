@@ -5,6 +5,9 @@ export type SimpleMindMapNodeData = {
   expand?: boolean;
   aistudyCatalogBoundary?: boolean;
   aistudyAssetId?: string;
+  aistudyNodeKind?: "summary";
+  aistudySummaryAnchorNodeId?: string;
+  aistudySummarySnapshot?: MindMapSnapshot;
   [key: string]: unknown;
 };
 
@@ -131,6 +134,7 @@ export type MindMapOutlineItem = {
   nodeId: string | null;
   parentNodeId: string | null;
   title: string;
+  nodeKind: "topic" | "summary";
   level: number;
   path: string;
   parentPath: string | null;
