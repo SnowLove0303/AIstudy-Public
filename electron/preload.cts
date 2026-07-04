@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld("aistudyKnowledgeDocuments", {
 });
 
 contextBridge.exposeInMainWorld("aistudyKnowledgeAssets", {
+  createGeneratedImage: (request: unknown) => invokeApp("knowledge-assets:create-generated-image", request),
   chooseImage: (request: unknown) => invokeApp("knowledge-assets:choose-image", request)
 });
 

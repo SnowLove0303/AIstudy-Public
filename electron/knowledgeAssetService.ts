@@ -38,6 +38,11 @@ type KnowledgeAssetChoiceRequest = {
   relationType?: unknown;
 };
 
+type KnowledgeAssetGeneratedImageRequest = KnowledgeAssetChoiceRequest & {
+  dataUrl?: unknown;
+  fileName?: unknown;
+};
+
 type KnowledgeAssetRow = RowDataPacket & {
   id: string;
   localPath: string;
@@ -52,6 +57,7 @@ const IMAGE_EXTENSIONS = new Map([
   [".gif", "image/gif"]
 ]);
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const GENERATED_PNG_DATA_URL_PATTERN = /^data:(image\/png);base64,([A-Za-z0-9+/=]+)$/;
 const ASSET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,96}$/;
 const ASSET_REFERENCE_KEY = "aistudyAssetId";
 
@@ -159,6 +165,37 @@ async function readImageFile(filePath: string) {
     byteSize: stat.size,
     ext: ext === ".jpeg" ? ".jpg" : ext,
     fileName: path.basename(filePath),
+    width: dimensions?.width,
+    height: dimensions?.height
+  };
+}
+
+function normalizeGeneratedImageFileName(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const safe = text.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").slice(0, 80);
+  return safe ? (safe.toLowerCase().endsWith(".png") ? safe : `${safe}.png`) : "document-diagram.png";
+}
+
+function readGeneratedPngDataUrl(dataUrl: unknown, fileName: unknown) {
+  const text = typeof dataUrl === "string" ? dataUrl.trim() : "";
+  const match = text.match(GENERATED_PNG_DATA_URL_PATTERN);
+  if (!match) {
+    throw new Error("图片生成失败");
+  }
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length <= 0 || buffer.length > MAX_IMAGE_BYTES) {
+    throw new Error("图片过大");
+  }
+  const mimeType = match[1];
+  const sha256 = createHash("sha256").update(buffer).digest("hex");
+  const dimensions = readImageDimensions(buffer, mimeType);
+  return {
+    buffer,
+    sha256,
+    mimeType,
+    byteSize: buffer.length,
+    ext: ".png",
+    fileName: normalizeGeneratedImageFileName(fileName),
     width: dimensions?.width,
     height: dimensions?.height
   };
@@ -376,7 +413,61 @@ export function createKnowledgeAssetService(dependencies: KnowledgeAssetServiceD
     }
   };
 
+  const createGeneratedImage = async (_event: IpcMainInvokeEvent, input: unknown): Promise<KnowledgeAssetUploadResult> => {
+    const request = (input && typeof input === "object" ? input : {}) as KnowledgeAssetGeneratedImageRequest;
+    const courseId = normalizeScopedId(request.courseId, "璇剧▼");
+    const mindMapId = normalizeScopedId(request.mindMapId, "瀵煎浘");
+    const nodeId = normalizeScopedId(request.nodeId, "鑺傜偣");
+    const relationType = normalizeRelationType(request.relationType);
+    const source = readGeneratedPngDataUrl(request.dataUrl, request.fileName);
+    const localPath = path.join("knowledge-images", `${source.sha256}${source.ext}`).replace(/\\/g, "/");
+    const targetPath = dependencies.getDataPath("assets", ...localPath.split("/"));
+    const runtime = await dependencies.getMysqlRuntime();
+    const connection = await runtime.pool.getConnection();
+    const now = new Date();
+
+    try {
+      await connection.beginTransaction();
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      if (!existsSync(targetPath)) {
+        await fs.writeFile(targetPath, source.buffer);
+      }
+      const assetId = await upsertKnowledgeAsset(connection, runtime.assetTable, {
+        sha256: source.sha256,
+        localPath,
+        mimeType: source.mimeType,
+        byteSize: source.byteSize
+      }, now);
+      if (relationType === "mindmap-node-image") {
+        await syncKnowledgeAssetLinks(connection, runtime.knowledgeAssetLinkTable, {
+          courseId,
+          mindMapId,
+          nodeId,
+          relationType,
+          assetIds: [assetId]
+        }, now);
+      }
+      await connection.commit();
+      return {
+        canceled: false,
+        assetId,
+        url: getKnowledgeAssetUrl(assetId),
+        fileName: source.fileName,
+        mimeType: source.mimeType,
+        byteSize: source.byteSize,
+        width: source.width,
+        height: source.height
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  };
+
   return {
+    createGeneratedImage,
     chooseImage,
     registerProtocolHandler
   };

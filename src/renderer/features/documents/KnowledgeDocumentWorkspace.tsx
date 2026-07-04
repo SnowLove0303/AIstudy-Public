@@ -7,6 +7,7 @@ import {
   AlignRight,
   Bold,
   Bot,
+  Braces,
   ChevronLeft,
   ChevronRight,
   Columns,
@@ -33,6 +34,7 @@ import {
   X
 } from "lucide-react";
 import { createCanvasDocumentEditor, createEmptyKnowledgeDocumentSnapshot } from "./canvasEditorAdapter";
+import { renderDiagramPngDataUrl } from "./documentDiagram";
 import { AiAssistantPanel } from "../assistant/AiAssistantPanel";
 import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
@@ -163,6 +165,14 @@ declare global {
       exportDocx: (request: { title: string; snapshot: KnowledgeDocumentSnapshot }) => Promise<{ canceled: boolean; filePath: string }>;
     };
     aistudyKnowledgeAssets?: {
+      createGeneratedImage: (request: {
+        courseId: string;
+        mindMapId: string;
+        nodeId: string;
+        relationType: "document-image" | "mindmap-node-image";
+        dataUrl: string;
+        fileName?: string;
+      }) => Promise<KnowledgeAssetImageResult>;
       chooseImage: (request: {
         courseId: string;
         mindMapId: string;
@@ -624,6 +634,7 @@ export function KnowledgeDocumentWorkspace({
   const [isSaving, setIsSaving] = React.useState(false);
   const [isExportingDocx, setIsExportingDocx] = React.useState(false);
   const [isChoosingImage, setIsChoosingImage] = React.useState(false);
+  const [isGeneratingDiagram, setIsGeneratingDiagram] = React.useState(false);
   const [isEditorReady, setIsEditorReady] = React.useState(false);
   const isFormatPanelOpen = detailPaneMode === "format";
   const [formatPanelSlot, setFormatPanelSlot] = React.useState<HTMLElement | null>(null);
@@ -1460,6 +1471,42 @@ export function KnowledgeDocumentWorkspace({
     return selectedText;
   }, []);
 
+  const insertDiagram = React.useCallback(async () => {
+    if (!documentBinding || !window.aistudyKnowledgeAssets?.createGeneratedImage || isGeneratingDiagram) return;
+    const selectedText = readSelectedText().trim();
+    if (!selectedText) {
+      setError("请先选中层级文本");
+      return;
+    }
+    setIsGeneratingDiagram(true);
+    setError("");
+    try {
+      const diagram = await renderDiagramPngDataUrl(selectedText);
+      const result = await window.aistudyKnowledgeAssets.createGeneratedImage({
+        ...documentBinding,
+        relationType: "document-image",
+        dataUrl: diagram.dataUrl,
+        fileName: `${selectedNode.title || "document"}-structure.png`
+      });
+      if (result.canceled || !result.assetId || !result.url) return;
+      editorRef.current?.insertImage({
+        assetId: result.assetId,
+        url: result.url,
+        fileName: result.fileName,
+        mimeType: result.mimeType,
+        width: result.width || diagram.width,
+        height: result.height || diagram.height
+      });
+      documentDirtyRef.current = true;
+      editorRef.current?.focus();
+      void saveNow();
+    } catch (error) {
+      setError(getErrorMessage(error, "结构图插入失败"));
+    } finally {
+      setIsGeneratingDiagram(false);
+    }
+  }, [documentBinding, isGeneratingDiagram, readSelectedText, saveNow, selectedNode.title]);
+
   const openAssistantPanel = React.useCallback((point: { x: number; y: number }, text?: string) => {
     const selectedText = text?.trim() || readSelectedText().trim() || lastSelectedTextRef.current;
     if (selectedText) {
@@ -1659,6 +1706,10 @@ export function KnowledgeDocumentWorkspace({
         >
           <Bot size={15} />
           <span>AI</span>
+        </button>
+        <button type="button" title="结构图" onClick={() => void insertDiagram()} disabled={!canUseDocument || !isEditorReady || isSaving || isGeneratingDiagram}>
+          {isGeneratingDiagram ? <Loader2 className="spin-icon" size={15} /> : <Braces size={15} />}
+          <span>结构图</span>
         </button>
         <button type="button" title="导入文档" onClick={() => setIsImporterOpen(true)} disabled={!canUseDocument || isSaving}>
           <Upload size={15} />

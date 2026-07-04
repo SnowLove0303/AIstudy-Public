@@ -10604,6 +10604,10 @@ ipcMain.handle("knowledge-assets:choose-image", withUserFacingError("knowledge-a
   knowledgeAssetService.chooseImage(event as IpcMainInvokeEvent, request)
 )));
 
+ipcMain.handle("knowledge-assets:create-generated-image", withUserFacingError("knowledge-assets:create-generated-image", "图片没有生成成功，请稍后再试。", (event, request) => (
+  knowledgeAssetService.createGeneratedImage(event as IpcMainInvokeEvent, request)
+)));
+
 ipcMain.handle("exams:load", withUserFacingError("exams:load", "考试数据读取没有完成，请稍后再试。", async () => {
   const runtime = await getMysqlRuntime();
   return readExamStoreFromMysql(runtime);

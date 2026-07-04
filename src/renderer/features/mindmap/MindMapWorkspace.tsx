@@ -165,6 +165,14 @@ declare global {
       save: (document: MindMapSaveInput) => Promise<MindMapDocument>;
     };
     aistudyKnowledgeAssets?: {
+      createGeneratedImage: (request: {
+        courseId: string;
+        mindMapId: string;
+        nodeId: string;
+        relationType: "document-image" | "mindmap-node-image";
+        dataUrl: string;
+        fileName?: string;
+      }) => Promise<KnowledgeAssetImageResult>;
       chooseImage: (request: {
         courseId: string;
         mindMapId: string;
