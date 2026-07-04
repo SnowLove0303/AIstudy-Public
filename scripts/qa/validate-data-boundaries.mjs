@@ -133,9 +133,22 @@ if (
   fail("course database reads must guard against stale cache overwrites and recover missing course indexes");
 }
 
+if (
+  !main.includes('type DatabaseProvider = "mysql" | "tidb"')
+  || !main.includes("readPublicTidbEnv")
+  || !main.includes("skipSchemaCreation")
+  || !main.includes("TLSv1.2")
+) {
+  fail("main database runtime must keep optional TiDB/TLS support without replacing the default MySQL path");
+}
+
 const mcpServer = read("scripts/mcp/aistudy-mcp-server.mjs");
 if (!mcpServer.includes("AIstudyPublicCleanData") || !mcpServer.includes("xiaohongshu")) {
   fail("external MCP chrome ports must share the stable runtime root and full platform list");
+}
+
+if (!mcpServer.includes("normalizeDatabaseProvider") || !mcpServer.includes("TIDB_") || !mcpServer.includes("TLSv1.2")) {
+  fail("MCP database runtime must support the same optional TiDB/TLS configuration as the desktop app");
 }
 
 if (!process.exitCode) {

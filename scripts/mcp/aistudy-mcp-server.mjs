@@ -872,11 +872,18 @@ async function readServerVersion() {
 
 async function readMysqlConfig() {
   const dataConfig = await readJsonFile(getDataPath("config", "mysql.config.json"));
+  const provider = normalizeDatabaseProvider(getEnv("DATABASE_PROVIDER") || getEnv("DB_PROVIDER") || dataConfig.provider);
+  const readConnectionEnv = (name) => provider === "tidb"
+    ? getEnv(`TIDB_${name}`) ?? getEnv(`MYSQL_${name}`)
+    : getEnv(`MYSQL_${name}`);
   const config = {
-    host: getEnv("MYSQL_HOST") || dataConfig.host || "127.0.0.1",
-    port: Number(getEnv("MYSQL_PORT") || dataConfig.port || 3306),
-    user: getEnv("MYSQL_USER") || dataConfig.user || "root",
-    password: getEnv("MYSQL_PASSWORD") ?? dataConfig.password ?? "",
+    provider,
+    host: readConnectionEnv("HOST") || dataConfig.host || "127.0.0.1",
+    port: Number(readConnectionEnv("PORT") || dataConfig.port || 3306),
+    user: readConnectionEnv("USER") || dataConfig.user || "root",
+    password: readConnectionEnv("PASSWORD") ?? dataConfig.password ?? "",
+    ssl: parseBooleanSetting(readConnectionEnv("SSL") ?? dataConfig.ssl, provider === "tidb"),
+    skipSchemaCreation: parseBooleanSetting(readConnectionEnv("SKIP_SCHEMA_CREATION") ?? dataConfig.skipSchemaCreation, false),
     database: PUBLIC_MYSQL_DATABASE,
     courseTable: PUBLIC_MYSQL_TABLES.courses,
     courseSectionTable: PUBLIC_MYSQL_TABLES.sections,
@@ -889,6 +896,24 @@ async function readMysqlConfig() {
   return config;
 }
 
+function normalizeDatabaseProvider(value) {
+  return typeof value === "string" && value.trim().toLowerCase() === "tidb" ? "tidb" : "mysql";
+}
+
+function parseBooleanSetting(value, fallback) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
 async function createPool() {
   const config = await readMysqlConfig();
   const pool = mysql.createPool({
@@ -898,7 +923,8 @@ async function createPool() {
     password: config.password,
     database: config.database,
     waitForConnections: true,
-    connectionLimit: 4
+    connectionLimit: 4,
+    ...(config.ssl ? { ssl: { minVersion: "TLSv1.2" } } : {})
   });
   return { config, pool };
 }
