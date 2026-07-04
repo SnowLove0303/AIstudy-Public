@@ -49,6 +49,7 @@ const {
   countNodes,
   createEditorSafeMindMapTree,
   createMindMapStructureSignature,
+  normalizeNativeMindMapGeneralization,
   normalizeMindMapTree
 } = await import(`${pathToFileURL(snapshotModulePath).href}?qa=${Date.now()}`);
 
@@ -102,6 +103,21 @@ assert(
 assert(
   editorSafeRoot.children[0].data.generalization?.range?.join(",") === "0,2",
   "native summary range must remain editor-safe"
+);
+
+const normalizedDuplicateSummary = normalizeNativeMindMapGeneralization(
+  [
+    { uid: "legacy-self-summary", text: "摘要", range: null },
+    { uid: "range-summary-default", text: "摘要", range: [0, 2] },
+    { uid: "range-summary-edited", text: "选定方式", range: [0, 2] }
+  ],
+  3
+);
+assert(!Array.isArray(normalizedDuplicateSummary), "duplicate range summary should collapse to one item");
+assert(normalizedDuplicateSummary?.text === "选定方式", "edited summary text should win over default duplicate text");
+assert(
+  normalizedDuplicateSummary?.range?.join(",") === "0,2",
+  "range summary should remove legacy self summary on the same parent"
 );
 
 console.log("mind map native summary policy: ok");

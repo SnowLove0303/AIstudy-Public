@@ -6,6 +6,8 @@ import {
   extractNodeTitle,
   MIND_MAP_DEFAULT_FONT_SIZE,
   MIND_MAP_EDITOR_VERSION,
+  MIND_MAP_SUMMARY_TITLE,
+  normalizeNativeMindMapGeneralization,
   normalizeLayout,
   normalizeMindMapTree
 } from "./mindMapSnapshot";
@@ -49,7 +51,7 @@ const MIN_NODE_BUBBLE_HEIGHT = 30;
 const MAX_NODE_BUBBLE_WIDTH = 960;
 const MAX_NODE_BUBBLE_HEIGHT = 520;
 const INITIAL_VIEW_SCALE = 1;
-const SUMMARY_BRACKET_ARM_LENGTH = 22;
+const SUMMARY_BRACKET_ARM_LENGTH = 34;
 
 let xmindExportPluginPromise: Promise<SimpleMindMapPlugin> | null = null;
 let simpleMindMapConstructorPromise: Promise<SimpleMindMapConstructor> | null = null;
@@ -190,25 +192,142 @@ function getActiveNodes(editor: any, fallbackNode: any = null) {
   return fallbackNode ? [fallbackNode] : [];
 }
 
-function addNativeGeneralization(editor: any, activeNode: any = null) {
-  const activeNodes = getActiveNodes(editor, activeNode);
-  if (activeNodes.length === 1) {
-    const directChildren = Array.isArray(activeNodes[0]?.children)
-      ? activeNodes[0].children.filter((child: any) => child && !child.isGeneralization)
-      : [];
-    if (directChildren.length > 0) {
-      editor.renderer?.clearActiveNodeList?.();
-      if (typeof editor.renderer?.activeMultiNode === "function") {
-        editor.renderer.activeMultiNode(directChildren);
-      } else {
-        directChildren.forEach((child: any) => editor.renderer?.addNodeToActiveList?.(child, true));
-        editor.renderer?.emitNodeActiveEvent?.(directChildren[0], directChildren);
-      }
-      editor.execCommand("ADD_GENERALIZATION");
-      return;
+type SummaryTarget = {
+  node: any;
+  range: [number, number] | null;
+  activeNodes: any[];
+};
+
+function isSummarySelectableNode(node: any) {
+  return node && !node.isRoot && !node.isGeneralization && !node.checkHasSelfGeneralization?.();
+}
+
+function getNormalChildren(node: any) {
+  return Array.isArray(node?.children) ? node.children.filter((child: any) => child && !child.isGeneralization) : [];
+}
+
+function getNodeSiblingIndex(node: any) {
+  const index = typeof node?.getIndexInBrothers === "function" ? Number(node.getIndexInBrothers()) : -1;
+  return Number.isFinite(index) ? Math.trunc(index) : -1;
+}
+
+function createSummaryTargets(activeNodes: any[]): SummaryTarget[] {
+  const selectedNodes = activeNodes.filter(isSummarySelectableNode);
+  if (selectedNodes.length <= 0) return [];
+
+  if (selectedNodes.length === 1) {
+    const children = getNormalChildren(selectedNodes[0]).filter(isSummarySelectableNode);
+    if (children.length > 1) {
+      return [{
+        node: selectedNodes[0],
+        range: [0, children.length - 1],
+        activeNodes: children
+      }];
     }
   }
-  editor.execCommand("ADD_GENERALIZATION");
+
+  const groups = new Map<string, { parent: any; items: Array<{ node: any; index: number }> }>();
+  const selfTargets: SummaryTarget[] = [];
+  selectedNodes.forEach((node) => {
+    const parent = node.parent;
+    const index = getNodeSiblingIndex(node);
+    if (!parent || index < 0) {
+      selfTargets.push({ node, range: null, activeNodes: [node] });
+      return;
+    }
+    const parentId = String(parent.uid ?? parent.getData?.("uid") ?? `parent-${groups.size}`);
+    const group = groups.get(parentId) ?? { parent, items: [] };
+    if (!group.items.some((item) => item.index === index)) {
+      group.items.push({ node, index });
+    }
+    groups.set(parentId, group);
+  });
+
+  const targets = [...selfTargets];
+  groups.forEach((group) => {
+    const sortedItems = group.items.sort((left, right) => left.index - right.index);
+    if (sortedItems.length > 1) {
+      targets.push({
+        node: group.parent,
+        range: [sortedItems[0].index, sortedItems[sortedItems.length - 1].index],
+        activeNodes: sortedItems.map((item) => item.node)
+      });
+      return;
+    }
+    targets.push({
+      node: sortedItems[0].node,
+      range: null,
+      activeNodes: [sortedItems[0].node]
+    });
+  });
+
+  return targets;
+}
+
+function nodeHasSummaryTarget(node: any, target: SummaryTarget) {
+  const list = Array.isArray(node?.getData?.("generalization"))
+    ? node.getData("generalization")
+    : node?.getData?.("generalization")
+      ? [node.getData("generalization")]
+      : [];
+  return list.some((item: any) => {
+    const range = Array.isArray(item?.range) ? item.range : null;
+    if (!target.range) return !range;
+    return range && Number(range[0]) === target.range[0] && Number(range[1]) === target.range[1];
+  });
+}
+
+function normalizeRuntimeGeneralizations(editor: any, targets: SummaryTarget[]) {
+  const nodes = new Set<any>(targets.map((target) => target.node).filter(Boolean));
+  nodes.forEach((node) => {
+    const childCount = getNormalChildren(node).length;
+    const normalized = normalizeNativeMindMapGeneralization(node.getData?.("generalization"), childCount);
+    const current = node.getData?.("generalization") ?? null;
+    if (JSON.stringify(current) === JSON.stringify(normalized)) return;
+    editor.execCommand("SET_NODE_DATA", node, {
+      generalization: normalized
+    });
+  });
+}
+
+function createSummaryData(target: SummaryTarget) {
+  return {
+    text: MIND_MAP_SUMMARY_TITLE,
+    range: target.range,
+    uid: createRuntimeNodeId(),
+    richText: false
+  };
+}
+
+function applySummaryTarget(editor: any, target: SummaryTarget) {
+  const current = target.node?.getData?.("generalization");
+  const list = Array.isArray(current) ? current : current ? [current] : [];
+  const nextList = nodeHasSummaryTarget(target.node, target) ? list : [...list, createSummaryData(target)];
+  const normalized = normalizeNativeMindMapGeneralization(nextList, getNormalChildren(target.node).length);
+  const nextData = {
+    generalization: normalized,
+    expand: true
+  };
+  if (JSON.stringify({ generalization: current, expand: target.node?.getData?.("expand") }) === JSON.stringify(nextData)) {
+    return false;
+  }
+  editor.execCommand("SET_NODE_DATA", target.node, nextData);
+  return true;
+}
+
+function addNativeGeneralization(editor: any, activeNode: any = null) {
+  const activeNodes = getActiveNodes(editor, activeNode);
+  const targets = createSummaryTargets(activeNodes);
+  if (targets.length <= 0) return;
+
+  let changed = false;
+  targets.forEach((target) => {
+    changed = applySummaryTarget(editor, target) || changed;
+  });
+  if (!changed) {
+    normalizeRuntimeGeneralizations(editor, targets);
+  }
+  editor.render?.();
 }
 
 function readFiniteNumber(value: unknown) {
@@ -256,6 +375,13 @@ function renderRightBracketGeneralizations(editor: any) {
       const path = createRightBracketGeneralizationPath(editor, item);
       if (!path || typeof item?.generalizationLine?.plot !== "function") return;
       item.generalizationLine.plot(path);
+      item.generalizationLine.attr?.({
+        fill: "none",
+        stroke: editor.themeConfig?.generalizationLineColor ?? "#72a9d8",
+        "stroke-width": editor.themeConfig?.generalizationLineWidth ?? 3,
+        "stroke-linecap": "square",
+        "stroke-linejoin": "miter"
+      });
     });
   });
 }

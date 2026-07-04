@@ -57,9 +57,10 @@ export function createXMindStyleThemeConfig() {
     backgroundImage: "none",
     hoverRectColor: "#2f80c0",
     hoverRectRadius: 8,
-    generalizationLineWidth: 2,
+    generalizationLineWidth: 3,
     generalizationLineColor: "#72a9d8",
-    generalizationNodeMargin: 22,
+    generalizationLineMargin: 8,
+    generalizationNodeMargin: 28,
     associativeLineWidth: 2,
     associativeLineColor: "#7b8ea6",
     associativeLineActiveWidth: 5,
@@ -124,6 +125,78 @@ export function createXMindStyleThemeConfig() {
       textAlign: "center"
     }
   };
+}
+
+function readFiniteInteger(value: unknown) {
+  const nextValue = Number(value);
+  return Number.isFinite(nextValue) ? Math.trunc(nextValue) : null;
+}
+
+function normalizeSummaryRange(value: unknown, childCount: number): [number, number] | null {
+  if (!Array.isArray(value) || value.length < 2 || childCount <= 0) return null;
+  const start = readFiniteInteger(value[0]);
+  const end = readFiniteInteger(value[1]);
+  if (start === null || end === null) return null;
+  const nextStart = Math.max(0, Math.min(start, childCount - 1));
+  const nextEnd = Math.max(0, Math.min(end, childCount - 1));
+  return nextStart <= nextEnd ? [nextStart, nextEnd] : [nextEnd, nextStart];
+}
+
+function summaryTextScore(summary: Record<string, unknown>) {
+  const text = typeof summary.text === "string" ? summary.text.trim() : "";
+  if (!text) return 0;
+  return text === MIND_MAP_SUMMARY_TITLE ? 1 : 2;
+}
+
+function preferNativeSummary(
+  previous: Record<string, unknown> | undefined,
+  next: Record<string, unknown>
+): Record<string, unknown> {
+  if (!previous) return next;
+  const previousScore = summaryTextScore(previous);
+  const nextScore = summaryTextScore(next);
+  if (nextScore > previousScore) return next;
+  if (nextScore < previousScore) return previous;
+  const previousTextLength = typeof previous.text === "string" ? previous.text.length : 0;
+  const nextTextLength = typeof next.text === "string" ? next.text.length : 0;
+  return nextTextLength >= previousTextLength ? next : previous;
+}
+
+export function normalizeNativeMindMapGeneralization(value: unknown, childCount: number) {
+  const sourceList = Array.isArray(value) ? value : value ? [value] : [];
+  const byKey = new Map<string, Record<string, unknown>>();
+
+  sourceList.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const source = item as Record<string, unknown>;
+    const range = normalizeSummaryRange(source.range, childCount);
+    const text = typeof source.text === "string" && source.text.trim() ? source.text : MIND_MAP_SUMMARY_TITLE;
+    const summary = {
+      ...source,
+      text,
+      ...(range ? { range } : { range: null })
+    };
+    const key = range ? `range:${range[0]}:${range[1]}` : "self";
+    byKey.set(key, preferNativeSummary(byKey.get(key), summary));
+  });
+
+  const hasRangeSummary = [...byKey.keys()].some((key) => key.startsWith("range:"));
+  if (hasRangeSummary && childCount > 0) {
+    byKey.delete("self");
+  }
+
+  const normalized = [...byKey.entries()]
+    .sort(([leftKey], [rightKey]) => {
+      if (leftKey === "self") return -1;
+      if (rightKey === "self") return 1;
+      const leftStart = Number(leftKey.split(":")[1]);
+      const rightStart = Number(rightKey.split(":")[1]);
+      return leftStart - rightStart;
+    })
+    .map(([, summary]) => summary);
+
+  if (normalized.length <= 0) return null;
+  return normalized.length === 1 ? normalized[0] : normalized;
 }
 
 function createDefaultTheme() {
@@ -305,17 +378,21 @@ export function normalizeMindMapTree(root: SimpleMindMapNode | null | undefined,
     const { customLeft: _customLeft, customTop: _customTop, ...stableData } = data;
     const uid = normalizeNodeId(data.uid, usedIds, path);
     const text = typeof data.text === "string" && data.text.trim() ? data.text : titleFallback;
+    const children = getMindMapChildren(node).map((child, index) =>
+      walk(child, `${path}${MIND_MAP_CATALOG_RELATION.pathSeparator}${index + MIND_MAP_CATALOG_RELATION.firstOrder}`, UNTITLED_NODE_TITLE)
+    );
+    const generalization = normalizeNativeMindMapGeneralization(stableData.generalization, children.length);
+    const { generalization: _rawGeneralization, ...dataWithoutRawGeneralization } = stableData;
 
     return {
       ...node,
       data: {
-        ...stableData,
+        ...dataWithoutRawGeneralization,
         uid,
-        text
+        text,
+        ...(generalization ? { generalization } : {})
       },
-      children: getMindMapChildren(node).map((child, index) =>
-        walk(child, `${path}${MIND_MAP_CATALOG_RELATION.pathSeparator}${index + MIND_MAP_CATALOG_RELATION.firstOrder}`, UNTITLED_NODE_TITLE)
-      )
+      children
     };
   };
 
