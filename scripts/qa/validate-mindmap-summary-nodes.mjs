@@ -47,10 +47,13 @@ fs.writeFileSync(
 const {
   buildMindMapOutline,
   countNodes,
+  createEditorSafeMindMapTree,
   createMindMapStructureSignature,
   createMindMapSummaryNode,
   getMindMapSummarySnapshot,
   isMindMapSummaryNode,
+  MIND_MAP_SUMMARY_SNAPSHOT_KEY,
+  preserveMindMapSummarySnapshots,
   normalizeMindMapTree
 } = await import(`${pathToFileURL(snapshotModulePath).href}?qa=${Date.now()}`);
 
@@ -104,5 +107,21 @@ summarySnapshot.root.children.push({
 rootWithSummary.children[0].children[0].data.aistudySummarySnapshot = summarySnapshot;
 const afterSignature = createMindMapStructureSignature(rootWithSummary);
 assert(beforeSignature !== afterSignature, "summary map edits should update the structure signature");
+
+const editorSafeRoot = createEditorSafeMindMapTree(rootWithSummary);
+const editorSafeSummaryNode = editorSafeRoot.children[0].children[0];
+assert(isMindMapSummaryNode(editorSafeSummaryNode), "summary node marker should stay in editor-safe data");
+assert(
+  !editorSafeSummaryNode.data[MIND_MAP_SUMMARY_SNAPSHOT_KEY],
+  "summary inner snapshot must not be sent into the simple-mind-map editor"
+);
+
+const preservedRoot = preserveMindMapSummarySnapshots(rootWithSummary, editorSafeRoot);
+const preservedSummaryNode = preservedRoot.children[0].children[0];
+const preservedSummarySnapshot = getMindMapSummarySnapshot(preservedSummaryNode);
+assert(
+  preservedSummarySnapshot?.root.children[0]?.data?.uid === "summary-child",
+  "summary inner snapshot should be restored before saving the master map"
+);
 
 console.log("mind map summary node policy: ok");

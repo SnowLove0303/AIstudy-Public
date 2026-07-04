@@ -122,7 +122,7 @@ AISTUDY_MCP_ALLOW_EDIT = "0"
 - 不改内容的样式清理：`format_node_document`
 - 简单全文样式：`update_node_document_style`
 
-`write_node_document` 和 `append_node_document` 的 `text` 应保持干净并结构化：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。数学内容使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`，不要把 `epsilon`、`infinity`、`->`、`lim_{n->infinity}` 原样写入。
+`write_node_document` 和 `append_node_document` 的 `text` 应保持干净并结构化：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。不要把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和列表。数学内容使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`，不要把 `epsilon`、`infinity`、`->`、`lim_{n->infinity}` 原样写入。
 
 不要为了排版调用 `write_node_document` 重写整篇文档；节点已有内容时，`write_node_document` 默认拒绝覆盖，只有用户明确要求整篇覆盖时才传 `replaceExisting: true`。不要手写编辑器内部元素或用大量空行制造间距。`format_node_document` 只允许改样式，必须保证元素数量一致、所有 `value` 逐字不变；它不能清理空行、缩进正文、拆段或合段。
 

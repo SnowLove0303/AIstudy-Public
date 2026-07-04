@@ -306,6 +306,71 @@ export function normalizeMindMapTree(root: SimpleMindMapNode | null | undefined,
   return walk(source, MIND_MAP_CATALOG_RELATION.rootPath, fallbackTitle || "未命名导图");
 }
 
+export function createEditorSafeMindMapTree(root: SimpleMindMapNode | null | undefined, fallbackTitle = "未命名导图"): SimpleMindMapNode {
+  const normalized = normalizeMindMapTree(root, fallbackTitle);
+
+  const strip = (node: SimpleMindMapNode): SimpleMindMapNode => {
+    const { [MIND_MAP_SUMMARY_SNAPSHOT_KEY]: _summarySnapshot, ...data } = node.data;
+    return {
+      ...node,
+      data,
+      children: getMindMapChildren(node).map(strip)
+    };
+  };
+
+  return strip(normalized);
+}
+
+function cloneMindMapNodeForSummary(node: SimpleMindMapNode): SimpleMindMapNode {
+  return {
+    ...node,
+    data: { ...node.data },
+    children: getMindMapChildren(node).map(cloneMindMapNodeForSummary)
+  };
+}
+
+function cloneMindMapSummarySnapshot(snapshot: MindMapSnapshot): MindMapSnapshot {
+  return {
+    ...snapshot,
+    root: cloneMindMapNodeForSummary(snapshot.root),
+    view: undefined
+  };
+}
+
+function collectSummarySnapshotsByNodeId(root: SimpleMindMapNode | null | undefined, output = new Map<string, MindMapSnapshot>()) {
+  if (!root) return output;
+  const nodeId = typeof root.data?.uid === "string" ? root.data.uid : "";
+  const summarySnapshot = getMindMapSummarySnapshot(root);
+  if (nodeId && summarySnapshot) output.set(nodeId, summarySnapshot);
+  getMindMapChildren(root).forEach((child) => collectSummarySnapshotsByNodeId(child, output));
+  return output;
+}
+
+export function preserveMindMapSummarySnapshots(
+  previousRoot: SimpleMindMapNode | null | undefined,
+  nextRoot: SimpleMindMapNode
+): SimpleMindMapNode {
+  const summaries = collectSummarySnapshotsByNodeId(previousRoot);
+  if (summaries.size === 0) return nextRoot;
+
+  const walk = (node: SimpleMindMapNode): SimpleMindMapNode => {
+    const nodeId = typeof node.data?.uid === "string" ? node.data.uid : "";
+    const summarySnapshot = nodeId ? summaries.get(nodeId) : null;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        ...(isMindMapSummaryNode(node) && summarySnapshot
+          ? { [MIND_MAP_SUMMARY_SNAPSHOT_KEY]: cloneMindMapSummarySnapshot(summarySnapshot) }
+          : {})
+      },
+      children: getMindMapChildren(node).map(walk)
+    };
+  };
+
+  return walk(nextRoot);
+}
+
 export function countNodes(root: SimpleMindMapNode | null | undefined): number {
   if (!root) return 0;
   let count = 0;

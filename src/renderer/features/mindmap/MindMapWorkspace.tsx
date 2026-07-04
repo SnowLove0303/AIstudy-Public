@@ -37,8 +37,10 @@ import {
   MIND_MAP_CATALOG_BOUNDARY_KEY,
   MIND_MAP_LAYOUT_OPTIONS,
   MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY,
+  MIND_MAP_SUMMARY_SNAPSHOT_KEY,
   normalizeLayout,
-  normalizeSnapshot
+  normalizeSnapshot,
+  preserveMindMapSummarySnapshots
 } from "./mindMapSnapshot";
 import {
   isMindMapShortcutEvent,
@@ -565,7 +567,7 @@ function replaceSummarySnapshotInTree(
         ...root,
         data: {
           ...root.data,
-          aistudySummarySnapshot: {
+          [MIND_MAP_SUMMARY_SNAPSHOT_KEY]: {
             ...summarySnapshot,
             root: cloneMindMapNode(summarySnapshot.root),
             view: undefined,
@@ -684,7 +686,12 @@ function mergeFocusedSnapshot(
   focusedSnapshot: MindMapSnapshot
 ): MindMapSnapshot | null {
   if (!focusedNodeId) {
-    return focusedSnapshot;
+    return masterSnapshot
+      ? {
+          ...focusedSnapshot,
+          root: preserveMindMapSummarySnapshots(masterSnapshot.root, focusedSnapshot.root)
+        }
+      : focusedSnapshot;
   }
 
   if (!masterSnapshot) {
@@ -714,7 +721,7 @@ function mergeFocusedSnapshot(
 
   return {
     ...masterSnapshot,
-    root: result.root,
+    root: preserveMindMapSummarySnapshots(masterSnapshot.root, result.root),
     layout: focusedSnapshot.layout,
     theme: focusedSnapshot.theme,
     view: undefined,

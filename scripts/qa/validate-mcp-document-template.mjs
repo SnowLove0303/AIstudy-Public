@@ -62,4 +62,40 @@ assert.equal(workflowByValue.get("1. 旺店通/慧策供销找货页。\n")?.bol
 assert.equal(workflowByValue.get("1. huice-wdt.hot.goods.recommend.query\n")?.bold, false, "API action lines should remain list text");
 assert(!workflowElements.some((element) => element.value === "\n\n" && element.size >= 20), "MCP template must not create large blank spacer elements");
 
+const mermaidSource = [
+  "二、页面功能拆解",
+  "旺店通选品页可拆成三层：选品渠道、选品方式、筛选与判断字段。",
+  "```mermaid",
+  "mindmap",
+  "  root((旺店通选品页))",
+  "    选品渠道",
+  "      找爆款",
+  "      有上新",
+  "    选品方式",
+  "      搜索选品",
+  "      榜单选品",
+  "```"
+].join("\n");
+
+const mermaidElements = buildDocumentTemplateElements(mermaidSource);
+const mermaidText = mermaidElements.map((element) => element.value).join("");
+assert(!mermaidText.includes("```"), "MCP document template must not expose markdown fence markers");
+assert(!mermaidText.toLowerCase().includes("mermaid"), "MCP document template must not expose raw mermaid language markers");
+assert(mermaidText.includes("旺店通选品页"), "Mermaid mindmap root should be preserved as document text");
+assert(mermaidText.includes("找爆款"), "Mermaid mindmap child nodes should be preserved as document text");
+assert(mermaidText.includes("- 选品渠道"), "Mermaid mindmap should be converted to structured list text");
+
+const codeSource = [
+  "调试片段：",
+  "```ts",
+  "const value = \"\\\\n\";",
+  "console.log(value);",
+  "```"
+].join("\n");
+const codeElements = buildDocumentTemplateElements(codeSource);
+const codeText = codeElements.map((element) => element.value).join("");
+assert(!codeText.includes("```"), "ordinary code fences should not leak into document text");
+assert(codeText.includes('const value = "\\\\n";'), "ordinary code block content should keep backslashes");
+assert(codeElements.some((element) => element.font === "Consolas"), "ordinary code block should use code styling");
+
 console.log("MCP document template validation passed.");

@@ -1,5 +1,6 @@
 import { AISTUDY_CORE_CONTRACT } from "../../domain/coreContracts";
 import {
+  createEditorSafeMindMapTree,
   createXMindStyleThemeConfig,
   extractNodeId,
   extractNodeTitle,
@@ -141,7 +142,7 @@ async function ensureXMindExportPlugin(editor: any) {
 function toEditorData(snapshot: MindMapSnapshot) {
   const layout = normalizeLayout(snapshot.layout);
   return {
-    root: applyLayoutSafeNodeDimensions(normalizeMindMapTree(snapshot.root)),
+    root: applyLayoutSafeNodeDimensions(createEditorSafeMindMapTree(snapshot.root)),
     layout,
     theme: {
       template: snapshot.theme?.template ?? "default",
