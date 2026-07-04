@@ -8,7 +8,7 @@ Current files:
 
 - `KnowledgeDocumentWorkspace.tsx`: selected-node document loading, saving, toolbar, page navigation, importer entry, DOCX export, and inline AI panel.
 - `canvasEditorAdapter.ts`: the only place that creates and controls the canvas editor instance.
-- `documentDiagram.ts`: selected text to document diagram rendering for independent in-document structure images.
+- `documentEmbeddedMindMap.ts`: selected hierarchy text to editable embedded mind-map blocks stored as structured document JSON.
 - `knowledgeDocumentTypes.ts`: document snapshot, status, save input, command, and format-state types.
 - `../mathInput/mathClipboard.ts`: shared ChatGPT/KaTeX/MathML/plain-text math paste normalization used before inserting into canvas-editor.
 - `../mathInput/documentClipboard.ts`: shared ChatGPT/math-rich document paste normalization that turns headings, lists, separators, display math, and paragraphs into semantic blocks before the adapter writes canvas-editor elements.
@@ -23,7 +23,7 @@ Current files:
 - A successful database read with no node document opens an empty document and clears the old local mirror; local snapshots are only used when the document API or database read fails.
 - Large images and attachments must not be stored as long inline base64 in document JSON.
 - Document image insertion goes through `window.aistudyKnowledgeAssets.chooseImage`; the main process writes the image to `AIstudyPublicData/assets/knowledge-images`, records it in `knowledge_assets`, and the document snapshot keeps only `aistudy-asset://...` plus `aistudyAssetId` metadata.
-- Generated document diagrams go through `window.aistudyKnowledgeAssets.createGeneratedImage` and use the same asset storage/link path as uploaded document images; they are independent document images, not mind-map documents.
+- Embedded document mind maps are saved directly in the document snapshot as `aistudyBlockKind: "mindmap"` plus `aistudyMindMapData`; they are editable document blocks, not image assets and not the node's primary mind-map record.
 - Saving a node document synchronizes the current image asset ids into `knowledge_asset_links` with relation type `document-image`.
 - DOCX export is a read-only projection of the current node document snapshot; it must not mutate the editor snapshot or document binding.
 - Column layout is currently block-level: the editor converts simple text documents into a 1-row canvas-editor table marked as `aistudyBlockKind: "columns"`. Content columns are split by full page inner width, with disabled spacer cells on both sides of each center divider so text does not touch the divider. Setting one column closes column layout by merging content cells in reading order while skipping spacer cells; switching between two and three columns first merges the existing column block and then redistributes the text. Complex non-column documents fall back to inserting an empty column block instead of rewriting tables or images. It is saved in the normal snapshot, reopens through the existing document loader, and exports to DOCX as content columns with only the internal divider. It is not a page/section-level flowing Word columns implementation.

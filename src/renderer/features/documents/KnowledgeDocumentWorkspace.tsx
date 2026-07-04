@@ -34,7 +34,7 @@ import {
   X
 } from "lucide-react";
 import { createCanvasDocumentEditor, createEmptyKnowledgeDocumentSnapshot } from "./canvasEditorAdapter";
-import { renderDiagramPngDataUrl } from "./documentDiagram";
+import { parseEmbeddedMindMapText } from "./documentEmbeddedMindMap";
 import { AiAssistantPanel } from "../assistant/AiAssistantPanel";
 import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
@@ -634,7 +634,7 @@ export function KnowledgeDocumentWorkspace({
   const [isSaving, setIsSaving] = React.useState(false);
   const [isExportingDocx, setIsExportingDocx] = React.useState(false);
   const [isChoosingImage, setIsChoosingImage] = React.useState(false);
-  const [isGeneratingDiagram, setIsGeneratingDiagram] = React.useState(false);
+  const [isInsertingMindMap, setIsInsertingMindMap] = React.useState(false);
   const [isEditorReady, setIsEditorReady] = React.useState(false);
   const isFormatPanelOpen = detailPaneMode === "format";
   const [formatPanelSlot, setFormatPanelSlot] = React.useState<HTMLElement | null>(null);
@@ -1472,40 +1472,25 @@ export function KnowledgeDocumentWorkspace({
   }, []);
 
   const insertDiagram = React.useCallback(async () => {
-    if (!documentBinding || !window.aistudyKnowledgeAssets?.createGeneratedImage || isGeneratingDiagram) return;
+    if (!documentBinding || isInsertingMindMap) return;
     const selectedText = readSelectedText().trim();
     if (!selectedText) {
       setError("请先选中层级文本");
       return;
     }
-    setIsGeneratingDiagram(true);
+    setIsInsertingMindMap(true);
     setError("");
     try {
-      const diagram = await renderDiagramPngDataUrl(selectedText);
-      const result = await window.aistudyKnowledgeAssets.createGeneratedImage({
-        ...documentBinding,
-        relationType: "document-image",
-        dataUrl: diagram.dataUrl,
-        fileName: `${selectedNode.title || "document"}-structure.png`
-      });
-      if (result.canceled || !result.assetId || !result.url) return;
-      editorRef.current?.insertImage({
-        assetId: result.assetId,
-        url: result.url,
-        fileName: result.fileName,
-        mimeType: result.mimeType,
-        width: result.width || diagram.width,
-        height: result.height || diagram.height
-      });
+      editorRef.current?.insertEmbeddedMindMap(parseEmbeddedMindMapText(selectedText));
       documentDirtyRef.current = true;
       editorRef.current?.focus();
       void saveNow();
     } catch (error) {
-      setError(getErrorMessage(error, "结构图插入失败"));
+      setError(getErrorMessage(error, "导图插入失败"));
     } finally {
-      setIsGeneratingDiagram(false);
+      setIsInsertingMindMap(false);
     }
-  }, [documentBinding, isGeneratingDiagram, readSelectedText, saveNow, selectedNode.title]);
+  }, [documentBinding, isInsertingMindMap, readSelectedText, saveNow]);
 
   const openAssistantPanel = React.useCallback((point: { x: number; y: number }, text?: string) => {
     const selectedText = text?.trim() || readSelectedText().trim() || lastSelectedTextRef.current;
@@ -1707,9 +1692,9 @@ export function KnowledgeDocumentWorkspace({
           <Bot size={15} />
           <span>AI</span>
         </button>
-        <button type="button" title="结构图" onClick={() => void insertDiagram()} disabled={!canUseDocument || !isEditorReady || isSaving || isGeneratingDiagram}>
-          {isGeneratingDiagram ? <Loader2 className="spin-icon" size={15} /> : <Braces size={15} />}
-          <span>结构图</span>
+        <button type="button" title="导图" onClick={() => void insertDiagram()} disabled={!canUseDocument || !isEditorReady || isSaving || isInsertingMindMap}>
+          {isInsertingMindMap ? <Loader2 className="spin-icon" size={15} /> : <Braces size={15} />}
+          <span>导图</span>
         </button>
         <button type="button" title="导入文档" onClick={() => setIsImporterOpen(true)} disabled={!canUseDocument || isSaving}>
           <Upload size={15} />

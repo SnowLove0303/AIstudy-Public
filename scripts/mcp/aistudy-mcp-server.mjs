@@ -1882,8 +1882,11 @@ const DOCUMENT_TEMPLATE_STYLE_KEYS = new Set([
   "translateX",
   "width",
   "height",
+  "block",
   "aistudyBlockKind",
-  "aistudyColumnCount"
+  "aistudyColumnCount",
+  "aistudyMindMapVersion",
+  "aistudyMindMapData"
 ]);
 
 const DOCUMENT_ELEMENT_NESTED_CONTAINER_KEYS = new Set([
@@ -1974,7 +1977,10 @@ const DOCUMENT_TEXT_SKIP_KEYS = new Set([
   "name",
   "id",
   "uuid",
-  "graffiti"
+  "graffiti",
+  "block",
+  "aistudyMindMapVersion",
+  "aistudyMindMapData"
 ]);
 
 const DOCUMENT_TEXT_NOISE_LINE_PATTERN = /^(?:title|list|ol|ul|separator|paragraph|text|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)|rgba\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*(?:0|1|0?\.\d+)\s*\)|#[0-9a-f]{3,8})$/i;

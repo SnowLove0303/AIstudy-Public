@@ -69,6 +69,27 @@ type DocxParagraphBlock = {
   style: DocxParagraphStyle;
 };
 
+function readEmbeddedMindMapText(element: Record<string, unknown>) {
+  if (element.aistudyBlockKind !== "mindmap" || !isRecord(element.aistudyMindMapData)) return "";
+  const data = element.aistudyMindMapData as Record<string, unknown>;
+  const lines: string[] = [];
+  const root = typeof data.root === "string" && data.root.trim() ? data.root.trim() : "导图";
+  lines.push(root);
+  const groups = Array.isArray(data.groups) ? data.groups : [];
+  groups.forEach((group) => {
+    if (!isRecord(group)) return;
+    const title = typeof group.title === "string" && group.title.trim() ? group.title.trim() : "分支";
+    lines.push(`  ${title}`);
+    const children = Array.isArray(group.children) ? group.children : [];
+    children.forEach((child) => {
+      if (!isRecord(child)) return;
+      const childTitle = typeof child.title === "string" && child.title.trim() ? child.title.trim() : "";
+      if (childTitle) lines.push(`    ${childTitle}`);
+    });
+  });
+  return lines.join("\n");
+}
+
 const { dialog } = electron;
 type BrowserWindow = electron.BrowserWindow;
 
@@ -313,6 +334,11 @@ function flattenElementToParagraphBlocks(
 
   const textStyle = readElementTextStyle(element, inheritedTextStyle);
   const paragraphStyle = readElementParagraphStyle(element, inheritedParagraphStyle);
+  const embeddedMindMapText = readEmbeddedMindMapText(element);
+  if (embeddedMindMapText) {
+    appendTextToParagraphBlocks(embeddedMindMapText, textStyle, paragraphStyle, blocks, current);
+    return;
+  }
   if (element.type === "tab") {
     appendTextToParagraphBlocks("\t", textStyle, paragraphStyle, blocks, current);
   } else if (typeof element.value === "string") {

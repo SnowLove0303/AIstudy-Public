@@ -7,6 +7,7 @@ import type {
   KnowledgeDocumentEditorHandle,
   KnowledgeDocumentFormatState,
   KnowledgeDocumentImageInput,
+  KnowledgeDocumentEmbeddedMindMapInput,
   KnowledgeDocumentInlineElement,
   KnowledgeDocumentListType,
   KnowledgeDocumentSnapshot
@@ -15,6 +16,14 @@ import { AISTUDY_CORE_CONTRACT } from "../../domain/coreContracts";
 import { parseClipboardDocumentBlocks, type ClipboardDocumentBlock } from "../mathInput/documentClipboard";
 import { parseClipboardMathElements } from "../mathInput/mathClipboard";
 import { normalizeDocumentUrl, normalizeDocumentUrlLinksInContent, normalizeDocumentUrlLinksInElementList } from "./documentUrlLinks";
+import {
+  createEmbeddedMindMapSrcDoc,
+  DOCUMENT_MIND_MAP_BLOCK_KIND,
+  DOCUMENT_MIND_MAP_MESSAGE_SOURCE,
+  getEmbeddedMindMapHeight,
+  normalizeEmbeddedMindMapData,
+  type EmbeddedMindMapData
+} from "./documentEmbeddedMindMap";
 
 const DOCUMENT_EDITOR_VERSION = "canvas-editor@0.9.135";
 const DEFAULT_FONT_SIZE = 16;
@@ -73,6 +82,9 @@ const DOCUMENT_GET_VALUE_OPTIONS = {
     "aistudyAssetFileName",
     "aistudyAssetWidth",
     "aistudyAssetHeight",
+    "aistudyMindMapData",
+    "aistudyMindMapVersion",
+    "block",
     "href",
     "url"
   ] as unknown as Array<keyof IElement>
@@ -868,6 +880,7 @@ export async function createCanvasDocumentEditor(
     ListStyle,
     TitleLevel,
     ElementType,
+    BlockType,
     TableBorder,
     TdBorder
   } = await loadCanvasEditor();
@@ -920,6 +933,53 @@ export async function createCanvasDocumentEditor(
       aistudyAssetWidth: image.width,
       aistudyAssetHeight: image.height
     } as IElement;
+  };
+  const createEmbeddedMindMapElement = (input: KnowledgeDocumentEmbeddedMindMapInput): IElement => {
+    const data = normalizeEmbeddedMindMapData(input);
+    const blockId = `doc_mindmap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const naturalWidth = 720;
+    const naturalHeight = getEmbeddedMindMapHeight(data);
+    const maxWidth = Math.min(680, getPageInnerWidth());
+    const scale = Math.min(1, maxWidth / naturalWidth);
+    return {
+      id: blockId,
+      value: "",
+      type: ElementType.BLOCK,
+      width: Math.round(naturalWidth * scale),
+      height: Math.round(naturalHeight * scale),
+      rowFlex: RowFlex.CENTER,
+      block: {
+        type: BlockType.IFRAME,
+        iframeBlock: {
+          srcdoc: createEmbeddedMindMapSrcDoc(blockId, data),
+          sandbox: ["allow-scripts"]
+        }
+      },
+      aistudyBlockKind: DOCUMENT_MIND_MAP_BLOCK_KIND,
+      aistudyMindMapVersion: 1,
+      aistudyMindMapData: data
+    } as IElement;
+  };
+  const updateEmbeddedMindMapElement = (blockId: string, input: EmbeddedMindMapData, height?: number) => {
+    const data = normalizeEmbeddedMindMapData(input);
+    const nextHeight = Number.isFinite(height) ? Math.max(220, Math.min(540, Math.round(Number(height)))) : getEmbeddedMindMapHeight(data);
+    const properties = {
+      value: "",
+      block: {
+        type: BlockType.IFRAME,
+        iframeBlock: {
+          srcdoc: createEmbeddedMindMapSrcDoc(blockId, data),
+          sandbox: ["allow-scripts"]
+        }
+      },
+      height: nextHeight,
+      aistudyBlockKind: DOCUMENT_MIND_MAP_BLOCK_KIND,
+      aistudyMindMapVersion: 1,
+      aistudyMindMapData: data
+    } as Partial<IElement>;
+    editor.command.executeUpdateElementById({ id: blockId, properties });
+    hasUserEdited = true;
+    scheduleSnapshot();
   };
   const getColumnDividerGap = (pageInnerWidth: number, columns: KnowledgeDocumentColumnCount) => {
     const sectionWidth = pageInnerWidth / columns;
@@ -1607,6 +1667,20 @@ export async function createCanvasDocumentEditor(
     event.stopPropagation();
     events.onOpenUrl?.(hitUrl);
   };
+  const handleEmbeddedMindMapMessage = (event: MessageEvent) => {
+    const payload = event.data as {
+      source?: unknown;
+      blockId?: unknown;
+      data?: unknown;
+      height?: unknown;
+    };
+    if (!payload || payload.source !== DOCUMENT_MIND_MAP_MESSAGE_SOURCE || typeof payload.blockId !== "string") return;
+    try {
+      updateEmbeddedMindMapElement(payload.blockId, normalizeEmbeddedMindMapData(payload.data), Number(payload.height));
+    } catch {
+      // The block may have been deleted while its iframe was still settling.
+    }
+  };
   const markUserEdited = () => {
     hasUserEdited = true;
   };
@@ -1628,6 +1702,7 @@ export async function createCanvasDocumentEditor(
   container.addEventListener("cut", markUserEdited, true);
   container.addEventListener("drop", markUserEdited, true);
   container.addEventListener("compositionstart", markUserEdited, true);
+  window.addEventListener("message", handleEmbeddedMindMapMessage);
   window.addEventListener("pointerup", finishPointerSelection);
   window.addEventListener("pointercancel", finishPointerSelection);
 
@@ -1737,6 +1812,9 @@ export async function createCanvasDocumentEditor(
       if (!image.assetId || !image.url) return;
       runFormatCommand(() => editor.command.executeInsertElementList([createImageElement(image)]));
     },
+    insertEmbeddedMindMap: (data) => {
+      runFormatCommand(() => editor.command.executeInsertElementList([createEmbeddedMindMapElement(data)]));
+    },
     cancelBlankListOnEnter,
     insertTable: (rows, cols) => {
       runFormatCommand(() => editor.command.executeInsertTable(rows, cols));
@@ -1785,6 +1863,7 @@ export async function createCanvasDocumentEditor(
       container.removeEventListener("cut", markUserEdited, true);
       container.removeEventListener("drop", markUserEdited, true);
       container.removeEventListener("compositionstart", markUserEdited, true);
+      window.removeEventListener("message", handleEmbeddedMindMapMessage);
       window.removeEventListener("pointerup", finishPointerSelection);
       window.removeEventListener("pointercancel", finishPointerSelection);
       try {

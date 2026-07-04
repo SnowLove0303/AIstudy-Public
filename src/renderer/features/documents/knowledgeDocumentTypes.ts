@@ -78,6 +78,18 @@ export type KnowledgeDocumentImageInput = {
   height?: number;
 };
 
+export type KnowledgeDocumentEmbeddedMindMapInput = {
+  root: string;
+  groups: Array<{
+    id: string;
+    title: string;
+    children: Array<{
+      id: string;
+      title: string;
+    }>;
+  }>;
+};
+
 export type KnowledgeDocumentFormatState = {
   fontFamily: string;
   fontSize: number;
@@ -107,6 +119,7 @@ export type KnowledgeDocumentEditorHandle = {
   setList: (type: KnowledgeDocumentListType) => void;
   insertInlineElements: (elements: KnowledgeDocumentInlineElement[]) => void;
   insertImage: (image: KnowledgeDocumentImageInput) => void;
+  insertEmbeddedMindMap: (data: KnowledgeDocumentEmbeddedMindMapInput) => void;
   cancelBlankListOnEnter: () => boolean;
   insertTable: (rows: number, cols: number) => void;
   insertColumnBlock: (columns: KnowledgeDocumentColumnCount) => void;

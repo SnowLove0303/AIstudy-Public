@@ -100,6 +100,44 @@ assert((columnCells[1].match(/<w:p(?:\s|>)/g) ?? []).length >= 3, "right column 
 assert(!columnXml.includes('w:fill="F8FAFC"'), "column block export should not apply normal table first-column shading");
 assert(!columnXml.includes("<w:cantSplit"), "column block rows should allow Word/WPS to paginate across pages");
 
+const normalizedMindMapSnapshot = normalizeDocumentSnapshot(createSnapshot([
+  {
+    id: "doc_mindmap_policy",
+    type: "block",
+    value: "",
+    width: 680,
+    height: 320,
+    block: {
+      type: "iframe",
+      iframeBlock: {
+        srcdoc: "<!doctype html><html><body>mindmap</body></html>",
+        sandbox: ["allow-scripts"]
+      }
+    },
+    aistudyBlockKind: "mindmap",
+    aistudyMindMapVersion: 1,
+    aistudyMindMapData: {
+      version: 1,
+      root: "Selection",
+      groups: [
+        {
+          id: "group_channel",
+          title: "Channel",
+          children: [{ id: "node_hot", title: "Hot picks" }]
+        }
+      ]
+    }
+  }
+]));
+const normalizedMindMapBlock = normalizedMindMapSnapshot.content.main[0];
+assert(normalizedMindMapBlock.aistudyBlockKind === "mindmap", "MCP snapshot normalization should preserve embedded mind map kind");
+assert(normalizedMindMapBlock.block?.type === "iframe", "MCP snapshot normalization should preserve embedded mind map iframe block");
+assert(normalizedMindMapBlock.block?.iframeBlock?.sandbox?.includes("allow-scripts"), "MCP snapshot normalization should preserve embedded mind map iframe sandbox");
+assert(
+  normalizedMindMapBlock.aistudyMindMapData?.groups?.[0]?.children?.[0]?.title === "Hot picks",
+  "MCP snapshot normalization should preserve embedded mind map structured data"
+);
+
 const normalizedColumnSnapshot = normalizeDocumentSnapshot(createSnapshot([
   {
     type: "table",
