@@ -141,6 +141,7 @@ type CourseStore = {
   sections: CourseSectionRecord[];
   courses: CourseRecord[];
   activeCourseId: string | null;
+  databaseSourceKey?: string;
 };
 
 type CourseSyncStatus = {
@@ -229,6 +230,7 @@ type PendingCourseOperation = {
     | "section:toggle-all"
     | "section:delete";
   payload: Record<string, unknown>;
+  databaseSourceKey?: string;
   createdAt: string;
   retryCount: number;
   lastError?: string;
@@ -368,6 +370,17 @@ type MysqlConfig = {
   textbookAnnotationTable: string;
 };
 
+type DatabaseSettings = {
+  provider: DatabaseProvider;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  passwordSet: boolean;
+  ssl: boolean;
+  skipSchemaCreation: boolean;
+};
+
 type CourseRow = RowDataPacket & {
   id: string;
   name: string;
@@ -403,6 +416,7 @@ type CourseCountRow = RowDataPacket & {
 
 type MysqlRuntime = ExamMysqlRuntime & TextbookMysqlRuntime & {
   provider: DatabaseProvider;
+  sourceKey: string;
   courseTable: string;
   courseSectionTable: string;
   mindMapTable: string;
@@ -4334,6 +4348,9 @@ function normalizeCourseStore(value: unknown): CourseStore {
   }
 
   const candidate = value as Partial<CourseStore>;
+  const databaseSourceKey = typeof candidate.databaseSourceKey === "string" && candidate.databaseSourceKey.trim()
+    ? candidate.databaseSourceKey.trim()
+    : undefined;
   const sectionIds = new Set<string>();
   const sections = Array.isArray(candidate.sections)
     ? candidate.sections
@@ -4379,7 +4396,27 @@ function normalizeCourseStore(value: unknown): CourseStore {
     ? candidate.activeCourseId
     : null;
 
-  return { sections, courses, activeCourseId };
+  return databaseSourceKey ? { sections, courses, activeCourseId, databaseSourceKey } : { sections, courses, activeCourseId };
+}
+
+function withCourseStoreSourceKey(store: CourseStore, databaseSourceKey: string): CourseStore {
+  return normalizeCourseStore({ ...store, databaseSourceKey });
+}
+
+function createEmptyCourseStoreForSource(databaseSourceKey?: string): CourseStore {
+  return databaseSourceKey ? { sections: [], courses: [], activeCourseId: null, databaseSourceKey } : { sections: [], courses: [], activeCourseId: null };
+}
+
+function isCourseStoreCompatibleWithSource(store: CourseStore, sourceKey: string, provider: DatabaseProvider) {
+  const normalized = normalizeCourseStore(store);
+  if (normalized.databaseSourceKey) {
+    return normalized.databaseSourceKey === sourceKey;
+  }
+  return provider === "mysql";
+}
+
+function isCourseStoreCompatibleWithRuntime(store: CourseStore, runtime: MysqlRuntime) {
+  return isCourseStoreCompatibleWithSource(store, runtime.sourceKey, runtime.provider);
 }
 
 function normalizeWorkspaceEditorMode(value: unknown): CourseRecord["lastWorkspaceMode"] {
@@ -4433,6 +4470,22 @@ function getBooleanSetting(value: unknown, fallback: boolean) {
 function getDatabaseProviderSetting(value: unknown, fallback: DatabaseProvider): DatabaseProvider {
   if (typeof value !== "string") return fallback;
   return value.trim().toLowerCase() === "tidb" ? "tidb" : "mysql";
+}
+
+function normalizeDatabaseSourcePart(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : fallback;
+}
+
+function getDatabaseSourceKey(config: Pick<MysqlConfig, "provider" | "host" | "port" | "user" | "database">) {
+  const provider = config.provider === "tidb" ? "tidb" : "mysql";
+  const host = normalizeDatabaseSourcePart(config.host, "127.0.0.1");
+  const user = normalizeDatabaseSourcePart(config.user, "root");
+  const database = normalizeDatabaseSourcePart(config.database, PUBLIC_MYSQL_DATABASE);
+  return `${provider}:${user}@${host}:${config.port}/${database}`;
+}
+
+async function readCurrentDatabaseSourceKey() {
+  return getDatabaseSourceKey(await readMysqlConfig());
 }
 
 function readSetting(source: unknown, key: keyof MysqlConfig) {
@@ -4691,6 +4744,60 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
   validateMysqlIdentifier(config.textbookNoteTable, "MySQL textbook note table");
   validateMysqlIdentifier(config.textbookAnnotationTable, "MySQL textbook annotation table");
   return config;
+}
+
+function getDatabaseSettingsFilePath() {
+  return getAistudyDataPath("config", "mysql.config.json");
+}
+
+async function readDatabaseSettings(): Promise<DatabaseSettings> {
+  const config = await readMysqlConfig();
+  return {
+    provider: config.provider,
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: "",
+    passwordSet: Boolean(config.password),
+    ssl: config.ssl,
+    skipSchemaCreation: config.skipSchemaCreation
+  };
+}
+
+function normalizeDatabaseSettingsInput(input: unknown, current: MysqlConfig, savedConfig: Partial<MysqlConfig>) {
+  const candidate = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const passwordInput = typeof candidate.password === "string" ? candidate.password : "";
+  const savedPassword = typeof readSetting(savedConfig, "password") === "string" ? String(readSetting(savedConfig, "password")) : "";
+  return {
+    provider: getDatabaseProviderSetting(candidate.provider, current.provider),
+    host: getStringSetting(candidate.host, current.host),
+    port: parsePort(candidate.port, current.port),
+    user: getStringSetting(candidate.user, current.user),
+    password: passwordInput ? passwordInput : savedPassword,
+    ssl: getBooleanSetting(candidate.ssl, current.ssl),
+    skipSchemaCreation: getBooleanSetting(candidate.skipSchemaCreation, current.skipSchemaCreation)
+  };
+}
+
+async function resetMysqlRuntime() {
+  const runtime = mysqlRuntime;
+  mysqlRuntime = null;
+  mysqlRuntimePromise = null;
+  if (runtime) {
+    await runtime.pool.end().catch((error) => {
+      console.warn("Previous database pool did not close cleanly.", error);
+    });
+  }
+}
+
+async function saveDatabaseSettings(input: unknown): Promise<DatabaseSettings> {
+  const current = await readMysqlConfig();
+  const settingsFilePath = getDatabaseSettingsFilePath();
+  const savedConfig = await readMysqlConfigFile(settingsFilePath);
+  const next = normalizeDatabaseSettingsInput(input, current, savedConfig);
+  await writeJsonAtomic(settingsFilePath, next);
+  await resetMysqlRuntime();
+  return readDatabaseSettings();
 }
 
 async function ensureDatabase(config: MysqlConfig) {
@@ -5288,6 +5395,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
   mysqlRuntime = {
     pool,
     provider: config.provider,
+    sourceKey: getDatabaseSourceKey(config),
     courseTable,
     courseSectionTable,
     mindMapTable,
@@ -5376,6 +5484,16 @@ async function readLocalCourseStore(): Promise<CourseStore> {
   }
 }
 
+async function readCurrentSourceLocalCourseStore(): Promise<CourseStore> {
+  const cache = await readLocalCourseStore();
+  const config = await readMysqlConfig();
+  const sourceKey = getDatabaseSourceKey(config);
+  if (isCourseStoreCompatibleWithSource(cache, sourceKey, config.provider)) {
+    return withCourseStoreSourceKey(cache, sourceKey);
+  }
+  return createEmptyCourseStoreForSource(sourceKey);
+}
+
 async function writeLocalCourseStore(store: CourseStore) {
   const normalized = normalizeCourseStore(store);
   await writeJsonAtomic(getCourseStoreFilePath(), normalized);
@@ -5441,6 +5559,7 @@ function normalizePendingCourseOperations(value: unknown): PendingCourseOperatio
         id: normalizeId(item.id, "Pending course operation id", randomUUID()),
         action: action as PendingCourseOperation["action"],
         payload,
+        databaseSourceKey: typeof item.databaseSourceKey === "string" && item.databaseSourceKey.trim() ? item.databaseSourceKey.trim() : undefined,
         createdAt: toIsoTimestamp(typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString()),
         retryCount: Number.isFinite(Number(item.retryCount)) ? Number(item.retryCount) : 0,
         lastError: typeof item.lastError === "string" ? item.lastError.slice(0, 500) : undefined
@@ -5468,10 +5587,12 @@ async function writePendingCourseOperations(operations: PendingCourseOperation[]
 
 async function appendPendingCourseOperation(action: PendingCourseOperation["action"], payload: Record<string, unknown>) {
   const operations = await readPendingCourseOperations();
+  const databaseSourceKey = await readCurrentDatabaseSourceKey().catch(() => undefined);
   operations.push({
     id: randomUUID(),
     action,
     payload,
+    databaseSourceKey,
     createdAt: new Date().toISOString(),
     retryCount: 0
   });
@@ -5482,7 +5603,7 @@ async function canUseCourseMysqlRuntime() {
   try {
     const runtime = await getMysqlRuntime();
     await runtime.pool.query("SELECT 1");
-    const cache = await readLocalCourseStore();
+    const cache = await readCurrentSourceLocalCourseStore();
     if (cache.courses.length > 0) {
       const [rows] = await runtime.pool.execute<CourseCountRow[]>(
         `SELECT COUNT(*) AS liveCount FROM ${runtime.courseTable} WHERE deleted_at IS NULL`
@@ -5497,8 +5618,29 @@ async function canUseCourseMysqlRuntime() {
   }
 }
 
+function isPendingCourseOperationCompatibleWithSource(
+  operation: PendingCourseOperation,
+  sourceKey: string,
+  provider: DatabaseProvider
+) {
+  if (operation.databaseSourceKey) {
+    return operation.databaseSourceKey === sourceKey;
+  }
+  return provider === "mysql";
+}
+
+function isPendingCourseOperationCompatibleWithRuntime(operation: PendingCourseOperation, runtime: MysqlRuntime) {
+  return isPendingCourseOperationCompatibleWithSource(operation, runtime.sourceKey, runtime.provider);
+}
+
+async function readCurrentSourcePendingCourseOperations() {
+  const [config, operations] = await Promise.all([readMysqlConfig(), readPendingCourseOperations()]);
+  const sourceKey = getDatabaseSourceKey(config);
+  return operations.filter((operation) => isPendingCourseOperationCompatibleWithSource(operation, sourceKey, config.provider));
+}
+
 async function getCourseSyncStatus(): Promise<CourseSyncStatus> {
-  const operations = await readPendingCourseOperations();
+  const operations = await readCurrentSourcePendingCourseOperations();
   const hasReplayFailure = operations.some((operation) => operation.retryCount > 0 || Boolean(operation.lastError));
   const mysqlReady = await canUseCourseMysqlRuntime();
   return {
@@ -6419,8 +6561,11 @@ async function getUpdateManagerInfo(): Promise<UpdateManagerInfo> {
 
 async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore> {
   const runtime = await getMysqlRuntime();
+  const sourceCache = isCourseStoreCompatibleWithRuntime(cache, runtime)
+    ? withCourseStoreSourceKey(cache, runtime.sourceKey)
+    : createEmptyCourseStoreForSource(runtime.sourceKey);
   await replayPendingCourseOperations(runtime);
-  await repairCourseIndexFromCache(runtime, cache);
+  await repairCourseIndexFromCache(runtime, sourceCache);
   const { pool, courseTable, courseSectionTable } = runtime;
   const [sectionRows] = await pool.execute<CourseSectionRow[]>(
     `SELECT id, name, sort_order AS sortOrder, collapsed, created_at AS createdAt, updated_at AS updatedAt
@@ -6435,7 +6580,7 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
      WHERE deleted_at IS NULL
      ORDER BY COALESCE(section_id, ''), sort_order ASC, updated_at DESC`
   );
-  if (rows.length === 0 && cache.courses.length > 0) {
+  if (rows.length === 0 && sourceCache.courses.length > 0) {
     throw new Error("Course database returned an empty course index while local courses exist.");
   }
   const sections = sectionRows.map((row) => ({
@@ -6457,13 +6602,14 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
     createdAt: toIsoTimestamp(row.createdAt),
     updatedAt: toIsoTimestamp(row.updatedAt)
   }));
-  const activeCourseId = cache.activeCourseId && courses.some((course) => course.id === cache.activeCourseId)
-    ? cache.activeCourseId
+  const activeCourseId = sourceCache.activeCourseId && courses.some((course) => course.id === sourceCache.activeCourseId)
+    ? sourceCache.activeCourseId
     : courses[0]?.id ?? null;
-  return normalizeCourseStore({ sections, courses, activeCourseId });
+  return normalizeCourseStore({ sections, courses, activeCourseId, databaseSourceKey: runtime.sourceKey });
 }
 
 async function repairCourseIndexFromCache(runtime: MysqlRuntime, cache: CourseStore) {
+  if (!isCourseStoreCompatibleWithRuntime(cache, runtime)) return;
   const normalized = normalizeCourseStore(cache);
   if (normalized.courses.length === 0) return;
 
@@ -6557,7 +6703,7 @@ async function repairCourseIndexFromCache(runtime: MysqlRuntime, cache: CourseSt
 
 async function writeCourseStoreToMysql(store: CourseStore): Promise<CourseStore> {
   const normalized = normalizeCourseStore(store);
-  const { pool, courseTable, courseSectionTable } = await getMysqlRuntime();
+  const { pool, courseTable, courseSectionTable, sourceKey } = await getMysqlRuntime();
   const connection = await pool.getConnection();
 
   try {
@@ -6565,7 +6711,7 @@ async function writeCourseStoreToMysql(store: CourseStore): Promise<CourseStore>
     await replaceCourseSectionRows(connection, courseSectionTable, normalized.sections);
     await replaceCourseRows(connection, courseTable, normalized.courses);
     await connection.commit();
-    return normalized;
+    return withCourseStoreSourceKey(normalized, sourceKey);
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -6577,7 +6723,7 @@ async function writeCourseStoreToMysql(store: CourseStore): Promise<CourseStore>
 function createCourseStorageProvider(): DbFirstStorageProvider<CourseStore> {
   return {
     name: "Course store",
-    readCache: readLocalCourseStore,
+    readCache: readCurrentSourceLocalCourseStore,
     writeCache: writeLocalCourseStore,
     readDatabase: readCourseStoreFromMysql,
     writeDatabase: writeCourseStoreToMysql
@@ -6665,8 +6811,10 @@ async function replaceCourseRows(connection: PoolConnection, courseTable: string
 }
 
 async function writeCourseStore(store: CourseStore) {
+  const sourceKey = await readCurrentDatabaseSourceKey().catch(() => undefined);
   const normalized = normalizeCourseStore(store);
-  return (await writeDbFirstStore(createCourseStorageProvider(), normalized)).value;
+  const scoped = sourceKey ? withCourseStoreSourceKey(normalized, sourceKey) : normalized;
+  return (await writeDbFirstStore(createCourseStorageProvider(), scoped)).value;
 }
 
 function errorToMessage(error: unknown) {
@@ -6889,9 +7037,12 @@ async function applyPendingCourseOperation(connection: PoolConnection, runtime: 
 async function replayPendingCourseOperations(runtime: MysqlRuntime) {
   const operations = await readPendingCourseOperations();
   if (operations.length === 0) return;
+  const compatibleOperations = operations.filter((operation) => isPendingCourseOperationCompatibleWithRuntime(operation, runtime));
+  const retainedOperations = operations.filter((operation) => !isPendingCourseOperationCompatibleWithRuntime(operation, runtime));
+  if (compatibleOperations.length === 0) return;
 
-  for (let index = 0; index < operations.length; index += 1) {
-    const operation = operations[index];
+  for (let index = 0; index < compatibleOperations.length; index += 1) {
+    const operation = compatibleOperations[index];
     const connection = await runtime.pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -6900,12 +7051,13 @@ async function replayPendingCourseOperations(runtime: MysqlRuntime) {
     } catch (error) {
       await connection.rollback();
       await writePendingCourseOperations([
+        ...retainedOperations,
         {
           ...operation,
           retryCount: operation.retryCount + 1,
           lastError: errorToMessage(error).slice(0, 500)
         },
-        ...operations.slice(index + 1)
+        ...compatibleOperations.slice(index + 1)
       ]);
       throw error;
     } finally {
@@ -6913,7 +7065,7 @@ async function replayPendingCourseOperations(runtime: MysqlRuntime) {
     }
   }
 
-  await writePendingCourseOperations([]);
+  await writePendingCourseOperations(retainedOperations);
 }
 
 function normalizeCourseName(value: unknown) {
@@ -6978,7 +7130,9 @@ function normalizeTargetSectionId(store: CourseStore, value: unknown) {
 }
 
 async function writeAndNormalizeLocalCourseStore(store: CourseStore) {
-  return await writeLocalCourseStore(normalizeCourseStore(store));
+  const sourceKey = await readCurrentDatabaseSourceKey().catch(() => undefined);
+  const normalized = normalizeCourseStore(store);
+  return await writeLocalCourseStore(sourceKey ? withCourseStoreSourceKey(normalized, sourceKey) : normalized);
 }
 
 async function writeLocalCourseStoreWithPending(
@@ -10896,6 +11050,9 @@ ipcMain.handle(
 );
 
 ipcMain.handle("error-logs:list", withUserFacingError("error-logs:list", "报错日志暂时无法读取。", (_event, limit) => listAppErrorLogs(limit)));
+
+ipcMain.handle("database:get-settings", withUserFacingError("database:get-settings", "数据库设置暂时无法读取。", () => readDatabaseSettings()));
+ipcMain.handle("database:save-settings", withUserFacingError("database:save-settings", "数据库设置暂时无法保存。", (_event, input) => saveDatabaseSettings(input)));
 
 ipcMain.handle("runtime:diagnose", withUserFacingError("runtime:diagnose", "环境检查没有完成，请稍后再试。", () => diagnoseRuntime()));
 

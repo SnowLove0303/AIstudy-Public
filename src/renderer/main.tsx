@@ -11,6 +11,7 @@ import {
   ChevronsDown,
   ChevronsRight,
   ClipboardList,
+  Database,
   Download,
   ExternalLink,
   FileText,
@@ -193,7 +194,20 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
 type CourseDialogMode = "create" | "edit";
 type AppSection = "knowledge" | "collection" | "exam" | "assistant" | "chromePorts" | "vocabulary";
 type DetailPaneMode = "catalog" | "format";
-type SettingsPage = "runtime" | "mcp" | "shortcuts" | "updates" | "errorLogs";
+type SettingsPage = "runtime" | "database" | "mcp" | "shortcuts" | "updates" | "errorLogs";
+
+type DatabaseProvider = "mysql" | "tidb";
+
+type DatabaseSettings = {
+  provider: DatabaseProvider;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  passwordSet: boolean;
+  ssl: boolean;
+  skipSchemaCreation: boolean;
+};
 
 function normalizeWorkspaceEditorMode(value: unknown): WorkspaceEditorMode {
   return value === "word" || value === "textbook" ? value : "mindmap";
@@ -219,6 +233,10 @@ declare global {
     };
     aistudyErrorLogs?: {
       list: (limit?: number) => Promise<ErrorLogEntry[]>;
+    };
+    aistudyDatabase?: {
+      getSettings: () => Promise<DatabaseSettings>;
+      saveSettings: (input: DatabaseSettings) => Promise<DatabaseSettings>;
     };
     aistudyRuntime?: {
       diagnose: () => Promise<RuntimeDiagnosticResult>;
@@ -263,7 +281,7 @@ async function loadUpdateInfo() {
   return window.aistudyUpdates.loadInfo();
 }
 
-function SettingsDialog({ onClose }: { onClose: () => void }) {
+function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; onDatabaseChanged?: () => Promise<void> }) {
   const [activePage, setActivePage] = React.useState<SettingsPage>("runtime");
   const [updateInfo, setUpdateInfo] = React.useState<UpdateManagerInfo | null>(null);
   const [checkResult, setCheckResult] = React.useState<UpdateCheckResult | null>(null);
@@ -281,6 +299,10 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [isDownloading, setIsDownloading] = React.useState(false);
   const [lastCheckedAt, setLastCheckedAt] = React.useState("");
   const [shortcutSettings, setShortcutSettings] = React.useState<MindMapShortcutSettings>(() => readMindMapShortcutSettings());
+  const [databaseSettings, setDatabaseSettings] = React.useState<DatabaseSettings | null>(null);
+  const [databaseMessage, setDatabaseMessage] = React.useState("");
+  const [databaseError, setDatabaseError] = React.useState("");
+  const [isSavingDatabase, setIsSavingDatabase] = React.useState(false);
 
   React.useEffect(() => {
     loadUpdateInfo()
@@ -292,6 +314,39 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
         setError(loadError instanceof Error ? loadError.message : "更新服务初始化失败。");
       });
   }, []);
+
+  React.useEffect(() => {
+    if (!window.aistudyDatabase) return;
+    window.aistudyDatabase.getSettings()
+      .then((settings) => {
+        setDatabaseSettings(settings);
+        setDatabaseError("");
+      })
+      .catch((loadError: unknown) => {
+        setDatabaseError(loadError instanceof Error ? loadError.message : "数据源设置读取失败。");
+      });
+  }, []);
+
+  function updateDatabaseSettings(patch: Partial<DatabaseSettings>) {
+    setDatabaseSettings((current) => current ? { ...current, ...patch } : current);
+  }
+
+  async function saveDatabaseSourceSettings() {
+    if (!databaseSettings || !window.aistudyDatabase) return;
+    setIsSavingDatabase(true);
+    setDatabaseMessage("");
+    setDatabaseError("");
+    try {
+      const saved = await window.aistudyDatabase.saveSettings(databaseSettings);
+      setDatabaseSettings(saved);
+      await onDatabaseChanged?.();
+      setDatabaseMessage("已切换");
+    } catch (saveError) {
+      setDatabaseError(saveError instanceof Error ? saveError.message : "数据源切换失败。");
+    } finally {
+      setIsSavingDatabase(false);
+    }
+  }
 
   React.useEffect(() => {
     if (!window.aistudyUpdates?.onDownloadProgress) return undefined;
@@ -555,6 +610,8 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     : "";
   const settingsPageTitle = activePage === "runtime"
     ? "环境检查"
+    : activePage === "database"
+      ? "数据源"
     : activePage === "mcp"
       ? "MCP 控制台"
       : activePage === "shortcuts"
@@ -574,6 +631,10 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
           <button className={activePage === "runtime" ? "settings-nav-item active" : "settings-nav-item"} type="button" onClick={() => setActivePage("runtime")}>
             <CheckCircle2 size={16} />
             <span>环境检查</span>
+          </button>
+          <button className={activePage === "database" ? "settings-nav-item active" : "settings-nav-item"} type="button" onClick={() => setActivePage("database")}>
+            <Database size={16} />
+            <span>数据源</span>
           </button>
           <button className={activePage === "mcp" ? "settings-nav-item active" : "settings-nav-item"} type="button" onClick={() => setActivePage("mcp")}>
             <PlugZap size={16} />
@@ -671,6 +732,89 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
                   <strong>{isCheckingRuntime ? "正在检查环境" : "点击一键检查"}</strong>
                 </div>
               )}
+            </div>
+          ) : activePage === "database" ? (
+            <div className="database-settings-panel">
+              {databaseSettings ? (
+                <>
+                  <section className="database-source-switch" aria-label="数据源">
+                    <button
+                      type="button"
+                      className={databaseSettings.provider === "mysql" ? "active" : ""}
+                      onClick={() => updateDatabaseSettings({ provider: "mysql", ssl: false, skipSchemaCreation: false })}
+                    >
+                      MySQL
+                    </button>
+                    <button
+                      type="button"
+                      className={databaseSettings.provider === "tidb" ? "active" : ""}
+                      onClick={() => updateDatabaseSettings({ provider: "tidb", ssl: true })}
+                    >
+                      TiDB
+                    </button>
+                  </section>
+
+                  <div className="database-settings-grid">
+                    <label className="form-field">
+                      <span>主机</span>
+                      <input value={databaseSettings.host} onChange={(event) => updateDatabaseSettings({ host: event.target.value })} />
+                    </label>
+                    <label className="form-field">
+                      <span>端口</span>
+                      <input
+                        value={String(databaseSettings.port || "")}
+                        inputMode="numeric"
+                        onChange={(event) => updateDatabaseSettings({ port: Number.parseInt(event.target.value, 10) || databaseSettings.port })}
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>账号</span>
+                      <input value={databaseSettings.user} onChange={(event) => updateDatabaseSettings({ user: event.target.value })} />
+                    </label>
+                    <label className="form-field">
+                      <span>密码</span>
+                      <input
+                        value={databaseSettings.password}
+                        type="password"
+                        placeholder={databaseSettings.passwordSet ? "留空不改" : ""}
+                        onChange={(event) => updateDatabaseSettings({ password: event.target.value })}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="database-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={databaseSettings.ssl}
+                        onChange={(event) => updateDatabaseSettings({ ssl: event.target.checked })}
+                      />
+                      <span>TLS</span>
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={databaseSettings.skipSchemaCreation}
+                        onChange={(event) => updateDatabaseSettings({ skipSchemaCreation: event.target.checked })}
+                      />
+                      <span>跳过建表</span>
+                    </label>
+                  </div>
+
+                  <div className="settings-actions">
+                    <button className="primary-button" type="button" onClick={saveDatabaseSourceSettings} disabled={isSavingDatabase}>
+                      <Check size={16} />
+                      {isSavingDatabase ? "切换中" : "保存并切换"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="pane-empty-state runtime-empty-state">
+                  <strong>读取中</strong>
+                </div>
+              )}
+              {databaseMessage ? <p className="update-status">{databaseMessage}</p> : null}
+              {databaseError ? <p className="status-message error">{databaseError}</p> : null}
             </div>
           ) : activePage === "mcp" ? (
             <McpControlPanel />
@@ -1229,6 +1373,14 @@ function App() {
     }
   }
 
+  async function reloadCoursesAfterDatabaseChange() {
+    setCourseSyncStatus((current) => ({ ...current, state: "saving" }));
+    const store = await courseApi.load();
+    applyCourseStore(store);
+    setExternalContentRevision(Date.now());
+    await refreshCourseSyncStatus();
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1552,7 +1704,7 @@ function App() {
         </div>
       ) : null}
 
-      {isSettingsOpen ? <SettingsDialog onClose={() => setIsSettingsOpen(false)} /> : null}
+      {isSettingsOpen ? <SettingsDialog onClose={() => setIsSettingsOpen(false)} onDatabaseChanged={reloadCoursesAfterDatabaseChange} /> : null}
     </div>
   );
 }

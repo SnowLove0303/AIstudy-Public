@@ -204,6 +204,11 @@ contextBridge.exposeInMainWorld("aistudyErrorLogs", {
   list: (limit?: number) => invokeApp("error-logs:list", limit)
 });
 
+contextBridge.exposeInMainWorld("aistudyDatabase", {
+  getSettings: () => invokeApp("database:get-settings"),
+  saveSettings: (input: unknown) => invokeApp("database:save-settings", input)
+});
+
 contextBridge.exposeInMainWorld("aistudyRuntime", {
   diagnose: () => invokeApp("runtime:diagnose"),
   copyDiagnosticReport: () => invokeApp("runtime:copy-diagnostic-report"),
