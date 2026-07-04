@@ -94,6 +94,24 @@ assert(!tildeMermaidText.toLowerCase().includes("mermaid"), "MCP document templa
 assert(tildeMermaidText.includes("旺店通选品页"), "Tilde Mermaid mindmap root should be preserved as document text");
 assert(tildeMermaidText.includes("1.1. 选品渠道"), "Tilde Mermaid mindmap should be converted to stable numbered outline text");
 
+const asciiTreeSource = [
+  "Figure 1: Product selection structure",
+  "├─ 【Selection Channel】",
+  "│  ├─ Find trends",
+  "│  ├─ New arrivals",
+  "│  └─ Category source",
+  "├─ 【Selection Method】",
+  "│  ├─ Search selection",
+  "│  └─ Ranking selection"
+].join("\n");
+const asciiTreeElements = buildDocumentTemplateElements(asciiTreeSource);
+const asciiTreeText = asciiTreeElements.map((element) => element.value).join("");
+assert(!/[├└│]/.test(asciiTreeText), "ASCII tree connector glyphs should be converted into styled outline text");
+assert(asciiTreeText.includes("Selection Channel"), "ASCII tree parent text should be preserved");
+assert(asciiTreeText.includes("  • Find trends\n"), "ASCII tree children should keep readable hierarchy markers");
+assert.equal(asciiTreeElements.find((element) => element.value === "Selection Channel\n")?.bold, true, "ASCII tree parent should use highlighted parent style");
+assert.equal(asciiTreeElements.find((element) => element.value.includes("Find trends"))?.color, "#334155", "ASCII tree leaf should use quieter item style");
+
 const codeSource = [
   "调试片段：",
   "```ts",

@@ -1792,6 +1792,8 @@ const DOCUMENT_TEMPLATE_STYLE = {
   subsection: { size: 20, color: "#1f2937", bold: true },
   article: { size: 20, color: "#2563eb", bold: true },
   label: { size: 20, color: "#1f2937", bold: true },
+  treeParent: { size: 20, color: "#2563eb", bold: true },
+  treeItem: { size: 19, color: "#334155", bold: false },
   list: { size: 20, color: "#1f2937", bold: false },
   body: { size: 20, color: "#1f2937", bold: false },
   code: { size: 18, color: "#334155", bold: false, font: "Consolas", highlight: "#f1f5f9" },
@@ -2216,6 +2218,36 @@ function createRawTemplateElements(value, kind) {
     .map((part) => createRawTemplateElement(part, kind));
 }
 
+function parseAsciiTreeLine(value) {
+  const source = String(value || "").replace(/\t/g, "    ");
+  const match = source.match(/^([\s│|]*)(?:[├└]\s*[─—-]+|[+|`\\]-{1,2}|-{1,2})\s*(.+)$/);
+  if (!match) return null;
+  const prefix = match[1] || "";
+  const title = String(match[2] || "")
+    .trim()
+    .replace(/^[【\[]\s*/, "")
+    .replace(/\s*[】\]]$/, "")
+    .trim();
+  if (!title) return null;
+  const barDepth = (prefix.match(/[│|]/g) || []).length;
+  const spaceDepth = Math.floor(prefix.replace(/[│|]/g, "").length / 4);
+  return { depth: Math.max(0, barDepth + spaceDepth), title };
+}
+
+function createAsciiTreeElements(lines) {
+  const entries = lines.map(parseAsciiTreeLine).filter(Boolean);
+  if (entries.length === 0) return [];
+  const elements = [];
+  entries.forEach((entry, index) => {
+    const next = entries[index + 1];
+    const hasChildren = next && next.depth > entry.depth;
+    const indent = "  ".repeat(Math.max(0, entry.depth));
+    const marker = entry.depth === 0 ? "" : "• ";
+    elements.push(createTemplateElement(`${indent}${marker}${entry.title}\n`, entry.depth === 0 || hasChildren ? "treeParent" : "treeItem"));
+  });
+  return elements;
+}
+
 function stripMermaidMindMapNodeSyntax(value) {
   return String(value || "")
     .trim()
@@ -2295,6 +2327,7 @@ function buildDocumentTemplateElements(text) {
   const lines = normalizeDocumentTemplateSource(text).split("\n");
   const elements = [];
   let bodyLines = [];
+  let treeLines = [];
   let previousKind = "";
   let fenceLanguage = null;
   let fenceMarker = "";
@@ -2307,6 +2340,13 @@ function buildDocumentTemplateElements(text) {
       appendDocumentTemplateSpacer(elements);
       previousKind = "body";
     }
+  };
+  const flushTree = () => {
+    if (treeLines.length <= 0) return;
+    elements.push(...createAsciiTreeElements(treeLines));
+    appendDocumentTemplateSpacer(elements);
+    treeLines = [];
+    previousKind = "list";
   };
   const flushFence = () => {
     const fencedElements = createFencedBlockElements(fenceLanguage, fenceLines);
@@ -2340,9 +2380,16 @@ function buildDocumentTemplateElements(text) {
     }
     const line = String(rawLine || "").trim();
     if (!line) {
+      flushTree();
       flushBody();
       continue;
     }
+    if (parseAsciiTreeLine(rawLine)) {
+      flushBody();
+      treeLines.push(String(rawLine || ""));
+      continue;
+    }
+    flushTree();
     const splitHeading = splitDocumentTemplateHeadingLine(rawLine);
     if (splitHeading) {
       flushBody();
@@ -2380,6 +2427,7 @@ function buildDocumentTemplateElements(text) {
     previousKind = "body";
   }
   if (fenceLanguage !== null) flushFence();
+  flushTree();
   flushBody();
   return elements.length > 0 ? elements : [createTemplateElement("", "body")];
 }
