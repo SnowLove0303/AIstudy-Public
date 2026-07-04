@@ -4722,10 +4722,24 @@ async function addMysqlIndexIfMissing(pool: Pool, table: string, tableName: stri
 
 async function migrateCourseTable(pool: Pool, courseTable: string) {
   const courseTableName = rawMysqlIdentifier(courseTable);
+  const hasNameColumn = await hasMysqlColumn(pool, courseTableName, "name");
+  const hasLegacyTitleColumn = await hasMysqlColumn(pool, courseTableName, "title");
+  if (!hasNameColumn) {
+    await pool.query(`ALTER TABLE ${courseTable} ADD COLUMN \`name\` VARCHAR(120) NULL AFTER \`id\``);
+    if (hasLegacyTitleColumn) {
+      await pool.query(`UPDATE ${courseTable} SET \`name\` = LEFT(COALESCE(NULLIF(TRIM(\`title\`), ''), '未命名课程'), 120) WHERE \`name\` IS NULL OR \`name\` = ''`);
+    } else {
+      await pool.query(`UPDATE ${courseTable} SET \`name\` = '未命名课程' WHERE \`name\` IS NULL OR \`name\` = ''`);
+    }
+    await pool.query(`ALTER TABLE ${courseTable} MODIFY COLUMN \`name\` VARCHAR(120) NOT NULL`);
+  }
+  await pool.query(`UPDATE ${courseTable} SET \`name\` = '未命名课程' WHERE \`name\` IS NULL OR \`name\` = ''`);
+  await pool.query(`ALTER TABLE ${courseTable} MODIFY COLUMN \`name\` VARCHAR(120) NOT NULL`);
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "section_id", "`section_id` VARCHAR(64) NULL AFTER `description`");
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "last_workspace_mode", "`last_workspace_mode` VARCHAR(16) NOT NULL DEFAULT 'mindmap' AFTER `section_id`");
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "sort_order", "`sort_order` INT NOT NULL DEFAULT 0 AFTER `section_id`");
   await addMysqlColumnIfMissing(pool, courseTable, courseTableName, "deleted_at", "`deleted_at` DATETIME(3) NULL AFTER `updated_at`");
+  await addMysqlIndexIfMissing(pool, courseTable, courseTableName, "idx_name", "KEY idx_name (name)");
   await addMysqlIndexIfMissing(pool, courseTable, courseTableName, "idx_section_order", "KEY idx_section_order (section_id, sort_order)");
   await addMysqlIndexIfMissing(pool, courseTable, courseTableName, "idx_course_live_order", "KEY idx_course_live_order (deleted_at, section_id, sort_order, updated_at)");
 }

@@ -21,6 +21,7 @@ import {
   DOCUMENT_MIND_MAP_BLOCK_KIND,
   DOCUMENT_MIND_MAP_MESSAGE_SOURCE,
   getEmbeddedMindMapHeight,
+  getEmbeddedMindMapWidth,
   normalizeEmbeddedMindMapData,
   type EmbeddedMindMapData
 } from "./documentEmbeddedMindMap";
@@ -943,7 +944,7 @@ export async function createCanvasDocumentEditor(
   const createEmbeddedMindMapElement = (input: KnowledgeDocumentEmbeddedMindMapInput): IElement => {
     const data = normalizeEmbeddedMindMapData(input);
     const blockId = `doc_mindmap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const naturalWidth = Math.max(560, Math.min(760, getPageInnerWidth()));
+    const naturalWidth = Math.min(getEmbeddedMindMapWidth(data), getPageInnerWidth());
     const naturalHeight = getEmbeddedMindMapHeight(data);
     return {
       id: blockId,
@@ -968,8 +969,10 @@ export async function createCanvasDocumentEditor(
   const updateEmbeddedMindMapElement = (blockId: string, input: EmbeddedMindMapData, height?: number) => {
     const data = normalizeEmbeddedMindMapData(input);
     const nextHeight = Number.isFinite(height) ? Math.max(120, Math.min(1600, Math.round(Number(height)))) : getEmbeddedMindMapHeight(data);
+    const nextWidth = Math.min(getEmbeddedMindMapWidth(data), getPageInnerWidth());
     const properties = {
       value: "",
+      width: nextWidth,
       block: {
         type: BlockType.IFRAME,
         iframeBlock: {

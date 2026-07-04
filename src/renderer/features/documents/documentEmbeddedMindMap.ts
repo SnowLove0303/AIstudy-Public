@@ -127,8 +127,27 @@ function escapeScriptJson(value: unknown) {
 
 export function getEmbeddedMindMapHeight(input: EmbeddedMindMapData) {
   const data = normalizeEmbeddedMindMapData(input);
-  const childRows = data.groups.reduce((total, group) => total + Math.max(1, Math.ceil(group.children.length / 3)), 0);
-  return Math.max(120, Math.min(1600, 72 + data.groups.length * 42 + childRows * 34));
+  if (data.groups.length === 0) return 96;
+  const groupHeights = data.groups.map((group) => Math.max(42, Math.max(1, group.children.length) * 26 + Math.max(0, group.children.length - 1) * 8));
+  const totalGroupsHeight = groupHeights.reduce((total, height) => total + height, 0) + Math.max(0, data.groups.length - 1) * 24;
+  return Math.max(126, Math.min(1600, totalGroupsHeight + 32));
+}
+
+function estimateNodeWidth(label: string, min: number, max: number, fontSize: number) {
+  const wideChars = Array.from(label).reduce((total, char) => total + (/[\u4e00-\u9fff]/.test(char) ? 1 : 0.58), 0);
+  return Math.max(min, Math.min(max, Math.round(wideChars * fontSize + 30)));
+}
+
+export function getEmbeddedMindMapWidth(input: EmbeddedMindMapData) {
+  const data = normalizeEmbeddedMindMapData(input);
+  const rootWidth = estimateNodeWidth(data.root, 88, 150, 20);
+  const maxBranchWidth = data.groups.reduce((max, group) => Math.max(max, estimateNodeWidth(group.title, 78, 148, 14)), 0);
+  const maxChildWidth = data.groups.reduce(
+    (max, group) => Math.max(max, ...group.children.map((child) => estimateNodeWidth(child.title, 48, 190, 14))),
+    0
+  );
+  if (data.groups.length === 0) return Math.max(190, rootWidth + 118);
+  return Math.max(330, Math.min(720, rootWidth + 84 + maxBranchWidth + 76 + maxChildWidth + 28));
 }
 
 export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMindMapData) {
@@ -164,43 +183,33 @@ export function createEmbeddedMindMapSrcDoc(blockId: string, input: EmbeddedMind
 <style>
   *{box-sizing:border-box}
   html,body{margin:0;background:transparent;color:#172033;font-family:"Microsoft YaHei",Arial,sans-serif;font-size:14px;overflow:hidden}
-  .map{width:100%;padding:4px 0 8px;display:grid;grid-template-columns:max-content 46px minmax(0,1fr);align-items:start}
-  .root{grid-column:1;margin-top:2px;min-width:92px;max-width:132px;padding:8px 14px;border-radius:8px;background:#2563eb;color:#fff;text-align:center;font-size:18px;font-weight:700;line-height:1.25;outline:none;box-shadow:0 6px 14px rgba(37,99,235,.14)}
-  .spine{grid-column:2;position:relative;align-self:stretch;min-height:92px}
-  .spine:before{content:"";position:absolute;left:0;right:8px;top:21px;height:2px;background:#2563eb}
-  .spine:after{content:"";position:absolute;right:8px;top:21px;bottom:18px;width:2px;background:#2563eb;border-radius:999px}
-  .body{grid-column:3;min-width:0}
-  .groups{display:flex;flex-direction:column;gap:10px;min-width:0}
-  .group{position:relative;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:16px;align-items:start;min-height:32px}
-  .group:before{content:"";position:absolute;left:-38px;top:17px;width:38px;height:2px;background:#2563eb}
-  .branch{min-width:84px;max-width:132px;padding:6px 11px;border:1px solid #93c5fd;background:#eff6ff;border-radius:8px;text-align:center;font-weight:700;line-height:1.35;outline:none;box-shadow:0 2px 7px rgba(37,99,235,.06)}
-  .children{position:relative;display:flex;flex-wrap:wrap;gap:7px 9px;align-items:center;min-width:0;padding-top:1px}
-  .children:before{content:"";position:absolute;left:-16px;top:16px;width:16px;height:2px;background:#93c5fd}
-  .node{display:flex;align-items:center;gap:4px;min-height:27px;padding:3px 8px;border:1px solid #bfdbfe;background:#fff;border-radius:999px;box-shadow:0 1px 5px rgba(15,23,42,.04)}
-  .node:before{content:"";width:6px;height:6px;border-radius:50%;background:#60a5fa;flex:0 0 auto}
-  .node span{max-width:168px;line-height:1.35;outline:none;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  [contenteditable="true"]:focus{box-shadow:0 0 0 2px rgba(37,99,235,.15);background:#fff}
+  .map{position:relative;width:1px;height:1px;min-width:1px;min-height:1px;background:transparent}
+  .connectors{position:absolute;left:0;top:0;z-index:0;overflow:visible;pointer-events:none}
+  .connector{fill:none;stroke:#2546e8;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+  .root,.branch,.node,.add-group,.add-child{position:absolute;z-index:1}
+  .root{min-width:88px;max-width:150px;padding:10px 18px;border-radius:7px;background:#2546e8;color:#fff;text-align:center;font-size:20px;font-weight:700;line-height:1.2;outline:none;box-shadow:0 8px 18px rgba(37,70,232,.18)}
+  .groups,.group,.children{display:contents}
+  .branch{min-width:78px;max-width:148px;padding:7px 13px;border:1px solid #111827;background:#fff;border-radius:7px;text-align:center;font-weight:700;line-height:1.3;outline:none;box-shadow:0 2px 5px rgba(15,23,42,.06)}
+  .node{display:flex;align-items:center;gap:5px;min-height:24px;padding:1px 5px;border:0;background:transparent;border-radius:5px}
+  .node span{max-width:190px;line-height:1.35;outline:none;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  [contenteditable="true"]:focus{box-shadow:0 0 0 2px rgba(37,70,232,.13);background:#fff}
   button{border:0;background:transparent;color:#64748b;cursor:pointer;font:inherit}
   .ghost{opacity:0;transition:opacity .12s ease,background .12s ease,color .12s ease}
   .map:hover .ghost,.map:focus-within .ghost{opacity:1}
   .remove-group,.remove-child{width:18px;height:18px;border-radius:999px;line-height:18px;padding:0}
-  .remove-group{position:absolute;left:100px;top:7px}
+  .remove-group{position:absolute;z-index:2}
   .remove-child:hover,.remove-group:hover,.add-child:hover,.add-group:hover{background:#e0ecff;color:#2563eb}
-  .add-child{width:26px;height:26px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb}
-  .add-group{margin-top:3px;padding:4px 10px;border:1px dashed #93c5fd;border-radius:999px;color:#2563eb;background:#fff}
-  .is-empty .spine:after{display:none}
-  .is-empty .body{align-self:center}
-  .is-empty .add-group{opacity:.82;margin-top:5px}
+  .add-child{width:22px;height:22px;border-radius:999px;color:#2546e8}
+  .add-group{padding:2px 8px;border-radius:999px;color:#2546e8;background:#fff}
+  .is-empty .add-group{opacity:.82}
 </style>
 </head>
 <body>
   <main class="map${data.groups.length === 0 ? " is-empty" : ""}">
+    <svg class="connectors" aria-hidden="true"></svg>
     <div class="root" contenteditable="true" spellcheck="false">${escapeHtml(data.root)}</div>
-    <div class="spine"></div>
-    <div class="body">
-      <div class="groups">${groupHtml}</div>
-      <button class="ghost add-group" type="button" title="添加分支">+</button>
-    </div>
+    <div class="groups">${groupHtml}</div>
+    <button class="ghost add-group" type="button" title="添加分支">+</button>
   </main>
 <script>
 const blockId = ${escapeScriptJson(blockId)};
@@ -208,6 +217,139 @@ let data = ${escapeScriptJson(data)};
 const source = ${escapeScriptJson(DOCUMENT_MIND_MAP_MESSAGE_SOURCE)};
 const createId = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 12);
 const textOf = (element, fallback) => (element?.textContent || "").replace(/\\s+/g, " ").trim() || fallback;
+const svgNamespace = "http://www.w3.org/2000/svg";
+const addPath = (svg, d) => {
+  const path = document.createElementNS(svgNamespace, "path");
+  path.setAttribute("class", "connector");
+  path.setAttribute("d", d);
+  svg.appendChild(path);
+};
+const place = (element, x, y) => {
+  element.style.left = Math.round(x) + "px";
+  element.style.top = Math.round(y) + "px";
+};
+const sizeOf = (element) => ({ width: element.offsetWidth, height: element.offsetHeight });
+function layoutMindMap(){
+  const map = document.querySelector(".map");
+  const svg = document.querySelector(".connectors");
+  const root = document.querySelector(".root");
+  if (!map || !svg || !root) return;
+
+  const rootSize = sizeOf(root);
+  const groups = [...document.querySelectorAll(".group")].map((group) => {
+    const branch = group.querySelector(".branch");
+    const children = [...group.querySelectorAll(".node")];
+    const addChild = group.querySelector(".add-child");
+    return {
+      group,
+      branch,
+      branchSize: branch ? sizeOf(branch) : { width: 0, height: 0 },
+      children: children.map((node) => ({ node, size: sizeOf(node) })),
+      addChild
+    };
+  }).filter((item) => item.branch);
+
+  const padTop = 8;
+  const padRight = 4;
+  const rootX = 0;
+  const rootToTrunk = 40;
+  const trunkToBranch = 40;
+  const branchToBrace = 34;
+  const braceToChild = 22;
+  const groupGap = 24;
+  const childGap = 8;
+  const maxBranchWidth = Math.max(78, ...groups.map((item) => item.branchSize.width));
+  const maxChildWidth = Math.max(34, ...groups.flatMap((item) => item.children.map((child) => child.size.width)));
+  const trunkX = rootX + rootSize.width + rootToTrunk;
+  const branchX = trunkX + trunkToBranch;
+  const childX = branchX + maxBranchWidth + branchToBrace + braceToChild;
+  const contentWidth = groups.length ? childX + maxChildWidth + padRight : rootSize.width + 116;
+
+  const groupLayouts = groups.map((item) => {
+    const childCount = Math.max(1, item.children.length);
+    const childHeight = item.children.reduce((total, child) => total + child.size.height, 0) + Math.max(0, childCount - 1) * childGap;
+    return { item, height: Math.max(item.branchSize.height, childHeight, 34) };
+  });
+  const groupTotalHeight = groupLayouts.reduce((total, item) => total + item.height, 0) + Math.max(0, groupLayouts.length - 1) * groupGap;
+  const contentHeight = Math.max(rootSize.height + 20, groupLayouts.length ? groupTotalHeight : rootSize.height + 12);
+  const mapWidth = Math.ceil(contentWidth);
+  const mapHeight = Math.ceil(contentHeight + padTop * 2);
+  map.style.width = mapWidth + "px";
+  map.style.height = mapHeight + "px";
+  svg.setAttribute("viewBox", "0 0 " + mapWidth + " " + mapHeight);
+  svg.setAttribute("width", String(mapWidth));
+  svg.setAttribute("height", String(mapHeight));
+  svg.replaceChildren();
+
+  const rootY = (mapHeight - rootSize.height) / 2;
+  const rootCy = rootY + rootSize.height / 2;
+  const rootRight = rootX + rootSize.width;
+  place(root, rootX, rootY);
+
+  if (!groupLayouts.length) {
+    const addButton = document.querySelector(".add-group");
+    place(addButton, rootRight + 84, rootCy - addButton.offsetHeight / 2);
+    addPath(svg, "M " + rootRight + " " + rootCy + " H " + (rootRight + 70));
+    return;
+  }
+
+  const addGroup = document.querySelector(".add-group");
+  place(addGroup, trunkX - addGroup.offsetWidth / 2, Math.max(0, mapHeight - addGroup.offsetHeight - 1));
+  let cursorY = padTop;
+  const branchCenters = [];
+  groupLayouts.forEach(({ item, height: groupHeight }) => {
+    const branchCy = cursorY + groupHeight / 2;
+    const branchY = branchCy - item.branchSize.height / 2;
+    place(item.branch, branchX, branchY);
+    const removeGroup = item.group.querySelector(".remove-group");
+    if (removeGroup) place(removeGroup, branchX + item.branchSize.width + 5, branchCy - removeGroup.offsetHeight / 2);
+
+    const childrenHeight = item.children.reduce((total, child) => total + child.size.height, 0) + Math.max(0, item.children.length - 1) * childGap;
+    let childY = cursorY + (groupHeight - childrenHeight) / 2;
+    item.children.forEach((child) => {
+      place(child.node, childX, childY);
+      childY += child.size.height + childGap;
+    });
+    if (item.addChild) place(item.addChild, childX + 2, childY - 1);
+    branchCenters.push(branchCy);
+    cursorY += groupHeight + groupGap;
+  });
+
+  const topY = Math.min(...branchCenters);
+  const bottomY = Math.max(...branchCenters);
+  addPath(svg, "M " + rootRight + " " + rootCy + " H " + trunkX);
+  if (Math.abs(bottomY - topY) > 1) addPath(svg, "M " + trunkX + " " + topY + " V " + bottomY);
+  groupLayouts.forEach(({ item }, index) => {
+    const branchCy = branchCenters[index];
+    const branchLeft = branchX;
+    const branchRight = branchX + item.branchSize.width;
+    addPath(svg, "M " + trunkX + " " + branchCy + " H " + branchLeft);
+    if (!item.children.length) return;
+    const nodeCenters = item.children.map((child) => Number.parseFloat(child.node.style.top) + child.size.height / 2);
+    const braceX = childX - braceToChild;
+    const braceRight = braceX + 12;
+    addPath(svg, "M " + branchRight + " " + branchCy + " H " + braceX);
+    if (item.children.length === 1) {
+      addPath(svg, "M " + braceX + " " + nodeCenters[0] + " H " + childX);
+      return;
+    }
+    const bracketTop = nodeCenters[0];
+    const bracketBottom = nodeCenters[nodeCenters.length - 1];
+    addPath(
+      svg,
+      "M " + braceRight + " " + bracketTop +
+        " H " + (braceX + 6) +
+        " Q " + braceX + " " + bracketTop + " " + braceX + " " + (bracketTop + 6) +
+        " V " + (bracketBottom - 6) +
+        " Q " + braceX + " " + bracketBottom + " " + (braceX + 6) + " " + bracketBottom +
+        " H " + braceRight
+    );
+    nodeCenters.forEach((nodeCy, nodeIndex) => {
+      const startX = nodeIndex === 0 || nodeIndex === nodeCenters.length - 1 ? braceRight : braceX;
+      addPath(svg, "M " + startX + " " + nodeCy + " H " + childX);
+    });
+  });
+}
 function collect(){
   data = {
     version: 1,
@@ -225,6 +367,7 @@ function collect(){
   return data;
 }
 function notify(){
+  layoutMindMap();
   const next = collect();
   parent.postMessage({ source, blockId, data: next, height: Math.max(120, Math.min(1600, document.documentElement.scrollHeight + 8)) }, "*");
 }
@@ -274,6 +417,9 @@ document.addEventListener("click", (event) => {
     notifySoon();
   }
 });
+requestAnimationFrame(layoutMindMap);
+document.fonts?.ready?.then(() => requestAnimationFrame(layoutMindMap));
+window.addEventListener("resize", () => requestAnimationFrame(layoutMindMap));
 </script>
 </body>
 </html>`;

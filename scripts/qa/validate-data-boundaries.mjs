@@ -72,6 +72,13 @@ for (const forbidden of forbiddenPackageEntries) {
   }
 }
 
+for (const scriptName of ["pack", "dist"]) {
+  const script = packageJson.scripts?.[scriptName] ?? "";
+  if (!script.includes("scripts/package/clean-runtime-data.mjs")) {
+    fail(`package.json ${scriptName} script must clean runtime data before packaging`);
+  }
+}
+
 const closeAndDist = read("scripts/package/close-and-dist.ps1");
 for (const forbidden of forbiddenPackageEntries) {
   if (!closeAndDist.includes(forbidden)) {
