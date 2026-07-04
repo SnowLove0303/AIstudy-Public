@@ -2288,6 +2288,7 @@ function buildDocumentTemplateElements(text) {
   let bodyLines = [];
   let previousKind = "";
   let fenceLanguage = null;
+  let fenceMarker = "";
   let fenceLines = [];
   const flushBody = () => {
     const body = normalizeDocumentTemplateValue(bodyLines.join("\n"));
@@ -2301,6 +2302,7 @@ function buildDocumentTemplateElements(text) {
   const flushFence = () => {
     const fencedElements = createFencedBlockElements(fenceLanguage, fenceLines);
     fenceLanguage = null;
+    fenceMarker = "";
     fenceLines = [];
     if (fencedElements.length > 0) {
       elements.push(...fencedElements);
@@ -2309,13 +2311,16 @@ function buildDocumentTemplateElements(text) {
     }
   };
   for (const rawLine of lines) {
-    const fenceMatch = String(rawLine || "").match(/^\s*```([A-Za-z0-9_-]*)\s*$/);
+    const fenceMatch = String(rawLine || "").match(/^\s*(```|~~~)([A-Za-z0-9_-]*)\s*$/);
     if (fenceMatch) {
-      if (fenceLanguage !== null) {
+      if (fenceLanguage !== null && fenceMatch[1] === fenceMarker) {
         flushFence();
+      } else if (fenceLanguage !== null) {
+        fenceLines.push(String(rawLine ?? ""));
       } else {
         flushBody();
-        fenceLanguage = fenceMatch[1] || "";
+        fenceMarker = fenceMatch[1];
+        fenceLanguage = fenceMatch[2] || "";
         fenceLines = [];
       }
       continue;
