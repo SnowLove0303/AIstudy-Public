@@ -4539,12 +4539,13 @@ function getStringFromCliOption(text: string, shortName: string, longName: strin
 
 function parseDatabaseConnectionString(value: unknown, fallbackProvider: DatabaseProvider): Partial<MysqlConfig> {
   if (typeof value !== "string" || !value.trim()) return {};
-  const raw = value.trim();
+  const raw = value.trim().replace(/^[`'"]+|[`'"]+$/g, "").trim();
 
   try {
     const url = new URL(raw);
     if (["mysql:", "mysql2:", "tidb:"].includes(url.protocol)) {
       const sslParam = url.searchParams.get("ssl") ?? url.searchParams.get("ssl-mode") ?? url.searchParams.get("sslmode");
+      const database = decodeURIComponent(url.pathname.replace(/^\/+/, "").split("/")[0] ?? "").trim();
       const parsedProvider = url.protocol === "tidb:" || /tidbcloud\.com$/i.test(url.hostname) ? "tidb" : fallbackProvider;
       return {
         provider: parsedProvider,
@@ -4552,6 +4553,7 @@ function parseDatabaseConnectionString(value: unknown, fallbackProvider: Databas
         port: url.port ? parsePort(url.port, parsedProvider === "tidb" ? 4000 : 3306) : parsedProvider === "tidb" ? 4000 : undefined,
         user: decodeURIComponent(url.username),
         password: decodeURIComponent(url.password),
+        database: database || undefined,
         ssl: sslParam ? !["0", "false", "disable", "disabled"].includes(sslParam.toLowerCase()) : /tidbcloud\.com$/i.test(url.hostname)
       };
     }
@@ -4575,6 +4577,20 @@ function parseDatabaseConnectionString(value: unknown, fallbackProvider: Databas
     password: password || undefined,
     ssl: sslMode ? !["DISABLED", "DISABLE"].includes(sslMode.toUpperCase()) : /tidbcloud\.com$/i.test(host)
   };
+}
+
+function getSafeDatabaseSettingsErrorMessage(error: unknown) {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (code === "ER_ACCESS_DENIED_ERROR") return "账号或密码不正确，或这个账号没有访问该数据库的权限。";
+  if (code === "ER_BAD_DB_ERROR" || /Unknown database/i.test(message)) return "目标数据库不存在，先在 TiDB 里创建数据库，或把连接串里的数据库名改成已存在的库。";
+  if (code === "ER_DBACCESS_DENIED_ERROR") return "账号没有访问这个数据库的权限。";
+  if (code === "ENOTFOUND") return "主机地址无法解析，请检查 HOST。";
+  if (code === "ECONNREFUSED") return "主机或端口拒绝连接，请检查 HOST 和 PORT。";
+  if (code === "ETIMEDOUT" || /timeout/i.test(message)) return "连接超时，请检查网络、TiDB 公网入口和访问白名单。";
+  if (/ssl|tls|certificate|CERT/i.test(message)) return "TLS 连接失败，请确认 TiDB 数据源已勾选 TLS。";
+  return "连接校验没有通过，请检查 TiDB 连接串。";
 }
 
 function parseJsonText<T = unknown>(text: string): T {
@@ -4780,7 +4796,7 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
       getBooleanSetting(readSetting(mergedConfig, "skipSchemaCreation"), false)
     ),
     explicitlyConfigured,
-    database: PUBLIC_MYSQL_DATABASE,
+    database: getStringSetting(readConnectionEnv("DATABASE"), getStringSetting(readSetting(connectionConfig, "database"), getStringSetting(readSetting(mergedConfig, "database"), PUBLIC_MYSQL_DATABASE))),
     courseTable: PUBLIC_MYSQL_TABLES.courses,
     courseSectionTable: PUBLIC_MYSQL_TABLES.sections,
     mindMapTable: PUBLIC_MYSQL_TABLES.mindMaps,
@@ -4855,6 +4871,7 @@ function normalizeDatabaseSettingsInput(input: unknown, current: MysqlConfig, sa
     port: parsePort(readSetting(parsedConnection, "port"), parsePort(candidate.port, current.port)),
     user: getStringSetting(readSetting(parsedConnection, "user"), getStringSetting(candidate.user, current.user)),
     password: getStringSetting(readSetting(parsedConnection, "password"), passwordInput ? passwordInput : savedPassword),
+    database: getStringSetting(readSetting(parsedConnection, "database"), getStringSetting(readSetting(savedConfig, "database"), current.database)),
     ssl: getBooleanSetting(readSetting(parsedConnection, "ssl"), getBooleanSetting(candidate.ssl, current.ssl)),
     skipSchemaCreation: getBooleanSetting(candidate.skipSchemaCreation, current.skipSchemaCreation)
   };
@@ -11176,7 +11193,14 @@ ipcMain.handle(
 ipcMain.handle("error-logs:list", withUserFacingError("error-logs:list", "报错日志暂时无法读取。", (_event, limit) => listAppErrorLogs(limit)));
 
 ipcMain.handle("database:get-settings", withUserFacingError("database:get-settings", "数据库设置暂时无法读取。", () => readDatabaseSettings()));
-ipcMain.handle("database:save-settings", withUserFacingError("database:save-settings", "数据库设置暂时无法保存。", (_event, input) => saveDatabaseSettings(input)));
+ipcMain.handle("database:save-settings", async (_event, input) => {
+  try {
+    return await saveDatabaseSettings(input);
+  } catch (error) {
+    await recordAppError({ source: "database:save-settings", userMessage: "数据源切换失败。", error });
+    throw new Error(`数据源切换失败：${getSafeDatabaseSettingsErrorMessage(error)}`);
+  }
+});
 
 ipcMain.handle("runtime:diagnose", withUserFacingError("runtime:diagnose", "环境检查没有完成，请稍后再试。", () => diagnoseRuntime()));
 
