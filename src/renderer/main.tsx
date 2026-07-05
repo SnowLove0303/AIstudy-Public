@@ -307,6 +307,7 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
   const [databaseMessage, setDatabaseMessage] = React.useState("");
   const [databaseError, setDatabaseError] = React.useState("");
   const [isSavingDatabase, setIsSavingDatabase] = React.useState(false);
+  const [showDatabaseAdvanced, setShowDatabaseAdvanced] = React.useState(false);
 
   React.useEffect(() => {
     loadUpdateInfo()
@@ -346,7 +347,6 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
       await onDatabaseChanged?.();
       setDatabaseMessage("已切换");
     } catch (saveError) {
-      await onDatabaseChanged?.().catch(() => undefined);
       setDatabaseError(saveError instanceof Error ? saveError.message : "数据源切换失败。");
     } finally {
       setIsSavingDatabase(false);
@@ -767,32 +767,45 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
                         onChange={(event) => updateDatabaseSettings({ connectionString: event.target.value })}
                       />
                     </label>
-                    <label className="form-field">
-                      <span>主机</span>
-                      <input value={databaseSettings.host} onChange={(event) => updateDatabaseSettings({ host: event.target.value })} />
-                    </label>
-                    <label className="form-field">
-                      <span>端口</span>
-                      <input
-                        value={String(databaseSettings.port || "")}
-                        inputMode="numeric"
-                        onChange={(event) => updateDatabaseSettings({ port: Number.parseInt(event.target.value, 10) || databaseSettings.port })}
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>账号</span>
-                      <input value={databaseSettings.user} onChange={(event) => updateDatabaseSettings({ user: event.target.value })} />
-                    </label>
-                    <label className="form-field">
-                      <span>密码</span>
-                      <input
-                        value={databaseSettings.password}
-                        type="password"
-                        placeholder={databaseSettings.passwordSet ? "留空不改" : ""}
-                        onChange={(event) => updateDatabaseSettings({ password: event.target.value })}
-                      />
-                    </label>
                   </div>
+
+                  <button
+                    className="database-advanced-toggle"
+                    type="button"
+                    onClick={() => setShowDatabaseAdvanced((value) => !value)}
+                  >
+                    {showDatabaseAdvanced ? "收起高级" : "高级"}
+                  </button>
+
+                  {showDatabaseAdvanced ? (
+                    <div className="database-settings-grid database-advanced-grid">
+                      <label className="form-field">
+                        <span>主机</span>
+                        <input value={databaseSettings.host} onChange={(event) => updateDatabaseSettings({ host: event.target.value })} />
+                      </label>
+                      <label className="form-field">
+                        <span>端口</span>
+                        <input
+                          value={String(databaseSettings.port || "")}
+                          inputMode="numeric"
+                          onChange={(event) => updateDatabaseSettings({ port: Number.parseInt(event.target.value, 10) || databaseSettings.port })}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>账号</span>
+                        <input value={databaseSettings.user} onChange={(event) => updateDatabaseSettings({ user: event.target.value })} />
+                      </label>
+                      <label className="form-field">
+                        <span>密码</span>
+                        <input
+                          value={databaseSettings.password}
+                          type="password"
+                          placeholder={databaseSettings.passwordSet ? "留空不改" : ""}
+                          onChange={(event) => updateDatabaseSettings({ password: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
 
                   <div className="database-options">
                     <label>

@@ -5412,6 +5412,28 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.database-advanced-toggle {
+  align-self: flex-start;
+  height: 30px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.database-advanced-toggle:hover {
+  color: var(--accent);
+  border-color: rgba(37, 99, 235, 0.25);
+}
+
+.database-advanced-grid {
+  padding-top: 2px;
+}
+
 .database-options {
   display: flex;
   flex-wrap: wrap;

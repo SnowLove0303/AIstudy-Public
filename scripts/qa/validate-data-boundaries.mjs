@@ -126,11 +126,13 @@ if (!main.includes("ensureChromePortProfileDir") || !main.includes("AIstudyPubli
 }
 
 if (
-  !main.includes("repairCourseIndexFromCache")
-  || !main.includes("Course database returned an empty course index while local courses exist")
-  || !main.includes("SELECT COUNT(*) AS liveCount")
+  !main.includes("return normalized.databaseSourceKey === sourceKey")
+  || !main.includes("return operation.databaseSourceKey === sourceKey")
+  || main.includes("await repairCourseIndexFromCache")
+  || main.includes("Course database returned an empty course index while local courses exist")
+  || main.includes("SELECT COUNT(*) AS liveCount")
 ) {
-  fail("course database reads must guard against stale cache overwrites and recover missing course indexes");
+  fail("course database reads must reject stale local source mirrors and must not recover visible content from cache");
 }
 
 if (
@@ -161,11 +163,12 @@ if (
 const appEntry = read("src/renderer/main.tsx");
 if (
   !appEntry.includes("clearCourseStoreForDatabaseUnavailable")
-  || !appEntry.includes("await onDatabaseChanged?.().catch(() => undefined)")
+  || appEntry.includes("await onDatabaseChanged?.().catch(() => undefined)")
+  || !appEntry.includes("setDatabaseError(saveError instanceof Error")
   || !appEntry.includes("COURSE_DATABASE_RECOVERY_RETRY_MS")
   || !appEntry.includes("setExternalContentRevision(Date.now())")
 ) {
-  fail("renderer must clear stale course state when database load or database switching fails");
+  fail("renderer must clear stale course state on load failures and must not reload the app shell after a failed database switch");
 }
 
 const courseSidebar = read("src/renderer/features/course/CourseSidebar.tsx");

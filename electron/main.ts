@@ -411,10 +411,6 @@ type MindMapCourseIdRow = RowDataPacket & {
   courseId: string;
 };
 
-type CourseCountRow = RowDataPacket & {
-  liveCount: number | string;
-};
-
 type MysqlRuntime = ExamMysqlRuntime & TextbookMysqlRuntime & {
   provider: DatabaseProvider;
   sourceKey: string;
@@ -4410,10 +4406,7 @@ function createEmptyCourseStoreForSource(databaseSourceKey?: string): CourseStor
 
 function isCourseStoreCompatibleWithSource(store: CourseStore, sourceKey: string, provider: DatabaseProvider) {
   const normalized = normalizeCourseStore(store);
-  if (normalized.databaseSourceKey) {
-    return normalized.databaseSourceKey === sourceKey;
-  }
-  return provider === "mysql";
+  return normalized.databaseSourceKey === sourceKey;
 }
 
 function isCourseStoreCompatibleWithRuntime(store: CourseStore, runtime: MysqlRuntime) {
@@ -5722,15 +5715,6 @@ async function canUseCourseMysqlRuntime() {
   try {
     const runtime = await getMysqlRuntime();
     await runtime.pool.query("SELECT 1");
-    const cache = await readCurrentSourceLocalCourseStore();
-    if (cache.courses.length > 0) {
-      const [rows] = await runtime.pool.execute<CourseCountRow[]>(
-        `SELECT COUNT(*) AS liveCount FROM ${runtime.courseTable} WHERE deleted_at IS NULL`
-      );
-      if (Number(rows[0]?.liveCount ?? 0) === 0) {
-        return false;
-      }
-    }
     return true;
   } catch {
     return false;
@@ -5742,10 +5726,7 @@ function isPendingCourseOperationCompatibleWithSource(
   sourceKey: string,
   provider: DatabaseProvider
 ) {
-  if (operation.databaseSourceKey) {
-    return operation.databaseSourceKey === sourceKey;
-  }
-  return provider === "mysql";
+  return operation.databaseSourceKey === sourceKey;
 }
 
 function isPendingCourseOperationCompatibleWithRuntime(operation: PendingCourseOperation, runtime: MysqlRuntime) {
@@ -6684,7 +6665,6 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
     ? withCourseStoreSourceKey(cache, runtime.sourceKey)
     : createEmptyCourseStoreForSource(runtime.sourceKey);
   await replayPendingCourseOperations(runtime);
-  await repairCourseIndexFromCache(runtime, sourceCache);
   const { pool, courseTable, courseSectionTable } = runtime;
   const [sectionRows] = await pool.execute<CourseSectionRow[]>(
     `SELECT id, name, sort_order AS sortOrder, collapsed, created_at AS createdAt, updated_at AS updatedAt
@@ -6699,9 +6679,6 @@ async function readCourseStoreFromMysql(cache: CourseStore): Promise<CourseStore
      WHERE deleted_at IS NULL
      ORDER BY COALESCE(section_id, ''), sort_order ASC, updated_at DESC`
   );
-  if (rows.length === 0 && sourceCache.courses.length > 0) {
-    throw new Error("Course database returned an empty course index while local courses exist.");
-  }
   const sections = sectionRows.map((row) => ({
     id: row.id,
     name: row.name,
