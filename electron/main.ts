@@ -4579,13 +4579,26 @@ function parseDatabaseConnectionString(value: unknown, fallbackProvider: Databas
   };
 }
 
-function createMysqlSslOptions(config: Pick<MysqlConfig, "ssl" | "host">) {
+type MysqlTlsMode = "strict" | "relaxed";
+
+function createMysqlSslOptions(config: Pick<MysqlConfig, "ssl" | "host">, mode: MysqlTlsMode = "strict") {
   if (!config.ssl) return undefined;
   return {
     minVersion: "TLSv1.2" as const,
-    rejectUnauthorized: true,
+    rejectUnauthorized: mode === "strict",
     servername: config.host
   };
+}
+
+function isMysqlTlsHandshakeError(error: unknown) {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /ssl|tls|certificate|cert_|unable_to_verify|self signed|handshake/i.test(`${code} ${message}`);
+}
+
+function shouldRetryTidbWithRelaxedTls(config: Pick<MysqlConfig, "provider" | "ssl">, error: unknown) {
+  return config.provider === "tidb" && config.ssl && isMysqlTlsHandshakeError(error);
 }
 
 function getSafeDatabaseSettingsErrorMessage(error: unknown) {
@@ -4924,8 +4937,8 @@ async function saveDatabaseSettings(input: unknown): Promise<DatabaseSettings> {
   return readDatabaseSettings();
 }
 
-async function ensureDatabase(config: MysqlConfig) {
-  const sslOptions = createMysqlSslOptions(config);
+async function ensureDatabaseWithTlsMode(config: MysqlConfig, tlsMode: MysqlTlsMode) {
+  const sslOptions = createMysqlSslOptions(config, tlsMode);
   const connection = await mysql.createConnection({
     host: config.host,
     port: config.port,
@@ -4940,6 +4953,18 @@ async function ensureDatabase(config: MysqlConfig) {
     );
   } finally {
     await connection.end();
+  }
+}
+
+async function ensureDatabase(config: MysqlConfig): Promise<MysqlTlsMode> {
+  try {
+    await ensureDatabaseWithTlsMode(config, "strict");
+    return "strict";
+  } catch (error) {
+    if (!shouldRetryTidbWithRelaxedTls(config, error)) throw error;
+    console.warn("TiDB strict TLS database check failed. Retrying with TLS compatibility mode.");
+    await ensureDatabaseWithTlsMode(config, "relaxed");
+    return "relaxed";
   }
 }
 
@@ -5456,22 +5481,9 @@ async function listAppErrorLogs(limitValue: unknown): Promise<AppErrorLogEntry[]
   }));
 }
 
-async function createMysqlRuntime(): Promise<MysqlRuntime> {
-  const config = await readMysqlConfig();
-  if (app.isPackaged && !config.explicitlyConfigured) {
-    throw new Error("MySQL is not configured. The public clean package will use the local empty data store until MySQL is configured.");
-  }
-  await tryStartManagedMysqlRuntime(config);
-  if (!config.skipSchemaCreation) {
-    try {
-      await ensureDatabase(config);
-    } catch (error) {
-      console.warn("MySQL database check did not complete. Continuing with configured database.", error);
-    }
-  }
-
-  const sslOptions = createMysqlSslOptions(config);
-  const pool = mysql.createPool({
+function createMysqlPool(config: MysqlConfig, tlsMode: MysqlTlsMode) {
+  const sslOptions = createMysqlSslOptions(config, tlsMode);
+  return mysql.createPool({
     host: config.host,
     port: config.port,
     user: config.user,
@@ -5482,6 +5494,39 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     charset: "utf8mb4",
     ...(sslOptions ? { ssl: sslOptions } : {})
   });
+}
+
+async function createVerifiedMysqlPool(config: MysqlConfig, tlsMode: MysqlTlsMode) {
+  let pool = createMysqlPool(config, tlsMode);
+  try {
+    await pool.query("SELECT 1");
+    return { pool, tlsMode };
+  } catch (error) {
+    await pool.end().catch(() => undefined);
+    if (tlsMode !== "strict" || !shouldRetryTidbWithRelaxedTls(config, error)) throw error;
+    console.warn("TiDB strict TLS pool verification failed. Retrying with TLS compatibility mode.");
+    pool = createMysqlPool(config, "relaxed");
+    await pool.query("SELECT 1");
+    return { pool, tlsMode: "relaxed" as const };
+  }
+}
+
+async function createMysqlRuntime(): Promise<MysqlRuntime> {
+  const config = await readMysqlConfig();
+  if (app.isPackaged && !config.explicitlyConfigured) {
+    throw new Error("MySQL is not configured. The public clean package will use the local empty data store until MySQL is configured.");
+  }
+  await tryStartManagedMysqlRuntime(config);
+  let tlsMode: MysqlTlsMode = "strict";
+  if (!config.skipSchemaCreation) {
+    try {
+      tlsMode = await ensureDatabase(config);
+    } catch (error) {
+      console.warn("MySQL database check did not complete. Continuing with configured database.", error);
+    }
+  }
+
+  const { pool } = await createVerifiedMysqlPool(config, tlsMode);
   const courseTable = escapeMysqlIdentifier(config.courseTable, "MySQL course table");
   const courseSectionTable = escapeMysqlIdentifier(config.courseSectionTable, "MySQL course section table");
   const mindMapTable = escapeMysqlIdentifier(config.mindMapTable, "MySQL mind map table");

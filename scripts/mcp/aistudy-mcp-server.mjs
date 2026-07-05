@@ -914,19 +914,28 @@ function parseBooleanSetting(value, fallback) {
   return fallback;
 }
 
-function createMysqlSslOptions(config) {
+function createMysqlSslOptions(config, mode = "strict") {
   if (!config.ssl) return undefined;
   return {
     minVersion: "TLSv1.2",
-    rejectUnauthorized: true,
+    rejectUnauthorized: mode === "strict",
     servername: config.host
   };
 }
 
-async function createPool() {
-  const config = await readMysqlConfig();
-  const sslOptions = createMysqlSslOptions(config);
-  const pool = mysql.createPool({
+function isMysqlTlsHandshakeError(error) {
+  const code = typeof error?.code === "string" ? error.code : "";
+  const message = String(error?.message || error || "");
+  return /ssl|tls|certificate|cert_|unable_to_verify|self signed|handshake/i.test(`${code} ${message}`);
+}
+
+function shouldRetryTidbWithRelaxedTls(config, error) {
+  return config.provider === "tidb" && config.ssl && isMysqlTlsHandshakeError(error);
+}
+
+function createConfiguredPool(config, tlsMode) {
+  const sslOptions = createMysqlSslOptions(config, tlsMode);
+  return mysql.createPool({
     host: config.host,
     port: config.port,
     user: config.user,
@@ -936,6 +945,19 @@ async function createPool() {
     connectionLimit: 4,
     ...(sslOptions ? { ssl: sslOptions } : {})
   });
+}
+
+async function createPool() {
+  const config = await readMysqlConfig();
+  let pool = createConfiguredPool(config, "strict");
+  try {
+    await pool.query("SELECT 1");
+  } catch (error) {
+    await pool.end().catch(() => undefined);
+    if (!shouldRetryTidbWithRelaxedTls(config, error)) throw error;
+    pool = createConfiguredPool(config, "relaxed");
+    await pool.query("SELECT 1");
+  }
   return { config, pool };
 }
 
