@@ -402,7 +402,7 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
   }
 
   async function switchDatabaseProvider(provider: DatabaseProvider) {
-    if (!databaseSettings || !window.aistudyDatabase || databaseSettings.provider === provider) return;
+    if (!databaseSettings || !window.aistudyDatabase || databaseSettings.activeProvider === provider) return;
     const nextProfile = getDatabaseProfile(databaseSettings, provider);
     const nextSettings: DatabaseSettings = {
       ...databaseSettings,
@@ -853,7 +853,7 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
                         TiDB
                       </button>
                     </section>
-                    {databaseSettings.provider !== "mysql" ? (
+                    {databaseSettings.activeProvider !== "mysql" ? (
                       <button
                         className="database-quick-switch"
                         type="button"
@@ -861,6 +861,16 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
                         disabled={isSavingDatabase}
                       >
                         切回 MySQL
+                      </button>
+                    ) : null}
+                    {databaseSettings.activeProvider !== "tidb" ? (
+                      <button
+                        className="database-quick-switch"
+                        type="button"
+                        onClick={() => void switchDatabaseProvider("tidb")}
+                        disabled={isSavingDatabase}
+                      >
+                        切到 TiDB
                       </button>
                     ) : null}
                   </div>
