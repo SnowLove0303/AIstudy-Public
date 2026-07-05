@@ -5374,6 +5374,13 @@ h3 {
   gap: 14px;
 }
 
+.database-source-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .database-source-switch {
   display: inline-flex;
   align-self: flex-start;
@@ -5400,6 +5407,23 @@ h3 {
   background: #ffffff;
   color: var(--accent);
   box-shadow: 0 6px 16px rgba(30, 48, 71, 0.08);
+}
+
+.database-quick-switch {
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.database-quick-switch:disabled {
+  opacity: 0.48;
+  cursor: default;
 }
 
 .database-settings-grid {

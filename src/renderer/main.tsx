@@ -257,6 +257,10 @@ function createDefaultDatabaseProfile(provider: DatabaseProvider): DatabaseSetti
   };
 }
 
+function getDatabaseProfile(settings: DatabaseSettings, provider: DatabaseProvider): DatabaseSettingsProfile {
+  return settings.profiles?.[provider] ?? createDefaultDatabaseProfile(provider);
+}
+
 const COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS = 2000;
 const COURSE_DATABASE_RECOVERY_RETRY_MS = 5000;
 
@@ -383,7 +387,7 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
     setDatabaseSettings((current) => {
       if (!current) return current;
       const provider = patch.provider ?? current.provider;
-      const currentProfile = current.profiles?.[provider] ?? createDefaultDatabaseProfile(provider);
+      const currentProfile = getDatabaseProfile(current, provider);
       const nextProfile = { ...currentProfile, ...patch, provider };
       return {
         ...current,
@@ -395,6 +399,35 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
         }
       };
     });
+  }
+
+  async function switchDatabaseProvider(provider: DatabaseProvider) {
+    if (!databaseSettings || !window.aistudyDatabase || databaseSettings.provider === provider) return;
+    const nextProfile = getDatabaseProfile(databaseSettings, provider);
+    const nextSettings: DatabaseSettings = {
+      ...databaseSettings,
+      ...nextProfile,
+      provider,
+      profiles: {
+        ...databaseSettings.profiles,
+        [provider]: nextProfile
+      }
+    };
+    setIsSavingDatabase(true);
+    setDatabaseMessage("");
+    setDatabaseError("");
+    setDatabaseSettings(nextSettings);
+    try {
+      const saved = await window.aistudyDatabase.saveSettings(nextSettings);
+      setDatabaseSettings(saved);
+      await onDatabaseChanged?.();
+      setDatabaseMessage("已切换");
+    } catch (switchError) {
+      setDatabaseSettings(databaseSettings);
+      setDatabaseError(switchError instanceof Error ? switchError.message : "数据源切换失败。");
+    } finally {
+      setIsSavingDatabase(false);
+    }
   }
 
   async function saveDatabaseSourceSettings() {
@@ -803,22 +836,34 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
             <div className="database-settings-panel">
               {databaseSettings ? (
                 <>
-                  <section className="database-source-switch" aria-label="数据源">
-                    <button
-                      type="button"
-                      className={databaseSettings.provider === "mysql" ? "active" : ""}
-                      onClick={() => updateDatabaseSettings({ provider: "mysql" })}
-                    >
-                      MySQL
-                    </button>
-                    <button
-                      type="button"
-                      className={databaseSettings.provider === "tidb" ? "active" : ""}
-                      onClick={() => updateDatabaseSettings({ provider: "tidb" })}
-                    >
-                      TiDB
-                    </button>
-                  </section>
+                  <div className="database-source-row">
+                    <section className="database-source-switch" aria-label="数据源">
+                      <button
+                        type="button"
+                        className={databaseSettings.provider === "mysql" ? "active" : ""}
+                        onClick={() => updateDatabaseSettings({ provider: "mysql" })}
+                      >
+                        MySQL
+                      </button>
+                      <button
+                        type="button"
+                        className={databaseSettings.provider === "tidb" ? "active" : ""}
+                        onClick={() => updateDatabaseSettings({ provider: "tidb" })}
+                      >
+                        TiDB
+                      </button>
+                    </section>
+                    {databaseSettings.provider !== "mysql" ? (
+                      <button
+                        className="database-quick-switch"
+                        type="button"
+                        onClick={() => void switchDatabaseProvider("mysql")}
+                        disabled={isSavingDatabase}
+                      >
+                        切回 MySQL
+                      </button>
+                    ) : null}
+                  </div>
 
                   <div className="database-settings-grid">
                     <label className="form-field database-connection-field">
