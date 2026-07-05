@@ -5408,6 +5408,10 @@ h3 {
   gap: 2px 12px;
 }
 
+.database-connection-field {
+  grid-column: 1 / -1;
+}
+
 .database-options {
   display: flex;
   flex-wrap: wrap;

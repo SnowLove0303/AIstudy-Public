@@ -207,6 +207,7 @@ type DatabaseSettings = {
   passwordSet: boolean;
   ssl: boolean;
   skipSchemaCreation: boolean;
+  connectionString: string;
 };
 
 const COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS = 2000;
@@ -759,6 +760,13 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
                   </section>
 
                   <div className="database-settings-grid">
+                    <label className="form-field database-connection-field">
+                      <span>连接串</span>
+                      <input
+                        value={databaseSettings.connectionString}
+                        onChange={(event) => updateDatabaseSettings({ connectionString: event.target.value })}
+                      />
+                    </label>
                     <label className="form-field">
                       <span>主机</span>
                       <input value={databaseSettings.host} onChange={(event) => updateDatabaseSettings({ host: event.target.value })} />

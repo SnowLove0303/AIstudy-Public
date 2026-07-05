@@ -379,6 +379,7 @@ type DatabaseSettings = {
   passwordSet: boolean;
   ssl: boolean;
   skipSchemaCreation: boolean;
+  connectionString: string;
 };
 
 type CourseRow = RowDataPacket & {
@@ -4493,6 +4494,11 @@ function readSetting(source: unknown, key: keyof MysqlConfig) {
   return (source as Partial<Record<keyof MysqlConfig, unknown>>)[key];
 }
 
+function readRawSetting(source: unknown, key: string) {
+  if (!source || typeof source !== "object") return undefined;
+  return (source as Record<string, unknown>)[key];
+}
+
 async function readMysqlConfigFile(filePath: string) {
   try {
     return parseJsonText(await fs.readFile(filePath, "utf8")) as Partial<MysqlConfig>;
@@ -4518,6 +4524,64 @@ function readPublicTidbEnv(name: string) {
 
 function readPublicDatabaseProviderEnv() {
   return readPublicRuntimeEnv("DATABASE_PROVIDER") ?? readPublicRuntimeEnv("DB_PROVIDER");
+}
+
+function readPublicDatabaseConnectionString(provider: DatabaseProvider) {
+  const providerPrefix = provider === "tidb" ? "TIDB" : "MYSQL";
+  return readPublicRuntimeEnv(`${providerPrefix}_URI`)
+    ?? readPublicRuntimeEnv(`${providerPrefix}_URL`)
+    ?? readPublicRuntimeEnv(`${providerPrefix}_CONNECTION_STRING`)
+    ?? readPublicRuntimeEnv("DATABASE_URI")
+    ?? readPublicRuntimeEnv("DATABASE_URL")
+    ?? readPublicRuntimeEnv("DATABASE_CONNECTION_STRING");
+}
+
+function getStringFromCliOption(text: string, shortName: string, longName: string) {
+  const escapedLongName = longName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const shortPattern = new RegExp(`(?:^|\\s)-${shortName}(?:\\s+|=)(?:"([^"]*)"|'([^']*)'|([^\\s]+))`);
+  const longPattern = new RegExp(`(?:^|\\s)--${escapedLongName}(?:\\s+|=)(?:"([^"]*)"|'([^']*)'|([^\\s]+))`);
+  const match = text.match(longPattern) ?? text.match(shortPattern);
+  return match ? (match[1] ?? match[2] ?? match[3] ?? "").trim() : "";
+}
+
+function parseDatabaseConnectionString(value: unknown, fallbackProvider: DatabaseProvider): Partial<MysqlConfig> {
+  if (typeof value !== "string" || !value.trim()) return {};
+  const raw = value.trim();
+
+  try {
+    const url = new URL(raw);
+    if (["mysql:", "mysql2:", "tidb:"].includes(url.protocol)) {
+      const sslParam = url.searchParams.get("ssl") ?? url.searchParams.get("ssl-mode") ?? url.searchParams.get("sslmode");
+      const parsedProvider = url.protocol === "tidb:" || /tidbcloud\.com$/i.test(url.hostname) ? "tidb" : fallbackProvider;
+      return {
+        provider: parsedProvider,
+        host: url.hostname,
+        port: url.port ? parsePort(url.port, parsedProvider === "tidb" ? 4000 : 3306) : parsedProvider === "tidb" ? 4000 : undefined,
+        user: decodeURIComponent(url.username),
+        password: decodeURIComponent(url.password),
+        ssl: sslParam ? !["0", "false", "disable", "disabled"].includes(sslParam.toLowerCase()) : /tidbcloud\.com$/i.test(url.hostname)
+      };
+    }
+  } catch {
+    // TiDB Cloud also gives mysql CLI snippets; parse those below.
+  }
+
+  const host = getStringFromCliOption(raw, "h", "host");
+  const portText = getStringFromCliOption(raw, "P", "port");
+  const user = getStringFromCliOption(raw, "u", "user");
+  const password = getStringFromCliOption(raw, "p", "password");
+  const sslMode = getStringFromCliOption(raw, "", "ssl-mode");
+  if (!host && !portText && !user && !password) return {};
+  const parsedProvider = /tidbcloud\.com$/i.test(host) ? "tidb" : fallbackProvider;
+
+  return {
+    provider: parsedProvider,
+    host: host || undefined,
+    port: portText ? parsePort(portText, parsedProvider === "tidb" ? 4000 : 3306) : parsedProvider === "tidb" ? 4000 : undefined,
+    user: user || undefined,
+    password: password || undefined,
+    ssl: sslMode ? !["DISABLED", "DISABLE"].includes(sslMode.toUpperCase()) : /tidbcloud\.com$/i.test(host)
+  };
 }
 
 function parseJsonText<T = unknown>(text: string): T {
@@ -4691,6 +4755,10 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
   const mergedConfig = { ...managedMysqlConfig, ...programDataConfig, ...programDataPublicConfig, ...programDataUserConfig, ...executableConfig, ...dataRootConfig, ...userConfig };
   const fileProvider = getDatabaseProviderSetting(readSetting(mergedConfig, "provider"), hasPublicTidbEnvSetting() ? "tidb" : "mysql");
   const provider = getDatabaseProviderSetting(readPublicDatabaseProviderEnv(), fileProvider);
+  const connectionConfig = {
+    ...parseDatabaseConnectionString(readRawSetting(mergedConfig, "connectionString") ?? readRawSetting(mergedConfig, "connectionUri"), provider),
+    ...parseDatabaseConnectionString(readPublicDatabaseConnectionString(provider), provider)
+  };
   const readConnectionEnv = (name: string) => provider === "tidb"
     ? readPublicTidbEnv(name) ?? readPublicMysqlEnv(name)
     : readPublicMysqlEnv(name);
@@ -4702,17 +4770,18 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
     || hasMysqlConnectionSetting(programDataUserConfig)
     || hasMysqlConnectionSetting(executableConfig)
     || hasMysqlConnectionSetting(dataRootConfig)
-    || hasMysqlConnectionSetting(userConfig);
+    || hasMysqlConnectionSetting(userConfig)
+    || hasMysqlConnectionSetting(connectionConfig);
 
   const config = {
-    provider,
-    host: getStringSetting(readConnectionEnv("HOST"), getStringSetting(readSetting(mergedConfig, "host"), "127.0.0.1")),
-    port: parsePort(readConnectionEnv("PORT"), parsePort(readSetting(mergedConfig, "port"), 3306)),
-    user: getStringSetting(readConnectionEnv("USER"), getStringSetting(readSetting(mergedConfig, "user"), "root")),
+    provider: getDatabaseProviderSetting(readSetting(connectionConfig, "provider"), provider),
+    host: getStringSetting(readConnectionEnv("HOST"), getStringSetting(readSetting(connectionConfig, "host"), getStringSetting(readSetting(mergedConfig, "host"), "127.0.0.1"))),
+    port: parsePort(readConnectionEnv("PORT"), parsePort(readSetting(connectionConfig, "port"), parsePort(readSetting(mergedConfig, "port"), provider === "tidb" ? 4000 : 3306))),
+    user: getStringSetting(readConnectionEnv("USER"), getStringSetting(readSetting(connectionConfig, "user"), getStringSetting(readSetting(mergedConfig, "user"), "root"))),
     password: typeof readConnectionEnv("PASSWORD") === "string"
       ? readConnectionEnv("PASSWORD") ?? ""
-        : getStringSetting(readSetting(mergedConfig, "password"), ""),
-    ssl: getBooleanSetting(readConnectionEnv("SSL"), getBooleanSetting(readSetting(mergedConfig, "ssl"), provider === "tidb")),
+        : getStringSetting(readSetting(connectionConfig, "password"), getStringSetting(readSetting(mergedConfig, "password"), "")),
+    ssl: getBooleanSetting(readConnectionEnv("SSL"), getBooleanSetting(readSetting(connectionConfig, "ssl"), getBooleanSetting(readSetting(mergedConfig, "ssl"), provider === "tidb"))),
     skipSchemaCreation: getBooleanSetting(
       readConnectionEnv("SKIP_SCHEMA_CREATION"),
       getBooleanSetting(readSetting(mergedConfig, "skipSchemaCreation"), false)
@@ -4777,7 +4846,8 @@ async function readDatabaseSettings(): Promise<DatabaseSettings> {
     password: "",
     passwordSet: Boolean(config.password),
     ssl: config.ssl,
-    skipSchemaCreation: config.skipSchemaCreation
+    skipSchemaCreation: config.skipSchemaCreation,
+    connectionString: ""
   };
 }
 
@@ -4785,13 +4855,14 @@ function normalizeDatabaseSettingsInput(input: unknown, current: MysqlConfig, sa
   const candidate = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const passwordInput = typeof candidate.password === "string" ? candidate.password : "";
   const savedPassword = typeof readSetting(savedConfig, "password") === "string" ? String(readSetting(savedConfig, "password")) : "";
+  const parsedConnection = parseDatabaseConnectionString(candidate.connectionString, current.provider);
   return {
-    provider: getDatabaseProviderSetting(candidate.provider, current.provider),
-    host: getStringSetting(candidate.host, current.host),
-    port: parsePort(candidate.port, current.port),
-    user: getStringSetting(candidate.user, current.user),
-    password: passwordInput ? passwordInput : savedPassword,
-    ssl: getBooleanSetting(candidate.ssl, current.ssl),
+    provider: getDatabaseProviderSetting(readSetting(parsedConnection, "provider"), getDatabaseProviderSetting(candidate.provider, current.provider)),
+    host: getStringSetting(readSetting(parsedConnection, "host"), getStringSetting(candidate.host, current.host)),
+    port: parsePort(readSetting(parsedConnection, "port"), parsePort(candidate.port, current.port)),
+    user: getStringSetting(readSetting(parsedConnection, "user"), getStringSetting(candidate.user, current.user)),
+    password: getStringSetting(readSetting(parsedConnection, "password"), passwordInput ? passwordInput : savedPassword),
+    ssl: getBooleanSetting(readSetting(parsedConnection, "ssl"), getBooleanSetting(candidate.ssl, current.ssl)),
     skipSchemaCreation: getBooleanSetting(candidate.skipSchemaCreation, current.skipSchemaCreation)
   };
 }
@@ -4811,10 +4882,26 @@ async function saveDatabaseSettings(input: unknown): Promise<DatabaseSettings> {
   const current = await readMysqlConfig();
   const settingsFilePath = getDatabaseSettingsFilePath();
   const savedConfig = await readMysqlConfigFile(settingsFilePath);
+  const previousConfigText = await fs.readFile(settingsFilePath, "utf8").catch((error) => {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
   const next = normalizeDatabaseSettingsInput(input, current, savedConfig);
   await writeJsonAtomic(settingsFilePath, next);
   await resetMysqlRuntime();
-  await getMysqlRuntime();
+  try {
+    await getMysqlRuntime();
+  } catch (error) {
+    if (previousConfigText === null) {
+      await fs.rm(settingsFilePath, { force: true }).catch(() => undefined);
+    } else {
+      await fs.writeFile(settingsFilePath, previousConfigText, "utf8");
+    }
+    await resetMysqlRuntime();
+    throw error;
+  }
   return readDatabaseSettings();
 }
 
