@@ -210,6 +210,34 @@ type DatabaseSettings = {
   connectionString: string;
 };
 
+function parseDatabaseConnectionStringPreview(value: string, fallbackProvider: DatabaseProvider): Partial<DatabaseSettings> {
+  if (!value.trim()) return {};
+  const raw = value.trim().replace(/^[`'"]+|[`'"]+$/g, "").trim();
+  try {
+    const url = new URL(raw);
+    if (!["mysql:", "mysql2:", "tidb:"].includes(url.protocol)) return {};
+    const provider = url.protocol === "tidb:" || /tidbcloud\.com$/i.test(url.hostname) ? "tidb" : fallbackProvider;
+    const sslParam = url.searchParams.get("ssl") ?? url.searchParams.get("ssl-mode") ?? url.searchParams.get("sslmode");
+    const patch: Partial<DatabaseSettings> = {
+      provider,
+      host: url.hostname,
+      user: decodeURIComponent(url.username),
+      ssl: sslParam ? !["0", "false", "disable", "disabled"].includes(sslParam.toLowerCase()) : /tidbcloud\.com$/i.test(url.hostname)
+    };
+    if (url.port) {
+      patch.port = Number.parseInt(url.port, 10) || (provider === "tidb" ? 4000 : 3306);
+    } else if (provider === "tidb") {
+      patch.port = 4000;
+    }
+    if (url.password) {
+      patch.password = decodeURIComponent(url.password);
+    }
+    return patch;
+  } catch {
+    return {};
+  }
+}
+
 const COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS = 2000;
 const COURSE_DATABASE_RECOVERY_RETRY_MS = 5000;
 
@@ -764,7 +792,13 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
                       <span>连接串</span>
                       <input
                         value={databaseSettings.connectionString}
-                        onChange={(event) => updateDatabaseSettings({ connectionString: event.target.value })}
+                        onChange={(event) => {
+                          const connectionString = event.target.value;
+                          updateDatabaseSettings({
+                            connectionString,
+                            ...parseDatabaseConnectionStringPreview(connectionString, databaseSettings.provider)
+                          });
+                        }}
                       />
                     </label>
                   </div>

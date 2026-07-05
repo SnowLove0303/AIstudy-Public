@@ -884,7 +884,7 @@ async function readMysqlConfig() {
     password: readConnectionEnv("PASSWORD") ?? dataConfig.password ?? "",
     ssl: parseBooleanSetting(readConnectionEnv("SSL") ?? dataConfig.ssl, provider === "tidb"),
     skipSchemaCreation: parseBooleanSetting(readConnectionEnv("SKIP_SCHEMA_CREATION") ?? dataConfig.skipSchemaCreation, false),
-    database: PUBLIC_MYSQL_DATABASE,
+    database: readConnectionEnv("DATABASE") || dataConfig.database || PUBLIC_MYSQL_DATABASE,
     courseTable: PUBLIC_MYSQL_TABLES.courses,
     courseSectionTable: PUBLIC_MYSQL_TABLES.sections,
     mindMapTable: PUBLIC_MYSQL_TABLES.mindMaps,
@@ -914,8 +914,18 @@ function parseBooleanSetting(value, fallback) {
   return fallback;
 }
 
+function createMysqlSslOptions(config) {
+  if (!config.ssl) return undefined;
+  return {
+    minVersion: "TLSv1.2",
+    rejectUnauthorized: true,
+    servername: config.host
+  };
+}
+
 async function createPool() {
   const config = await readMysqlConfig();
+  const sslOptions = createMysqlSslOptions(config);
   const pool = mysql.createPool({
     host: config.host,
     port: config.port,
@@ -924,7 +934,7 @@ async function createPool() {
     database: config.database,
     waitForConnections: true,
     connectionLimit: 4,
-    ...(config.ssl ? { ssl: { minVersion: "TLSv1.2" } } : {})
+    ...(sslOptions ? { ssl: sslOptions } : {})
   });
   return { config, pool };
 }

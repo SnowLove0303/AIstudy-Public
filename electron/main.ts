@@ -4579,6 +4579,15 @@ function parseDatabaseConnectionString(value: unknown, fallbackProvider: Databas
   };
 }
 
+function createMysqlSslOptions(config: Pick<MysqlConfig, "ssl" | "host">) {
+  if (!config.ssl) return undefined;
+  return {
+    minVersion: "TLSv1.2" as const,
+    rejectUnauthorized: true,
+    servername: config.host
+  };
+}
+
 function getSafeDatabaseSettingsErrorMessage(error: unknown) {
   const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
   const code = typeof record.code === "string" ? record.code : "";
@@ -4916,12 +4925,13 @@ async function saveDatabaseSettings(input: unknown): Promise<DatabaseSettings> {
 }
 
 async function ensureDatabase(config: MysqlConfig) {
+  const sslOptions = createMysqlSslOptions(config);
   const connection = await mysql.createConnection({
     host: config.host,
     port: config.port,
     user: config.user,
     password: config.password,
-    ...(config.ssl ? { ssl: { minVersion: "TLSv1.2" as const } } : {})
+    ...(sslOptions ? { ssl: sslOptions } : {})
   });
 
   try {
@@ -5460,6 +5470,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     }
   }
 
+  const sslOptions = createMysqlSslOptions(config);
   const pool = mysql.createPool({
     host: config.host,
     port: config.port,
@@ -5469,7 +5480,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     waitForConnections: true,
     connectionLimit: 10,
     charset: "utf8mb4",
-    ...(config.ssl ? { ssl: { minVersion: "TLSv1.2" as const } } : {})
+    ...(sslOptions ? { ssl: sslOptions } : {})
   });
   const courseTable = escapeMysqlIdentifier(config.courseTable, "MySQL course table");
   const courseSectionTable = escapeMysqlIdentifier(config.courseSectionTable, "MySQL course section table");
