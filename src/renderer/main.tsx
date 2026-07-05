@@ -198,7 +198,7 @@ type SettingsPage = "runtime" | "database" | "mcp" | "shortcuts" | "updates" | "
 
 type DatabaseProvider = "mysql" | "tidb";
 
-type DatabaseSettings = {
+type DatabaseSettingsProfile = {
   provider: DatabaseProvider;
   host: string;
   port: number;
@@ -208,6 +208,11 @@ type DatabaseSettings = {
   ssl: boolean;
   skipSchemaCreation: boolean;
   connectionString: string;
+};
+
+type DatabaseSettings = DatabaseSettingsProfile & {
+  activeProvider: DatabaseProvider;
+  profiles: Record<DatabaseProvider, DatabaseSettingsProfile>;
 };
 
 function parseDatabaseConnectionStringPreview(value: string, fallbackProvider: DatabaseProvider): Partial<DatabaseSettings> {
@@ -236,6 +241,20 @@ function parseDatabaseConnectionStringPreview(value: string, fallbackProvider: D
   } catch {
     return {};
   }
+}
+
+function createDefaultDatabaseProfile(provider: DatabaseProvider): DatabaseSettingsProfile {
+  return {
+    provider,
+    host: provider === "tidb" ? "" : "127.0.0.1",
+    port: provider === "tidb" ? 4000 : 3306,
+    user: provider === "tidb" ? "" : "root",
+    password: "",
+    passwordSet: false,
+    ssl: provider === "tidb",
+    skipSchemaCreation: false,
+    connectionString: ""
+  };
 }
 
 const COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS = 2000;
@@ -360,8 +379,22 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
       });
   }, []);
 
-  function updateDatabaseSettings(patch: Partial<DatabaseSettings>) {
-    setDatabaseSettings((current) => current ? { ...current, ...patch } : current);
+  function updateDatabaseSettings(patch: Partial<DatabaseSettingsProfile>) {
+    setDatabaseSettings((current) => {
+      if (!current) return current;
+      const provider = patch.provider ?? current.provider;
+      const currentProfile = current.profiles?.[provider] ?? createDefaultDatabaseProfile(provider);
+      const nextProfile = { ...currentProfile, ...patch, provider };
+      return {
+        ...current,
+        ...nextProfile,
+        provider,
+        profiles: {
+          ...current.profiles,
+          [provider]: nextProfile
+        }
+      };
+    });
   }
 
   async function saveDatabaseSourceSettings() {
@@ -774,14 +807,14 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
                     <button
                       type="button"
                       className={databaseSettings.provider === "mysql" ? "active" : ""}
-                      onClick={() => updateDatabaseSettings({ provider: "mysql", ssl: false, skipSchemaCreation: false })}
+                      onClick={() => updateDatabaseSettings({ provider: "mysql" })}
                     >
                       MySQL
                     </button>
                     <button
                       type="button"
                       className={databaseSettings.provider === "tidb" ? "active" : ""}
-                      onClick={() => updateDatabaseSettings({ provider: "tidb", ssl: true })}
+                      onClick={() => updateDatabaseSettings({ provider: "tidb" })}
                     >
                       TiDB
                     </button>

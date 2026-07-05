@@ -370,7 +370,7 @@ type MysqlConfig = {
   textbookAnnotationTable: string;
 };
 
-type DatabaseSettings = {
+type DatabaseSettingsProfile = {
   provider: DatabaseProvider;
   host: string;
   port: number;
@@ -380,6 +380,24 @@ type DatabaseSettings = {
   ssl: boolean;
   skipSchemaCreation: boolean;
   connectionString: string;
+};
+
+type DatabaseSettings = DatabaseSettingsProfile & {
+  activeProvider: DatabaseProvider;
+  profiles: Record<DatabaseProvider, DatabaseSettingsProfile>;
+};
+
+type DatabaseConnectionProfile = Partial<Pick<
+  MysqlConfig,
+  "provider" | "host" | "port" | "user" | "password" | "ssl" | "skipSchemaCreation" | "database"
+>> & {
+  connectionString?: string;
+  connectionUri?: string;
+};
+
+type DatabaseSettingsFile = DatabaseConnectionProfile & {
+  activeProvider?: DatabaseProvider;
+  profiles?: Partial<Record<DatabaseProvider, DatabaseConnectionProfile>>;
 };
 
 type CourseRow = RowDataPacket & {
@@ -414,6 +432,7 @@ type MindMapCourseIdRow = RowDataPacket & {
 type MysqlRuntime = ExamMysqlRuntime & TextbookMysqlRuntime & {
   provider: DatabaseProvider;
   sourceKey: string;
+  lastVerifiedAt: number;
   courseTable: string;
   courseSectionTable: string;
   mindMapTable: string;
@@ -431,6 +450,8 @@ type MysqlRuntime = ExamMysqlRuntime & TextbookMysqlRuntime & {
 };
 
 const PUBLIC_MYSQL_DATABASE = "aistudy_public";
+const MYSQL_RUNTIME_HEALTH_CHECK_INTERVAL_MS = 30_000;
+const DATABASE_PROVIDERS: DatabaseProvider[] = ["mysql", "tidb"];
 const PUBLIC_MYSQL_TABLES = {
   courses: "course_management_courses",
   sections: "knowledge_sections",
@@ -4492,9 +4513,9 @@ function readRawSetting(source: unknown, key: string) {
   return (source as Record<string, unknown>)[key];
 }
 
-async function readMysqlConfigFile(filePath: string) {
+async function readMysqlConfigFile(filePath: string): Promise<DatabaseSettingsFile> {
   try {
-    return parseJsonText(await fs.readFile(filePath, "utf8")) as Partial<MysqlConfig>;
+    return parseJsonText(await fs.readFile(filePath, "utf8")) as DatabaseSettingsFile;
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return {};
@@ -4517,6 +4538,30 @@ function readPublicTidbEnv(name: string) {
 
 function readPublicDatabaseProviderEnv() {
   return readPublicRuntimeEnv("DATABASE_PROVIDER") ?? readPublicRuntimeEnv("DB_PROVIDER");
+}
+
+function readDatabaseActiveProviderSetting(source: unknown) {
+  return readRawSetting(source, "activeProvider") ?? readSetting(source, "provider");
+}
+
+function readDatabaseProfileSetting(source: unknown, provider: DatabaseProvider): DatabaseConnectionProfile {
+  if (!source || typeof source !== "object") return {};
+  const record = source as Record<string, unknown>;
+  const profiles = record.profiles && typeof record.profiles === "object" && !Array.isArray(record.profiles)
+    ? record.profiles as Record<string, unknown>
+    : {};
+  const profile = profiles[provider] && typeof profiles[provider] === "object" && !Array.isArray(profiles[provider])
+    ? profiles[provider] as DatabaseConnectionProfile
+    : {};
+  return {
+    ...(record as DatabaseConnectionProfile),
+    ...profile,
+    provider
+  };
+}
+
+function hasDatabaseProfileConnectionSetting(source: unknown, provider: DatabaseProvider) {
+  return hasMysqlConnectionSetting(readDatabaseProfileSetting(source, provider));
 }
 
 function readPublicDatabaseConnectionString(provider: DatabaseProvider) {
@@ -4708,7 +4753,12 @@ function hasPublicTidbEnvSetting() {
 
 function hasMysqlConnectionSetting(source: unknown) {
   if (!source || typeof source !== "object") return false;
-  return ["host", "port", "user", "password"].some((key) => Object.prototype.hasOwnProperty.call(source, key));
+  return ["host", "port", "user", "password"].some((key) => {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) return false;
+    const value = (source as Record<string, unknown>)[key];
+    if (typeof value === "number") return Number.isFinite(value) && value > 0;
+    return typeof value === "string" && value.trim().length > 0;
+  });
 }
 
 function sanitizeLocatorFileName(value: string) {
@@ -4783,9 +4833,15 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
   const programDataUserConfig = await readMysqlConfigFile(path.join(getProgramDataAistudyRoot(), "AIstudyUserData", "mysql.config.json"));
   const dataRootConfig = await readMysqlConfigFile(getAistudyDataPath("config", "mysql.config.json"));
   const userConfig = await readMysqlConfigFile(path.join(app.getPath("userData"), "mysql.config.json"));
-  const mergedConfig = { ...managedMysqlConfig, ...programDataConfig, ...programDataPublicConfig, ...programDataUserConfig, ...executableConfig, ...dataRootConfig, ...userConfig };
-  const fileProvider = getDatabaseProviderSetting(readSetting(mergedConfig, "provider"), hasPublicTidbEnvSetting() ? "tidb" : "mysql");
+  const fileConfigs = [programDataConfig, programDataPublicConfig, programDataUserConfig, executableConfig, dataRootConfig, userConfig];
+  const mergedProviderConfig = { ...programDataConfig, ...programDataPublicConfig, ...programDataUserConfig, ...executableConfig, ...dataRootConfig, ...userConfig };
+  const fileProvider = getDatabaseProviderSetting(readDatabaseActiveProviderSetting(mergedProviderConfig), hasPublicTidbEnvSetting() ? "tidb" : "mysql");
   const provider = getDatabaseProviderSetting(readPublicDatabaseProviderEnv(), fileProvider);
+  const providerConfigs = [
+    ...(provider === "mysql" ? [managedMysqlConfig] : []),
+    ...fileConfigs.map((config) => readDatabaseProfileSetting(config, provider))
+  ];
+  const mergedConfig = Object.assign({}, ...providerConfigs);
   const connectionConfig = {
     ...parseDatabaseConnectionString(readRawSetting(mergedConfig, "connectionString") ?? readRawSetting(mergedConfig, "connectionUri"), provider),
     ...parseDatabaseConnectionString(readPublicDatabaseConnectionString(provider), provider)
@@ -4793,15 +4849,14 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
   const readConnectionEnv = (name: string) => provider === "tidb"
     ? readPublicTidbEnv(name)
     : readPublicMysqlEnv(name);
-  const explicitlyConfigured = hasPublicMysqlEnvSetting()
-    || hasPublicTidbEnvSetting()
-    || hasMysqlConnectionSetting(managedMysqlConfig)
-    || hasMysqlConnectionSetting(programDataConfig)
-    || hasMysqlConnectionSetting(programDataPublicConfig)
-    || hasMysqlConnectionSetting(programDataUserConfig)
-    || hasMysqlConnectionSetting(executableConfig)
-    || hasMysqlConnectionSetting(dataRootConfig)
-    || hasMysqlConnectionSetting(userConfig)
+  const explicitlyConfigured = (provider === "tidb" ? hasPublicTidbEnvSetting() : hasPublicMysqlEnvSetting())
+    || (provider === "mysql" && hasMysqlConnectionSetting(managedMysqlConfig))
+    || hasDatabaseProfileConnectionSetting(programDataConfig, provider)
+    || hasDatabaseProfileConnectionSetting(programDataPublicConfig, provider)
+    || hasDatabaseProfileConnectionSetting(programDataUserConfig, provider)
+    || hasDatabaseProfileConnectionSetting(executableConfig, provider)
+    || hasDatabaseProfileConnectionSetting(dataRootConfig, provider)
+    || hasDatabaseProfileConnectionSetting(userConfig, provider)
     || hasMysqlConnectionSetting(connectionConfig);
 
   const config = {
@@ -4867,9 +4922,46 @@ function getDatabaseSettingsFilePath() {
   return getAistudyDataPath("config", "mysql.config.json");
 }
 
+function normalizeDatabaseProfileForSettings(provider: DatabaseProvider, source: unknown, activeConfig?: MysqlConfig): DatabaseSettingsProfile {
+  const profile = readDatabaseProfileSetting(source, provider);
+  const parsedConnection = parseDatabaseConnectionString(readRawSetting(profile, "connectionString") ?? readRawSetting(profile, "connectionUri"), provider);
+  if (activeConfig?.provider === provider) {
+    return {
+      provider,
+      host: activeConfig.host,
+      port: activeConfig.port,
+      user: activeConfig.user,
+      password: "",
+      passwordSet: Boolean(activeConfig.password),
+      ssl: activeConfig.ssl,
+      skipSchemaCreation: activeConfig.skipSchemaCreation,
+      connectionString: ""
+    };
+  }
+
+  return {
+    provider,
+    host: getStringSetting(readSetting(parsedConnection, "host"), getStringSetting(readSetting(profile, "host"), provider === "tidb" ? "" : "127.0.0.1")),
+    port: parsePort(readSetting(parsedConnection, "port"), parsePort(readSetting(profile, "port"), provider === "tidb" ? 4000 : 3306)),
+    user: getStringSetting(readSetting(parsedConnection, "user"), getStringSetting(readSetting(profile, "user"), provider === "tidb" ? "" : "root")),
+    password: "",
+    passwordSet: Boolean(readSetting(parsedConnection, "password") || readSetting(profile, "password")),
+    ssl: getBooleanSetting(readSetting(parsedConnection, "ssl"), getBooleanSetting(readSetting(profile, "ssl"), provider === "tidb")),
+    skipSchemaCreation: getBooleanSetting(readSetting(profile, "skipSchemaCreation"), false),
+    connectionString: ""
+  };
+}
+
 async function readDatabaseSettings(): Promise<DatabaseSettings> {
   const config = await readMysqlConfig();
+  const settingsFile = await readMysqlConfigFile(getDatabaseSettingsFilePath());
+  const profiles = {
+    mysql: normalizeDatabaseProfileForSettings("mysql", settingsFile, config),
+    tidb: normalizeDatabaseProfileForSettings("tidb", settingsFile, config)
+  };
+  const activeProfile = profiles[config.provider];
   return {
+    ...activeProfile,
     provider: config.provider,
     host: config.host,
     port: config.port,
@@ -4878,24 +4970,60 @@ async function readDatabaseSettings(): Promise<DatabaseSettings> {
     passwordSet: Boolean(config.password),
     ssl: config.ssl,
     skipSchemaCreation: config.skipSchemaCreation,
-    connectionString: ""
+    connectionString: "",
+    activeProvider: config.provider,
+    profiles
   };
 }
 
-function normalizeDatabaseSettingsInput(input: unknown, current: MysqlConfig, savedConfig: Partial<MysqlConfig>) {
+function normalizeDatabaseSettingsInput(input: unknown, current: MysqlConfig, savedConfig: DatabaseSettingsFile) {
   const candidate = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const requestedProvider = getDatabaseProviderSetting(candidate.provider, current.provider);
+  const savedProfile = readDatabaseProfileSetting(savedConfig, requestedProvider);
+  const currentProfile = current.provider === requestedProvider ? current : savedProfile;
   const passwordInput = typeof candidate.password === "string" ? candidate.password : "";
-  const savedPassword = typeof readSetting(savedConfig, "password") === "string" ? String(readSetting(savedConfig, "password")) : "";
-  const parsedConnection = parseDatabaseConnectionString(candidate.connectionString, current.provider);
+  const savedPassword = typeof readSetting(savedProfile, "password") === "string" ? String(readSetting(savedProfile, "password")) : "";
+  const parsedConnection = parseDatabaseConnectionString(candidate.connectionString, requestedProvider);
   return {
-    provider: getDatabaseProviderSetting(readSetting(parsedConnection, "provider"), getDatabaseProviderSetting(candidate.provider, current.provider)),
-    host: getStringSetting(readSetting(parsedConnection, "host"), getStringSetting(candidate.host, current.host)),
-    port: parsePort(readSetting(parsedConnection, "port"), parsePort(candidate.port, current.port)),
-    user: getStringSetting(readSetting(parsedConnection, "user"), getStringSetting(candidate.user, current.user)),
+    provider: getDatabaseProviderSetting(readSetting(parsedConnection, "provider"), requestedProvider),
+    host: getStringSetting(readSetting(parsedConnection, "host"), getStringSetting(candidate.host, getStringSetting(readSetting(currentProfile, "host"), requestedProvider === "tidb" ? "" : "127.0.0.1"))),
+    port: parsePort(readSetting(parsedConnection, "port"), parsePort(candidate.port, parsePort(readSetting(currentProfile, "port"), requestedProvider === "tidb" ? 4000 : 3306))),
+    user: getStringSetting(readSetting(parsedConnection, "user"), getStringSetting(candidate.user, getStringSetting(readSetting(currentProfile, "user"), requestedProvider === "tidb" ? "" : "root"))),
     password: getStringSetting(readSetting(parsedConnection, "password"), passwordInput ? passwordInput : savedPassword),
-    database: getStringSetting(readSetting(parsedConnection, "database"), getStringSetting(readSetting(savedConfig, "database"), current.database)),
-    ssl: getBooleanSetting(readSetting(parsedConnection, "ssl"), getBooleanSetting(candidate.ssl, current.ssl)),
-    skipSchemaCreation: getBooleanSetting(candidate.skipSchemaCreation, current.skipSchemaCreation)
+    database: getStringSetting(readSetting(parsedConnection, "database"), getStringSetting(readSetting(currentProfile, "database"), PUBLIC_MYSQL_DATABASE)),
+    ssl: getBooleanSetting(readSetting(parsedConnection, "ssl"), getBooleanSetting(candidate.ssl, getBooleanSetting(readSetting(currentProfile, "ssl"), requestedProvider === "tidb"))),
+    skipSchemaCreation: getBooleanSetting(candidate.skipSchemaCreation, getBooleanSetting(readSetting(currentProfile, "skipSchemaCreation"), false))
+  };
+}
+
+function normalizeSavedDatabaseProfile(provider: DatabaseProvider, source: unknown): DatabaseConnectionProfile {
+  const profile = readDatabaseProfileSetting(source, provider);
+  return {
+    provider,
+    host: getStringSetting(readSetting(profile, "host"), provider === "tidb" ? "" : "127.0.0.1"),
+    port: parsePort(readSetting(profile, "port"), provider === "tidb" ? 4000 : 3306),
+    user: getStringSetting(readSetting(profile, "user"), provider === "tidb" ? "" : "root"),
+    password: typeof readSetting(profile, "password") === "string" ? String(readSetting(profile, "password")) : "",
+    database: getStringSetting(readSetting(profile, "database"), PUBLIC_MYSQL_DATABASE),
+    ssl: getBooleanSetting(readSetting(profile, "ssl"), provider === "tidb"),
+    skipSchemaCreation: getBooleanSetting(readSetting(profile, "skipSchemaCreation"), false)
+  };
+}
+
+function buildDatabaseSettingsFile(savedConfig: DatabaseSettingsFile, next: DatabaseConnectionProfile): DatabaseSettingsFile {
+  const nextProvider = getDatabaseProviderSetting(next.provider, "mysql");
+  const profiles = {
+    mysql: normalizeSavedDatabaseProfile("mysql", savedConfig),
+    tidb: normalizeSavedDatabaseProfile("tidb", savedConfig)
+  };
+  profiles[nextProvider] = {
+    ...profiles[nextProvider],
+    ...next,
+    provider: nextProvider
+  };
+  return {
+    activeProvider: nextProvider,
+    profiles
   };
 }
 
@@ -4921,7 +5049,7 @@ async function saveDatabaseSettings(input: unknown): Promise<DatabaseSettings> {
     throw error;
   });
   const next = normalizeDatabaseSettingsInput(input, current, savedConfig);
-  await writeJsonAtomic(settingsFilePath, next);
+  await writeJsonAtomic(settingsFilePath, buildDatabaseSettingsFile(savedConfig, next));
   await resetMysqlRuntime();
   try {
     await getMysqlRuntime();
@@ -4966,6 +5094,58 @@ async function ensureDatabase(config: MysqlConfig): Promise<MysqlTlsMode> {
     await ensureDatabaseWithTlsMode(config, "relaxed");
     return "relaxed";
   }
+}
+
+function getMysqlSchemaReadyCacheKey(config: MysqlConfig) {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      version: app.getVersion(),
+      sourceKey: getDatabaseSourceKey(config),
+      tables: {
+        courses: config.courseTable,
+        sections: config.courseSectionTable,
+        mindMaps: config.mindMapTable,
+        mindMapSnapshots: config.mindMapSnapshotTable,
+        mindMapNodes: config.mindMapNodeTable,
+        documents: config.knowledgeDocumentTable,
+        documentSnapshots: config.knowledgeDocumentSnapshotTable,
+        assets: config.assetTable,
+        assetLinks: config.knowledgeAssetLinkTable,
+        chromePortStates: config.chromePortStateTable,
+        errorLogs: config.errorLogTable,
+        examQuestions: config.examQuestionTable,
+        examPapers: config.examPaperTable,
+        examPaperSections: config.examPaperSectionTable,
+        examPaperQuestions: config.examPaperQuestionTable,
+        examAttempts: config.examAttemptTable,
+        textbookAssets: config.textbookAssetTable,
+        textbookNotes: config.textbookNoteTable,
+        textbookAnnotations: config.textbookAnnotationTable
+      }
+    }))
+    .digest("hex");
+}
+
+function getMysqlSchemaReadyFilePath(config: MysqlConfig) {
+  return getAistudyDataPath("runtime", "database-schema", `${getMysqlSchemaReadyCacheKey(config)}.json`);
+}
+
+async function isMysqlSchemaMarkedReady(config: MysqlConfig) {
+  try {
+    const marker = parseJsonText(await fs.readFile(getMysqlSchemaReadyFilePath(config), "utf8")) as Record<string, unknown>;
+    return marker.version === app.getVersion() && marker.sourceKey === getDatabaseSourceKey(config);
+  } catch {
+    return false;
+  }
+}
+
+async function markMysqlSchemaReady(config: MysqlConfig) {
+  await writeJsonAtomic(getMysqlSchemaReadyFilePath(config), {
+    version: app.getVersion(),
+    provider: config.provider,
+    sourceKey: getDatabaseSourceKey(config),
+    checkedAt: new Date().toISOString()
+  });
 }
 
 async function ensureCourseTable(pool: Pool, courseTable: string) {
@@ -5500,14 +5680,14 @@ async function createVerifiedMysqlPool(config: MysqlConfig, tlsMode: MysqlTlsMod
   let pool = createMysqlPool(config, tlsMode);
   try {
     await pool.query("SELECT 1");
-    return { pool, tlsMode };
+    return { pool, tlsMode, verifiedAt: Date.now() };
   } catch (error) {
     await pool.end().catch(() => undefined);
     if (tlsMode !== "strict" || !shouldRetryTidbWithRelaxedTls(config, error)) throw error;
     console.warn("TiDB strict TLS pool verification failed. Retrying with TLS compatibility mode.");
     pool = createMysqlPool(config, "relaxed");
     await pool.query("SELECT 1");
-    return { pool, tlsMode: "relaxed" as const };
+    return { pool, tlsMode: "relaxed" as const, verifiedAt: Date.now() };
   }
 }
 
@@ -5517,8 +5697,9 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     throw new Error("MySQL is not configured. The public clean package will use the local empty data store until MySQL is configured.");
   }
   await tryStartManagedMysqlRuntime(config);
+  const schemaReady = !config.skipSchemaCreation && await isMysqlSchemaMarkedReady(config);
   let tlsMode: MysqlTlsMode = "strict";
-  if (!config.skipSchemaCreation) {
+  if (!config.skipSchemaCreation && !schemaReady) {
     try {
       tlsMode = await ensureDatabase(config);
     } catch (error) {
@@ -5526,7 +5707,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     }
   }
 
-  const { pool } = await createVerifiedMysqlPool(config, tlsMode);
+  const { pool, verifiedAt } = await createVerifiedMysqlPool(config, tlsMode);
   const courseTable = escapeMysqlIdentifier(config.courseTable, "MySQL course table");
   const courseSectionTable = escapeMysqlIdentifier(config.courseSectionTable, "MySQL course section table");
   const mindMapTable = escapeMysqlIdentifier(config.mindMapTable, "MySQL mind map table");
@@ -5549,7 +5730,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
   const textbookAssetTable = escapeMysqlIdentifier(config.textbookAssetTable, "MySQL textbook asset table");
   const textbookNoteTable = escapeMysqlIdentifier(config.textbookNoteTable, "MySQL textbook note table");
   const textbookAnnotationTable = escapeMysqlIdentifier(config.textbookAnnotationTable, "MySQL textbook annotation table");
-  if (!config.skipSchemaCreation) {
+  if (!config.skipSchemaCreation && !schemaReady) {
     await ensureCourseTable(pool, courseTable);
     await migrateCourseTable(pool, courseTable);
     await ensureCourseSectionTable(pool, courseSectionTable);
@@ -5561,12 +5742,14 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
     await ensureErrorLogTable(pool, errorLogTable);
     await ensureExamTables(pool, examQuestionTable, examPaperTable, examPaperSectionTable, examPaperQuestionTable, examAttemptTable);
     await ensureTextbookTables(pool, textbookAssetTable, textbookNoteTable, textbookAnnotationTable);
+    await markMysqlSchemaReady(config);
   }
 
   mysqlRuntime = {
     pool,
     provider: config.provider,
     sourceKey: getDatabaseSourceKey(config),
+    lastVerifiedAt: verifiedAt,
     courseTable,
     courseSectionTable,
     mindMapTable,
@@ -5599,8 +5782,12 @@ async function getMysqlRuntime() {
   }
 
   const runtime = await mysqlRuntimePromise;
+  if (Date.now() - runtime.lastVerifiedAt < MYSQL_RUNTIME_HEALTH_CHECK_INTERVAL_MS) {
+    return runtime;
+  }
   try {
     await runtime.pool.query("SELECT 1");
+    runtime.lastVerifiedAt = Date.now();
     return runtime;
   } catch (error) {
     if (!isRecoverableDatabaseConnectionError(error)) throw error;
@@ -5611,6 +5798,7 @@ async function getMysqlRuntime() {
     });
     const recoveredRuntime = await mysqlRuntimePromise;
     await recoveredRuntime.pool.query("SELECT 1");
+    recoveredRuntime.lastVerifiedAt = Date.now();
     return recoveredRuntime;
   }
 }
@@ -5786,8 +5974,7 @@ async function appendPendingCourseOperation(action: PendingCourseOperation["acti
 
 async function canUseCourseMysqlRuntime() {
   try {
-    const runtime = await getMysqlRuntime();
-    await runtime.pool.query("SELECT 1");
+    await getMysqlRuntime();
     return true;
   } catch {
     return false;
@@ -5967,8 +6154,7 @@ function checkStorageBoundaryRuntime(): RuntimeDiagnosticItem {
 
 async function checkMysqlRuntime(): Promise<RuntimeDiagnosticItem> {
   try {
-    const runtime = await getMysqlRuntime();
-    await runtime.pool.query("SELECT 1");
+    await getMysqlRuntime();
     return createDiagnosticItem("mysql", "MySQL 数据库", "ok", "数据库连接和基础表可用。", "无需处理。", false);
   } catch {
     return createDiagnosticItem("mysql", "MySQL 数据库", "warning", "数据库暂时连接不上，知识库会先保存在本机。", "请检查 MySQL 是否启动，以及账号、密码和权限是否正确。");
