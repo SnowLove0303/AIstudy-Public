@@ -209,6 +209,9 @@ type DatabaseSettings = {
   skipSchemaCreation: boolean;
 };
 
+const COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS = 2000;
+const COURSE_DATABASE_RECOVERY_RETRY_MS = 5000;
+
 function normalizeWorkspaceEditorMode(value: unknown): WorkspaceEditorMode {
   return value === "word" || value === "textbook" ? value : "mindmap";
 }
@@ -1170,12 +1173,50 @@ function App() {
     try {
       const store = await courseApi.load();
       applyCourseStore(store);
+      setExternalContentRevision(Date.now());
       await refreshCourseSyncStatus();
     } catch {
       clearCourseStoreForDatabaseUnavailable();
       setCourseSyncStatus((current) => ({ state: "attention", pendingCount: Math.max(current.pendingCount, 1) }));
     }
   }
+
+  React.useEffect(() => {
+    if (courseSyncStatus.state !== "attention") return undefined;
+
+    let isCancelled = false;
+    let timerId: number | null = null;
+
+    const schedule = (delayMs: number) => {
+      timerId = window.setTimeout(() => {
+        void attemptRecovery();
+      }, delayMs);
+    };
+
+    const attemptRecovery = async () => {
+      try {
+        const store = await courseApi.load();
+        if (isCancelled) return;
+        applyCourseStore(store);
+        setExternalContentRevision(Date.now());
+        await refreshCourseSyncStatus();
+      } catch {
+        if (isCancelled) return;
+        clearCourseStoreForDatabaseUnavailable();
+        setCourseSyncStatus({ state: "attention", pendingCount: 1 });
+        schedule(COURSE_DATABASE_RECOVERY_RETRY_MS);
+      }
+    };
+
+    schedule(COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS);
+
+    return () => {
+      isCancelled = true;
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, [courseSyncStatus.state]);
 
   React.useEffect(() => {
     if (activeCourseId && !courses.some((course) => course.id === activeCourseId)) {

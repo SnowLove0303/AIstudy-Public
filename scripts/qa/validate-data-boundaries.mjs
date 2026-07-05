@@ -159,7 +159,12 @@ if (
 }
 
 const appEntry = read("src/renderer/main.tsx");
-if (!appEntry.includes("clearCourseStoreForDatabaseUnavailable") || !appEntry.includes("await onDatabaseChanged?.().catch(() => undefined)")) {
+if (
+  !appEntry.includes("clearCourseStoreForDatabaseUnavailable")
+  || !appEntry.includes("await onDatabaseChanged?.().catch(() => undefined)")
+  || !appEntry.includes("COURSE_DATABASE_RECOVERY_RETRY_MS")
+  || !appEntry.includes("setExternalContentRevision(Date.now())")
+) {
   fail("renderer must clear stale course state when database load or database switching fails");
 }
 
@@ -175,6 +180,15 @@ if (
   || mindMapWorkspace.includes("已保存到本地副本")
 ) {
   fail("mind map workspace must not render or save a local fallback when the database is unavailable");
+}
+
+if (
+  !main.includes("SELECT payload_json AS payloadJson")
+  || !main.includes("normalizeMindMapSnapshot(parseJsonText(rows[0].payloadJson))")
+  || !main.includes("normalizeKnowledgeDocumentSnapshot(parseJsonText(rows[0].payloadJson))")
+  || !main.includes("syncKnowledgeAssetLinks(connection, knowledgeAssetLinkTable")
+) {
+  fail("database reload must preserve full snapshots, formatting payloads, and asset relationships");
 }
 
 const documentWorkspace = read("src/renderer/features/documents/KnowledgeDocumentWorkspace.tsx");
