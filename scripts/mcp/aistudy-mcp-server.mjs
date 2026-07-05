@@ -874,7 +874,7 @@ async function readMysqlConfig() {
   const dataConfig = await readJsonFile(getDataPath("config", "mysql.config.json"));
   const provider = normalizeDatabaseProvider(getEnv("DATABASE_PROVIDER") || getEnv("DB_PROVIDER") || dataConfig.provider);
   const readConnectionEnv = (name) => provider === "tidb"
-    ? getEnv(`TIDB_${name}`) ?? getEnv(`MYSQL_${name}`)
+    ? getEnv(`TIDB_${name}`)
     : getEnv(`MYSQL_${name}`);
   const config = {
     provider,

@@ -4791,7 +4791,7 @@ async function readMysqlConfig(): Promise<MysqlConfig> {
     ...parseDatabaseConnectionString(readPublicDatabaseConnectionString(provider), provider)
   };
   const readConnectionEnv = (name: string) => provider === "tidb"
-    ? readPublicTidbEnv(name) ?? readPublicMysqlEnv(name)
+    ? readPublicTidbEnv(name)
     : readPublicMysqlEnv(name);
   const explicitlyConfigured = hasPublicMysqlEnvSetting()
     || hasPublicTidbEnvSetting()
