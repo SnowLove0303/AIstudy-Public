@@ -4534,6 +4534,23 @@ function isLocalMysqlHost(host: string) {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
+function isRecoverableDatabaseConnectionError(error: unknown) {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return [
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EPIPE",
+    "ENOTFOUND",
+    "PROTOCOL_CONNECTION_LOST",
+    "PROTOCOL_SEQUENCE_TIMEOUT",
+    "PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR"
+  ].includes(code)
+    || /closed state|connection lost|server closed|read ECONNRESET|write ECONNRESET|connect ETIMEDOUT|connect ECONNREFUSED/i.test(message);
+}
+
 function parseManagedMysqlIniPort(text: string) {
   const match = text.match(/^\s*port\s*=\s*(\d+)\s*$/im);
   return match ? parsePort(match[1], 3306) : 3306;
@@ -4797,6 +4814,7 @@ async function saveDatabaseSettings(input: unknown): Promise<DatabaseSettings> {
   const next = normalizeDatabaseSettingsInput(input, current, savedConfig);
   await writeJsonAtomic(settingsFilePath, next);
   await resetMysqlRuntime();
+  await getMysqlRuntime();
   return readDatabaseSettings();
 }
 
@@ -5419,7 +5437,7 @@ async function createMysqlRuntime(): Promise<MysqlRuntime> {
   return mysqlRuntime;
 }
 
-function getMysqlRuntime() {
+async function getMysqlRuntime() {
   if (!mysqlRuntimePromise) {
     mysqlRuntimePromise = createMysqlRuntime().catch((error) => {
       mysqlRuntimePromise = null;
@@ -5427,7 +5445,21 @@ function getMysqlRuntime() {
     });
   }
 
-  return mysqlRuntimePromise;
+  const runtime = await mysqlRuntimePromise;
+  try {
+    await runtime.pool.query("SELECT 1");
+    return runtime;
+  } catch (error) {
+    if (!isRecoverableDatabaseConnectionError(error)) throw error;
+    await resetMysqlRuntime();
+    mysqlRuntimePromise = createMysqlRuntime().catch((createError) => {
+      mysqlRuntimePromise = null;
+      throw createError;
+    });
+    const recoveredRuntime = await mysqlRuntimePromise;
+    await recoveredRuntime.pool.query("SELECT 1");
+    return recoveredRuntime;
+  }
 }
 
 function warmMysqlRuntime() {
@@ -6731,7 +6763,12 @@ function createCourseStorageProvider(): DbFirstStorageProvider<CourseStore> {
 }
 
 async function readCourseStore(): Promise<CourseStore> {
-  return (await readDbFirstStore(createCourseStorageProvider())).value;
+  const cache = await readCurrentSourceLocalCourseStore();
+  const databaseStore = await readCourseStoreFromMysql(cache);
+  void writeLocalCourseStore(databaseStore).catch((error) => {
+    console.warn("Course local mirror write failed after database read.", error);
+  });
+  return databaseStore;
 }
 
 async function replaceCourseSectionRows(connection: PoolConnection, sectionTable: string, sections: CourseSectionRecord[]) {
@@ -6814,7 +6851,11 @@ async function writeCourseStore(store: CourseStore) {
   const sourceKey = await readCurrentDatabaseSourceKey().catch(() => undefined);
   const normalized = normalizeCourseStore(store);
   const scoped = sourceKey ? withCourseStoreSourceKey(normalized, sourceKey) : normalized;
-  return (await writeDbFirstStore(createCourseStorageProvider(), scoped)).value;
+  const databaseStore = await writeCourseStoreToMysql(scoped);
+  void writeLocalCourseStore(databaseStore).catch((error) => {
+    console.warn("Course local mirror write failed after database save.", error);
+  });
+  return databaseStore;
 }
 
 function errorToMessage(error: unknown) {
@@ -7139,14 +7180,11 @@ async function writeLocalCourseStoreWithPending(
   store: CourseStore,
   action: PendingCourseOperation["action"],
   payload: Record<string, unknown>
-) {
-  const normalized = await writeAndNormalizeLocalCourseStore(store);
-  try {
-    await appendPendingCourseOperation(action, payload);
-  } catch (error) {
-    console.warn("Course pending operation write failed. Local store was preserved.", error);
-  }
-  return normalized;
+): Promise<CourseStore> {
+  void store;
+  void action;
+  void payload;
+  throw createAppError("MYSQL_UNAVAILABLE", "数据库未连接，本次知识库操作未保存。请等待自动重连或切换可用数据库后重试。");
 }
 
 async function createCourseSectionCommand(input: CourseSectionNameRequest): Promise<CourseStore> {
@@ -7172,7 +7210,7 @@ async function createCourseSectionCommand(input: CourseSectionNameRequest): Prom
     );
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course section create fell back to local store.", error);
+    console.warn("Course section create failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       { ...current, sections: [...current.sections, section] },
       "section:create",
@@ -7201,7 +7239,7 @@ async function renameCourseSectionCommand(input: CourseSectionRenameRequest): Pr
     );
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course section rename fell back to local store.", error);
+    console.warn("Course section rename failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       {
         ...current,
@@ -7233,7 +7271,7 @@ async function toggleCourseSectionCommand(input: CourseSectionToggleRequest): Pr
     );
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course section toggle fell back to local store.", error);
+    console.warn("Course section toggle failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       {
         ...current,
@@ -7281,7 +7319,7 @@ async function toggleAllCourseSectionsCommand(input: CourseSectionToggleAllReque
     }
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course sections toggle all fell back to local store.", error);
+    console.warn("Course sections toggle all failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       nextStore,
       "section:toggle-all",
@@ -7344,7 +7382,7 @@ async function reorderCourseSectionCommand(input: CourseSectionReorderRequest): 
     }
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course section reorder fell back to local store.", error);
+    console.warn("Course section reorder failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       nextStore,
       "section:reorder",
@@ -7401,7 +7439,7 @@ async function deleteCourseSectionCommand(sectionIdValue: unknown): Promise<Cour
     }
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course section delete fell back to local store.", error);
+    console.warn("Course section delete failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       nextStore,
       "section:delete",
@@ -7474,7 +7512,7 @@ async function createCourseCommand(input: CourseCreateRequest): Promise<CourseSt
     });
     return nextStore;
   } catch (error) {
-    console.warn("Course create fell back to local store.", error);
+    console.warn("Course create failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       { ...current, courses: [course, ...current.courses], activeCourseId: course.id },
       "course:create",
@@ -7503,7 +7541,7 @@ async function renameCourseCommand(input: CourseRenameRequest): Promise<CourseSt
     );
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course rename fell back to local store.", error);
+    console.warn("Course rename failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       {
         ...current,
@@ -7539,7 +7577,7 @@ async function moveCourseCommand(input: CourseMoveRequest): Promise<CourseStore>
     );
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course move fell back to local store.", error);
+    console.warn("Course move failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       {
         ...current,
@@ -7616,7 +7654,7 @@ async function reorderCourseCommand(input: CourseReorderRequest): Promise<Course
     }
     return await readCourseStore();
   } catch (error) {
-    console.warn("Course reorder fell back to local store.", error);
+    console.warn("Course reorder failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       nextStore,
       "course:reorder",
@@ -7657,7 +7695,7 @@ async function deleteCourseCommand(courseIdValue: unknown): Promise<CourseStore>
     });
     return nextStore;
   } catch (error) {
-    console.warn("Course delete fell back to local store.", error);
+    console.warn("Course delete failed because database is unavailable.", error);
     return await writeLocalCourseStoreWithPending(
       {
         ...current,

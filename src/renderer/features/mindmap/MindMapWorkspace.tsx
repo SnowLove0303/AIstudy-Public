@@ -301,7 +301,7 @@ async function deleteLocalKnowledgeDocuments(courseId: string, mindMapId: string
 
 async function loadPersistedDocument(courseId: string, courseName: string) {
   if (!window.aistudyMindMaps) {
-    return { document: await loadLocalDocument(courseId, courseName), mode: "local" as StorageMode, error: "" };
+    throw new Error("Mind map database service is unavailable.");
   }
 
   try {
@@ -312,11 +312,7 @@ async function loadPersistedDocument(courseId: string, courseName: string) {
       error: ""
     };
   } catch (error) {
-    return {
-      document: await loadLocalDocument(courseId, courseName),
-      mode: "local" as StorageMode,
-      error: getErrorMessage(error, "导图读取失败，已打开本地副本")
-    };
+    throw error;
   }
 }
 
@@ -780,22 +776,7 @@ export function MindMapWorkspace({
 
     try {
       if (!window.aistudyMindMaps) {
-        try {
-          const localDocument = await saveLocalDocument(input);
-          if (!silent) {
-            setMapId(localDocument.mapId);
-            setStorageMode("local");
-            setSavedAt(formatSavedAt());
-            setError("");
-          }
-          return localDocument;
-        } catch (localError) {
-          if (!silent) {
-            setStorageMode("none");
-            setError(getErrorMessage(localError, "导图本地缓存失败"));
-          }
-          return null;
-        }
+        throw new Error("Mind map database service is unavailable.");
       }
 
       const remoteDocument = await window.aistudyMindMaps.save(input);
@@ -807,22 +788,11 @@ export function MindMapWorkspace({
         }
       return remoteDocument;
     } catch (error) {
-      try {
-        const localDocument = await saveLocalDocument(input);
-        if (!silent) {
-          setMapId(localDocument.mapId);
-          setStorageMode("local");
-          setSavedAt(formatSavedAt());
-          setError(getErrorMessage(error, "导图保存失败，已保存到本地副本"));
-        }
-        return localDocument;
-      } catch (localError) {
-        if (!silent) {
-          setStorageMode("none");
-          setError(`${getErrorMessage(error, "导图保存失败")}；${getErrorMessage(localError, "本地副本也保存失败")}`);
-        }
-        return null;
+      if (!silent) {
+        setStorageMode("none");
+        setError(getErrorMessage(error, "导图保存失败，数据库未连接"));
       }
+      return null;
     } finally {
       if (!silent) {
         setIsSaving(false);
@@ -883,16 +853,15 @@ export function MindMapWorkspace({
         setStorageMode(mode);
         setError(loadError);
       })
-      .catch(async () => {
+      .catch((error) => {
         if (loadSequenceRef.current !== sequence) return;
-        const document = await loadLocalDocument(courseId, courseName);
-        setMapId(document.mapId);
-        commitSnapshotForUi(document.snapshot, true);
+        setMapId(null);
+        commitSnapshotForUi(null, true);
         setLoadedCourseId(courseId);
-        loadedRootNodeIdRef.current = document.snapshot ? getNodeId(document.snapshot.root) : null;
+        loadedRootNodeIdRef.current = null;
         setSnapshotLoadRevision((value) => value + 1);
-        setStorageMode("local");
-        setError("导图读取失败，已打开本地副本。");
+        setStorageMode("none");
+        setError(getErrorMessage(error, "导图读取失败，数据库未连接"));
       })
       .finally(() => {
         if (loadSequenceRef.current === sequence) {
@@ -1357,7 +1326,7 @@ export function MindMapWorkspace({
   }
 
   const nodeCount = focusedNodeId ? countNodes(focusedSnapshot.root) : outlineNodeCount;
-  const storageText = storageMode === "mysql" ? "已连接" : storageMode === "local" ? "本地副本" : "未连接";
+  const storageText = storageMode === "mysql" ? "已连接" : "未连接";
   const currentLayout = normalizeLayout(focusedSnapshot.layout);
   const canvasKey = `${loadedCourseId}:${mapId ?? "pending"}:${focusedNodeId ?? "full"}:${snapshotLoadRevision}`;
   const topicElements = selectedNode.topicElements ?? EMPTY_TOPIC_ELEMENTS;

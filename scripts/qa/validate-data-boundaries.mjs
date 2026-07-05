@@ -142,6 +142,51 @@ if (
   fail("main database runtime must keep optional TiDB/TLS support without replacing the default MySQL path");
 }
 
+if (
+  !main.includes("isRecoverableDatabaseConnectionError")
+  || !main.includes('runtime.pool.query("SELECT 1")')
+  || !main.includes("await resetMysqlRuntime()")
+) {
+  fail("main database runtime must verify and rebuild stale pools before serving app data");
+}
+
+if (
+  main.includes("readDbFirstStore(createCourseStorageProvider())")
+  || main.includes("writeDbFirstStore(createCourseStorageProvider()")
+  || !main.includes('throw createAppError("MYSQL_UNAVAILABLE", "数据库未连接，本次知识库操作未保存。')
+) {
+  fail("course knowledge data must be database-authoritative and must not fall back to local course stores");
+}
+
+const appEntry = read("src/renderer/main.tsx");
+if (!appEntry.includes("clearCourseStoreForDatabaseUnavailable") || !appEntry.includes("await onDatabaseChanged?.().catch(() => undefined)")) {
+  fail("renderer must clear stale course state when database load or database switching fails");
+}
+
+const courseSidebar = read("src/renderer/features/course/CourseSidebar.tsx");
+if (courseSidebar.includes("部分内容暂时没同步") || courseSidebar.includes("已在本机保存，稍后自动同步")) {
+  fail("course sidebar must not present database failures as local sync or partial stale content");
+}
+
+const mindMapWorkspace = read("src/renderer/features/mindmap/MindMapWorkspace.tsx");
+if (
+  mindMapWorkspace.includes('setStorageMode("local")')
+  || mindMapWorkspace.includes("导图读取失败，已打开本地副本")
+  || mindMapWorkspace.includes("已保存到本地副本")
+) {
+  fail("mind map workspace must not render or save a local fallback when the database is unavailable");
+}
+
+const documentWorkspace = read("src/renderer/features/documents/KnowledgeDocumentWorkspace.tsx");
+if (
+  documentWorkspace.includes('setStorageMode("local")')
+  || documentWorkspace.includes("文档读取失败，已打开本地副本")
+  || documentWorkspace.includes("文档保存失败，已保存到本地副本")
+  || documentWorkspace.includes("本地副本也保存失败")
+) {
+  fail("document workspace must not render or save a local fallback when the database is unavailable");
+}
+
 const mcpServer = read("scripts/mcp/aistudy-mcp-server.mjs");
 if (!mcpServer.includes("AIstudyPublicCleanData") || !mcpServer.includes("xiaohongshu")) {
   fail("external MCP chrome ports must share the stable runtime root and full platform list");

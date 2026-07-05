@@ -342,6 +342,7 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
       await onDatabaseChanged?.();
       setDatabaseMessage("已切换");
     } catch (saveError) {
+      await onDatabaseChanged?.().catch(() => undefined);
       setDatabaseError(saveError instanceof Error ? saveError.message : "数据源切换失败。");
     } finally {
       setIsSavingDatabase(false);
@@ -1080,6 +1081,21 @@ function App() {
     setHasLoadedCourseStore(true);
   }
 
+  function clearCourseStoreForDatabaseUnavailable() {
+    setCourseSections([]);
+    setCourses([]);
+    setActiveCourseId(null);
+    setMindMapOutline([]);
+    setActiveMindMapId(null);
+    setSelectedMindMapNode({ id: null, title: "" });
+    setWorkspaceEditorMode("mindmap");
+    setModeChangeRequest(null);
+    setNodeSelectionRequest(null);
+    setNodeDeletionRequest(null);
+    setCatalogBoundaryRequest(null);
+    setHasLoadedCourseStore(true);
+  }
+
   React.useEffect(() => {
     if (!window.aistudyMcp?.onDataChanged) return undefined;
     return window.aistudyMcp.onDataChanged((change) => {
@@ -1091,6 +1107,7 @@ function App() {
             void refreshCourseSyncStatus();
           })
           .catch(() => {
+            clearCourseStoreForDatabaseUnavailable();
             setCourseSyncStatus({ state: "attention", pendingCount: 1 });
           });
       }
@@ -1117,6 +1134,7 @@ function App() {
       await refreshCourseSyncStatus();
       return store;
     } catch (error) {
+      clearCourseStoreForDatabaseUnavailable();
       await refreshCourseSyncStatus();
       throw error;
     }
@@ -1133,6 +1151,7 @@ function App() {
       })
       .catch(() => {
         if (isCancelled) return;
+        clearCourseStoreForDatabaseUnavailable();
         setCourseSyncStatus({ state: "attention", pendingCount: 1 });
       })
       .finally(() => {
@@ -1153,6 +1172,7 @@ function App() {
       applyCourseStore(store);
       await refreshCourseSyncStatus();
     } catch {
+      clearCourseStoreForDatabaseUnavailable();
       setCourseSyncStatus((current) => ({ state: "attention", pendingCount: Math.max(current.pendingCount, 1) }));
     }
   }
@@ -1375,10 +1395,17 @@ function App() {
 
   async function reloadCoursesAfterDatabaseChange() {
     setCourseSyncStatus((current) => ({ ...current, state: "saving" }));
-    const store = await courseApi.load();
-    applyCourseStore(store);
-    setExternalContentRevision(Date.now());
-    await refreshCourseSyncStatus();
+    clearCourseStoreForDatabaseUnavailable();
+    try {
+      const store = await courseApi.load();
+      applyCourseStore(store);
+      setExternalContentRevision(Date.now());
+      await refreshCourseSyncStatus();
+    } catch (error) {
+      setExternalContentRevision(Date.now());
+      setCourseSyncStatus({ state: "attention", pendingCount: 1 });
+      throw error;
+    }
   }
 
   return (

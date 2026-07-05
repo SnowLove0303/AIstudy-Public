@@ -894,23 +894,7 @@ export function KnowledgeDocumentWorkspace({
       if (!silent) setIsSaving(true);
       try {
         if (!window.aistudyKnowledgeDocuments) {
-          try {
-            await saveLocalDocument(input);
-            updateDocumentStatusFromSnapshot(input, null);
-            if (!silent) {
-              setStorageMode("local");
-              setSavedAt(formatSavedAt());
-              setError("");
-            }
-            documentDirtyRef.current = false;
-            return null;
-          } catch (localError) {
-            if (!silent) {
-              setStorageMode("none");
-              setError(getErrorMessage(localError, "文档本地缓存失败"));
-            }
-            return null;
-          }
+          throw new Error("文档数据库服务不可用");
         }
 
         const document = await window.aistudyKnowledgeDocuments.save(input);
@@ -928,23 +912,11 @@ export function KnowledgeDocumentWorkspace({
         documentDirtyRef.current = false;
         return document;
       } catch (error) {
-        try {
-          await saveLocalDocument(input);
-          updateDocumentStatusFromSnapshot(input, null);
-          if (!silent) {
-            setStorageMode("local");
-            setSavedAt(formatSavedAt());
-            setError(getErrorMessage(error, "文档保存失败，已保存到本地副本"));
-          }
-          documentDirtyRef.current = false;
-          return null;
-        } catch (localError) {
-          if (!silent) {
-            setStorageMode("none");
-            setError(`${getErrorMessage(error, "文档保存失败")}；${getErrorMessage(localError, "本地副本也保存失败")}`);
-          }
-          return null;
+        if (!silent) {
+          setStorageMode("none");
+          setError(getErrorMessage(error, "文档保存失败，数据库未连接"));
         }
+        return null;
       } finally {
         if (!silent) setIsSaving(false);
       }
@@ -1039,15 +1011,12 @@ export function KnowledgeDocumentWorkspace({
     setIsLoading(true);
     const request: LoadRequest = documentBinding;
     void (async () => {
-      const fallbackSnapshot =
-        (await loadLocalDocument(documentBinding.courseId, documentBinding.mindMapId, documentBinding.nodeId)) ??
-        createEmptyKnowledgeDocumentSnapshot();
-      if (loadSequenceRef.current !== sequence) return;
-
       if (!window.aistudyKnowledgeDocuments) {
-        setSnapshot(fallbackSnapshot);
-        latestSnapshotRef.current = fallbackSnapshot;
-        setStorageMode("local");
+        setSnapshot(null);
+        latestSnapshotRef.current = null;
+        documentDirtyRef.current = false;
+        setStorageMode("none");
+        setError("文档读取失败，数据库未连接");
         setIsLoading(false);
         return;
       }
@@ -1095,11 +1064,11 @@ export function KnowledgeDocumentWorkspace({
         setStorageMode(document ? "mysql" : "none");
       } catch (error) {
         if (loadSequenceRef.current !== sequence) return;
-        setSnapshot(fallbackSnapshot);
-        latestSnapshotRef.current = fallbackSnapshot;
+        setSnapshot(null);
+        latestSnapshotRef.current = null;
         documentDirtyRef.current = false;
-        setStorageMode("local");
-        setError(getErrorMessage(error, "文档读取失败，已打开本地副本"));
+        setStorageMode("none");
+        setError(getErrorMessage(error, "文档读取失败，数据库未连接"));
       } finally {
         if (loadSequenceRef.current === sequence) {
           setIsLoading(false);
@@ -1356,7 +1325,7 @@ export function KnowledgeDocumentWorkspace({
     }
   }, [documentBinding, isChoosingImage, saveNow]);
 
-  const storageText = storageMode === "mysql" ? "已连接" : storageMode === "local" ? "本地副本" : "未保存";
+  const storageText = storageMode === "mysql" ? "已连接" : "未连接";
 
   const loadDocumentForNavigation = React.useCallback(
     async (nodeId: string): Promise<KnowledgeDocumentSnapshot | null> => {
@@ -1369,11 +1338,11 @@ export function KnowledgeDocumentWorkspace({
             return remoteDocument.snapshot;
           }
         } catch {
-          // Remote lookup can fail independently; local fallback keeps navigation responsive.
+          // Navigation content must stay database-backed; a lookup failure is treated as empty.
         }
       }
 
-      return loadLocalDocument(courseId, mindMapId, nodeId);
+      return null;
     },
     [courseId, mindMapId]
   );

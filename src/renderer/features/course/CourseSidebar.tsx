@@ -436,8 +436,8 @@ export function CourseSidebar({
   function renderSyncStatus() {
     const text = (() => {
       if (syncStatus.state === "saving") return "正在保存";
-      if (syncStatus.state === "waiting") return syncStatus.pendingCount > 1 ? `${syncStatus.pendingCount} 项已在本机保存，稍后自动同步` : "已在本机保存，稍后自动同步";
-      if (syncStatus.state === "attention") return "部分内容暂时没同步";
+      if (syncStatus.state === "waiting") return "正在等待数据库响应";
+      if (syncStatus.state === "attention") return "数据库未连接";
       return "已保存";
     })();
 
