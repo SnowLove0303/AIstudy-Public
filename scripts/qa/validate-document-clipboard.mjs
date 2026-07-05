@@ -127,6 +127,29 @@ assert(inlineMathLatex.includes("(-x)^2") || inlineMathLatex.includes("(-x)^{2}"
 const normalized = mathClipboard.normalizeMathText("y = a^x \\quad (a>0, a\\ne1)");
 assert(!normalized.includes("quad") && normalized.includes("a≠1"), "math normalization should remove quad and normalize ne");
 
+const windowsPath = "F:\\XIANGMU\\智投";
+assert(
+  mathClipboard.normalizeMathText(windowsPath) === windowsPath,
+  "Windows paths should preserve backslashes during math normalization"
+);
+const pathClipboard = {
+  getData(type) {
+    return type === "text/plain" ? windowsPath : "";
+  }
+};
+assert(
+  mathClipboard.parseClipboardMathElements(pathClipboard) === null,
+  "plain Windows paths should not be routed through math paste"
+);
+const pathBlocks = documentClipboard.parsePlainTextDocumentBlocks([
+  "项目存储位置：F:\\XIANGMU\\智投",
+  "项目仓库：SnowLove0303/Auto-Deliver"
+].join("\n"));
+assert(
+  pathBlocks.some((block) => block.elements && flatten(block.elements).includes(windowsPath)),
+  "document clipboard should preserve Windows path backslashes"
+);
+
 assert(adapterSource.includes('const DOCUMENT_CLIPBOARD_MIME = "application/x-aistudy-document-elements+json"'), "document adapter should define an internal rich clipboard MIME");
 assert(adapterSource.includes("setData(DOCUMENT_CLIPBOARD_MIME"), "copy should write AIstudy structured document data");
 assert(adapterSource.includes('setData("text/html"'), "copy should write HTML for rich-text targets");

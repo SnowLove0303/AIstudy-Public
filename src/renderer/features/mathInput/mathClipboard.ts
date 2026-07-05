@@ -115,8 +115,30 @@ function appendTextWithUnicodeScripts(elements: MathInlineElement[], value: stri
   flushText();
 }
 
+const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
+const FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDY_PATH_";
+const FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
+
+function protectFilePathText(value: string) {
+  const paths: string[] = [];
+  const text = value.replace(FILE_PATH_TEXT_PATTERN, (match) => {
+    const index = paths.push(match) - 1;
+    return `${FILE_PATH_PLACEHOLDER_PREFIX}${index}${FILE_PATH_PLACEHOLDER_SUFFIX}`;
+  });
+  return { text, paths };
+}
+
+function restoreFilePathText(value: string, paths: string[]) {
+  if (paths.length === 0) return value;
+  return value.replace(
+    new RegExp(`${FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => paths[Number(index)] ?? ""
+  );
+}
+
 export function normalizeMathText(value: string) {
-  let text = value
+  const protectedText = protectFilePathText(value);
+  let text = protectedText.text
     .replace(/\r\n?/g, "\n")
     .replace(/\u00a0/g, " ")
     .replace(/\u2212/g, "-")
@@ -186,7 +208,7 @@ export function normalizeMathText(value: string) {
     .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
     .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
 
-  return text.replace(/\\/g, "");
+  return restoreFilePathText(text.replace(/\\/g, ""), protectedText.paths);
 }
 
 export function parseMathInlineElements(value: string, inheritedType?: ScriptType): MathInlineElement[] {

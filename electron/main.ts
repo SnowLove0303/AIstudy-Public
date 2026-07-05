@@ -9249,8 +9249,30 @@ function normalizeMcpDocumentNestedScriptText(value: string) {
   });
 }
 
+const MCP_DOCUMENT_FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
+const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDY_PATH_";
+const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
+
+function protectMcpDocumentFilePathText(value: string) {
+  const paths: string[] = [];
+  const text = value.replace(MCP_DOCUMENT_FILE_PATH_TEXT_PATTERN, (match) => {
+    const index = paths.push(match) - 1;
+    return `${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}${index}${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`;
+  });
+  return { text, paths };
+}
+
+function restoreMcpDocumentFilePathText(value: string, paths: string[]) {
+  if (paths.length === 0) return value;
+  return value.replace(
+    new RegExp(`${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => paths[Number(index)] ?? ""
+  );
+}
+
 function normalizeMcpDocumentMathText(value: string) {
-  let text = value
+  const protectedText = protectMcpDocumentFilePathText(value);
+  let text = protectedText.text
     .replace(/\u00a0/g, " ")
     .replace(/\u2212/g, "-")
     .replace(/\\qquad(?![A-Za-z])|\\quad(?![A-Za-z])/g, " ")
@@ -9318,7 +9340,7 @@ function normalizeMcpDocumentMathText(value: string) {
     .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
     .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
 
-  return text.replace(/\\/g, "");
+  return restoreMcpDocumentFilePathText(text.replace(/\\/g, ""), protectedText.paths);
 }
 
 function createMcpDocumentElement(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {

@@ -2136,8 +2136,30 @@ function normalizeDocumentNestedScriptText(value) {
   });
 }
 
+const DOCUMENT_FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
+const DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDY_PATH_";
+const DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
+
+function protectDocumentFilePathText(value) {
+  const paths = [];
+  const text = String(value || "").replace(DOCUMENT_FILE_PATH_TEXT_PATTERN, (match) => {
+    const index = paths.push(match) - 1;
+    return `${DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}${index}${DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`;
+  });
+  return { text, paths };
+}
+
+function restoreDocumentFilePathText(value, paths) {
+  if (paths.length === 0) return value;
+  return value.replace(
+    new RegExp(`${DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => paths[Number(index)] ?? ""
+  );
+}
+
 function normalizeDocumentMathText(value) {
-  let text = String(value || "")
+  const protectedText = protectDocumentFilePathText(value);
+  let text = protectedText.text
     .replace(/\u00a0/g, " ")
     .replace(/\u2212/g, "-")
     .replace(/\\qquad(?![A-Za-z])|\\quad(?![A-Za-z])/g, " ")
@@ -2205,7 +2227,7 @@ function normalizeDocumentMathText(value) {
     .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
     .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
 
-  return text.replace(/\\/g, "");
+  return restoreDocumentFilePathText(text.replace(/\\/g, ""), protectedText.paths);
 }
 
 function createTemplateElement(value, kind) {
