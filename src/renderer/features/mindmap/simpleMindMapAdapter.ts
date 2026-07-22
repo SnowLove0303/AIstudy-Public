@@ -776,6 +776,17 @@ function normalizeBubbleHeight(value: unknown) {
   return normalizeBubbleDimension(value, MIN_NODE_BUBBLE_HEIGHT, MAX_NODE_BUBBLE_HEIGHT);
 }
 
+function getNodeOuterTextInset(node: any) {
+  const naturalWidth = Number(node?.__aistudyNaturalNodeRect?.width ?? node?.width);
+  const textContentWidth = Number(node?._rectInfo?.textContentWidth ?? node?._textData?.width);
+  if (!Number.isFinite(naturalWidth) || !Number.isFinite(textContentWidth)) return 0;
+  return Math.max(0, naturalWidth - textContentWidth);
+}
+
+function getNodeTextWrapWidthForBubble(node: any, bubbleWidth: number) {
+  return normalizeTextWrapWidth(bubbleWidth - getNodeOuterTextInset(node));
+}
+
 function readNodeBubbleSize(data: Record<string, unknown>) {
   return {
     width: normalizeBubbleWidth(data.customBubbleWidth),
@@ -849,24 +860,36 @@ function applyNodeBubbleWidth(
   options: { renderTree?: boolean; persist?: boolean } = {}
 ) {
   if (!node) return;
-  const naturalWidth = normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width);
+  const data = readNodeData(node);
+  const savedNaturalWidth = normalizeBubbleWidth(data.aistudyNaturalBubbleWidth);
+  const naturalWidth = savedNaturalWidth ?? normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width);
   const normalizedWidth = normalizeBubbleWidth(width);
   const nextWidth =
     normalizedWidth !== undefined && naturalWidth !== undefined && normalizedWidth <= naturalWidth + 1
       ? undefined
       : normalizedWidth;
+  const nextTextWrapWidth = nextWidth === undefined ? undefined : getNodeTextWrapWidthForBubble(node, nextWidth);
+  const nextNaturalWidth = nextWidth === undefined ? undefined : naturalWidth;
 
-  const data = readNodeData(node);
   if (nextWidth === undefined) {
     delete data.customBubbleWidth;
+    delete data.customTextWidth;
+    delete data.aistudyNaturalBubbleWidth;
   } else {
     data.customBubbleWidth = nextWidth;
+    data.customTextWidth = nextTextWrapWidth;
+    data.aistudyNaturalBubbleWidth = nextNaturalWidth;
   }
 
   node.customBubbleWidth = nextWidth;
+  node.customTextWidth = nextTextWrapWidth;
 
   if (options.persist !== false && typeof node.setData === "function") {
-    node.setData({ customBubbleWidth: nextWidth });
+    node.setData({
+      customBubbleWidth: nextWidth,
+      customTextWidth: nextTextWrapWidth,
+      aistudyNaturalBubbleWidth: nextNaturalWidth
+    });
   }
   if (typeof node.reRender === "function") {
     node.reRender([], { resetWidth: false });
@@ -1041,6 +1064,26 @@ function installPerNodeTextWrapWidthSupport(editor: any) {
   };
 }
 
+function syncBubbleTextWrapWidths(node: any) {
+  if (!node) return;
+  const data = readNodeData(node);
+  const bubbleWidth = normalizeBubbleWidth(data.customBubbleWidth);
+  if (bubbleWidth !== undefined && normalizeTextWrapWidth(data.customTextWidth) === undefined) {
+    const naturalWidth = normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width ?? node?.width);
+    const textWrapWidth = getNodeTextWrapWidthForBubble(node, bubbleWidth);
+    if (textWrapWidth !== undefined) {
+      data.customTextWidth = textWrapWidth;
+      node.customTextWidth = textWrapWidth;
+      if (normalizeBubbleWidth(data.aistudyNaturalBubbleWidth) === undefined && naturalWidth !== undefined) {
+        data.aistudyNaturalBubbleWidth = naturalWidth;
+      }
+    }
+  }
+  if (Array.isArray(node.children)) {
+    node.children.forEach(syncBubbleTextWrapWidths);
+  }
+}
+
 function installBubbleSizeSupport(editor: any) {
   const root = editor.renderer?.root;
   const proto = root && typeof root === "object" ? Object.getPrototypeOf(root) : null;
@@ -1147,6 +1190,7 @@ export async function createSimpleMindMapEditor(
     installBubbleSizeSupport(editor);
   };
   installRuntimeNodeExtensions();
+  syncBubbleTextWrapWidths(editor.renderer?.root);
   if (treeHasCustomNodeLayout(snapshot.root)) {
     editor.render?.();
   }
@@ -1322,7 +1366,12 @@ export async function createSimpleMindMapEditor(
   };
 
   const getNodeNaturalBubbleWidth = (node: any) => {
-    return normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width) ?? MIN_NODE_BUBBLE_WIDTH;
+    const data = readNodeData(node);
+    return (
+      normalizeBubbleWidth(data.aistudyNaturalBubbleWidth) ??
+      normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width) ??
+      MIN_NODE_BUBBLE_WIDTH
+    );
   };
 
   const getNodeResizeStartWidth = (node: any) => {
@@ -1604,6 +1653,9 @@ export async function createSimpleMindMapEditor(
     setSnapshot: (nextSnapshot) => {
       if (destroyed) return;
       editor.setFullData(toEditorData(nextSnapshot));
+      installRuntimeNodeExtensions();
+      syncBubbleTextWrapWidths(editor.renderer?.root);
+      editor.render?.();
       ensureStableRenderTreeNodeIds(editor);
       renderRightBracketGeneralizations(editor);
       editor.scrollbar?.updateScrollbar?.();
