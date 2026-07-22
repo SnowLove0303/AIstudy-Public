@@ -46,11 +46,12 @@ const EMPTY_MIND_MAP_VIEWPORT_STATE: MindMapViewportState = {
 };
 const DEFAULT_NODE_TEXT_WRAP_WIDTH = 300;
 const MIN_NODE_TEXT_WRAP_WIDTH = 160;
-const MAX_NODE_TEXT_WRAP_WIDTH = 560;
 const MIN_NODE_BUBBLE_WIDTH = 72;
 const MIN_NODE_BUBBLE_HEIGHT = 30;
 const MAX_NODE_BUBBLE_WIDTH = 960;
 const MAX_NODE_BUBBLE_HEIGHT = 520;
+// Manual topic resizing follows the outer bubble width instead of stopping at the default auto-wrap width.
+const MAX_NODE_TEXT_WRAP_WIDTH = MAX_NODE_BUBBLE_WIDTH;
 const INITIAL_VIEW_SCALE = 1;
 const SUMMARY_BRACKET_ARM_LENGTH = 34;
 
@@ -892,7 +893,8 @@ function applyNodeBubbleWidth(
     });
   }
   if (typeof node.reRender === "function") {
-    node.reRender([], { resetWidth: false });
+    // Recreate the text node so the new width immediately recalculates line breaks and height.
+    node.reRender(["text"], { ignoreUpdateCustomTextWidth: true });
   } else if (typeof node.layout === "function") {
     node.layout();
   }
@@ -1227,9 +1229,12 @@ export async function createSimpleMindMapEditor(
     const scale = getEditorScale();
     const paddingX = Number(textEdit.textNodePaddingX ?? 5);
     const paddingY = Number(textEdit.textNodePaddingY ?? 3);
+    const customTextWrapWidth = normalizeTextWrapWidth(
+      readNodeData(node).customTextWidth ?? node?.customTextWidth
+    );
     const wrapWidth = Math.max(
       MIN_NODE_TEXT_WRAP_WIDTH * scale,
-      Number(editor.opt?.textAutoWrapWidth ?? DEFAULT_NODE_TEXT_WRAP_WIDTH) * scale
+      Number(customTextWrapWidth ?? editor.opt?.textAutoWrapWidth ?? DEFAULT_NODE_TEXT_WRAP_WIDTH) * scale
     );
     const stableTextWidth = Math.min(
       wrapWidth,
