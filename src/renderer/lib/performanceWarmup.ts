@@ -27,7 +27,10 @@ export function startCoreFeatureWarmup(): WarmupCancel {
   if (hasStartedCoreWarmup) return () => undefined;
   hasStartedCoreWarmup = true;
 
-  const cancelMindMapWarmup = scheduleIdleTask(() => runQuietly(preloadSimpleMindMapEditor), 600);
+  // Start the mind-map dependency check in the background as soon as the app mounts.
+  // It must never hold up the first render; the canvas still has its own retry path.
+  runQuietly(preloadSimpleMindMapEditor);
+  const cancelMindMapWarmup = () => undefined;
   const cancelDocumentWarmup = scheduleIdleTask(() => runQuietly(preloadCanvasDocumentEditor), 1400);
 
   return () => {

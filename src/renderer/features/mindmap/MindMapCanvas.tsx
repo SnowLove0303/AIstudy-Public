@@ -6,7 +6,7 @@ import {
   type ViewportScrollAxis,
   type ViewportScrollState
 } from "../../lib/ViewportScrollbars";
-import { createSimpleMindMapEditor } from "./simpleMindMapAdapter";
+import { createSimpleMindMapEditor, resetSimpleMindMapRuntime } from "./simpleMindMapAdapter";
 import type {
   MindMapCommand,
   MindMapCommandPayload,
@@ -103,6 +103,8 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
     let isDisposed = false;
     let isCreating = false;
     let frameId: number | null = null;
+    let retryTimer: number | null = null;
+    let creationAttempts = 0;
     eventsRef.current.onReadyChange(false);
 
     const hasStableSize = () => {
@@ -110,10 +112,20 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
       return rect.width > 0 && rect.height > 0;
     };
 
+    const scheduleEditorRetry = () => {
+      if (isDisposed || retryTimer !== null || creationAttempts >= 3) return;
+      const delay = Math.min(1200, 200 * 2 ** Math.max(0, creationAttempts - 1));
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        createEditor();
+      }, delay);
+    };
+
     const createEditor = () => {
       if (isDisposed || isCreating || editorRef.current) return;
       if (!hasStableSize()) return;
       isCreating = true;
+      creationAttempts += 1;
 
       frameId = window.requestAnimationFrame(() => {
         frameId = null;
@@ -142,9 +154,16 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
             if (isDisposed || editorRef.current || editorSurface.parentElement !== mount) {
               editor.destroy();
               editorSurface.remove();
+              resetSimpleMindMapRuntime();
+              if (creationAttempts < 3) {
+                scheduleEditorRetry();
+              } else {
+                eventsRef.current.onError("导图暂时无法加载，请重新打开课程。");
+              }
               return;
             }
             editorRef.current = editor;
+            creationAttempts = 0;
             editor.setCanvasDragEnabled(canvasDragEnabledRef.current);
             editor.setViewportControlSize(mount.clientWidth, mount.clientHeight);
           })
@@ -157,6 +176,14 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
           })
           .finally(() => {
             isCreating = false;
+            if (!isDisposed && !editorRef.current) {
+              resetSimpleMindMapRuntime();
+              if (creationAttempts < 3) {
+                scheduleEditorRetry();
+              } else {
+                eventsRef.current.onError("导图暂时无法加载，请重新打开课程。");
+              }
+            }
           });
       });
     };
@@ -177,6 +204,10 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
         frameId = null;
+      }
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
       }
       resizeObserver.disconnect();
       editorRef.current?.destroy();

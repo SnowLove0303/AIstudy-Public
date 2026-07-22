@@ -36,6 +36,7 @@ type SimpleMindMapPlugin = {
   instanceName?: string;
 };
 type UnknownModule = Record<string, unknown> | { default?: unknown } | unknown;
+type ConstructorLike = { new (...args: any[]): unknown };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DOT_GRID_PATTERN_ID = "aistudy-dot-grid-pattern";
@@ -69,11 +70,34 @@ function resolveModuleConstructor<T>(module: UnknownModule, moduleName: string):
   throw new Error(`${moduleName} 加载失败：模块没有返回可构造的导出`);
 }
 
+function resolveModuleConstructorRobust<T>(module: UnknownModule, moduleName: string): T {
+  const candidates: unknown[] = [module];
+  if (module && typeof module === "object") {
+    const moduleRecord = module as Record<string, unknown>;
+    candidates.push(moduleRecord.default, moduleRecord.MindMap, moduleRecord.SimpleMindMap);
+  }
+
+  for (const initialCandidate of candidates) {
+    let candidate = initialCandidate;
+    for (let depth = 0; depth < 4; depth += 1) {
+      if (typeof candidate === "function") return candidate as T;
+      if (!candidate || typeof candidate !== "object" || !("default" in candidate)) break;
+      candidate = (candidate as { default?: unknown }).default;
+    }
+  }
+
+  throw new Error(`${moduleName} runtime export is not constructable`);
+}
+
+function assertConstructor(value: unknown, moduleName: string): asserts value is ConstructorLike {
+  if (typeof value !== "function") throw new Error(`${moduleName} runtime export is not constructable`);
+}
+
 async function loadSimpleMindMap() {
   if (simpleMindMapConstructorPromise) return simpleMindMapConstructorPromise;
 
   simpleMindMapConstructorPromise = loadSimpleMindMapModules().catch((error) => {
-    simpleMindMapConstructorPromise = null;
+    resetSimpleMindMapRuntime();
     throw error;
   });
 
@@ -100,7 +124,7 @@ async function loadSimpleMindMapModules() {
     import("simple-mind-map/src/plugins/Export.js"),
     import("simple-mind-map/src/plugins/Scrollbar.js")
   ]);
-  const MindMap = resolveModuleConstructor<SimpleMindMapConstructor>(mindMapModule, "simple-mind-map");
+  const MindMap = resolveModuleConstructorRobust<SimpleMindMapConstructor>(mindMapModule, "simple-mind-map");
   const plugins = [
     ["simple-mind-map Drag plugin", dragModule],
     ["simple-mind-map Select plugin", selectModule],
@@ -111,10 +135,13 @@ async function loadSimpleMindMapModules() {
     ["simple-mind-map Scrollbar plugin", scrollbarModule]
   ] as const;
 
-  if (typeof MindMap.usePlugin === "function") {
-    for (const [name, module] of plugins) {
-      MindMap.usePlugin(resolveModuleConstructor<SimpleMindMapPlugin>(module, name));
-    }
+  if (typeof MindMap.usePlugin !== "function") {
+    throw new Error("simple-mind-map plugin registry is unavailable");
+  }
+  for (const [name, module] of plugins) {
+    const Plugin = resolveModuleConstructorRobust<SimpleMindMapPlugin>(module, name);
+    assertConstructor(Plugin, name);
+    MindMap.usePlugin(Plugin);
   }
 
   return MindMap;
@@ -124,12 +151,20 @@ export async function preloadSimpleMindMapEditor() {
   await loadSimpleMindMap();
 }
 
+export function resetSimpleMindMapRuntime() {
+  simpleMindMapConstructorPromise = null;
+  xmindExportPluginPromise = null;
+}
+
 async function ensureXMindExportPlugin(editor: any) {
   if (editor.doExportXMind) return;
   if (!xmindExportPluginPromise) {
     xmindExportPluginPromise = import("simple-mind-map/src/plugins/ExportXMind.js").then(
-      (module) => resolveModuleConstructor<SimpleMindMapPlugin>(module, "simple-mind-map ExportXMind plugin")
-    );
+      (module) => resolveModuleConstructorRobust<SimpleMindMapPlugin>(module, "simple-mind-map ExportXMind plugin")
+    ).catch((error) => {
+      xmindExportPluginPromise = null;
+      throw error;
+    });
   }
   const ExportXMind = await xmindExportPluginPromise;
   if (editor.doExportXMind) return;
@@ -1062,9 +1097,12 @@ export async function createSimpleMindMapEditor(
   options: MindMapEditorOptions = {}
 ): Promise<MindMapEditorHandle> {
   const MindMap = await loadSimpleMindMap();
+  assertConstructor(MindMap, "simple-mind-map");
   const layout = normalizeLayout(snapshot.layout);
   const isCanvasDragEnabled = options.canvasDragEnabled === true;
-  const editor = new MindMap({
+  let editor: any;
+  try {
+    editor = new MindMap({
     el,
     data: snapshot.root,
     layout,
@@ -1098,7 +1136,11 @@ export async function createSimpleMindMapEditor(
     errorHandler: (_code: unknown, error: unknown) => {
       events.onError?.(error instanceof Error ? error.message : "导图编辑器异常");
     }
-  });
+    });
+  } catch (error) {
+    resetSimpleMindMapRuntime();
+    throw error;
+  }
   installDotGrid(editor);
   const installRuntimeNodeExtensions = () => {
     installPerNodeTextWrapWidthSupport(editor);
