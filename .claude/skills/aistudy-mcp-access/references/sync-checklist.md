@@ -9,6 +9,7 @@ Update this skill when any of these change:
 - Tool IDs, names, descriptions, modes, or schemas.
 - Remote permission groups or default access policy.
 - Tailscale, HTTP, stdio, token, URL, or environment-variable behavior.
+- Local stdio transport framing or helper scripts.
 - MCP resources, prompts, or first-use instructions.
 - Document write safety rules.
 - Chrome port platform IDs or URLs.

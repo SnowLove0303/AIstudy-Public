@@ -387,6 +387,13 @@ type DatabaseSettings = DatabaseSettingsProfile & {
   profiles: Record<DatabaseProvider, DatabaseSettingsProfile>;
 };
 
+type DatabaseReconnectResult = {
+  connected: boolean;
+  provider: DatabaseProvider;
+  sourceKey: string;
+  checkedAt: string;
+};
+
 type DatabaseConnectionProfile = Partial<Pick<
   MysqlConfig,
   "provider" | "host" | "port" | "user" | "password" | "ssl" | "skipSchemaCreation" | "database"
@@ -398,6 +405,12 @@ type DatabaseConnectionProfile = Partial<Pick<
 type DatabaseSettingsFile = DatabaseConnectionProfile & {
   activeProvider?: DatabaseProvider;
   profiles?: Partial<Record<DatabaseProvider, DatabaseConnectionProfile>>;
+};
+
+type ManagedMysqlRuntimeConfig = Partial<MysqlConfig> & {
+  iniPath?: string;
+  mysqldPath?: string;
+  startScriptPath?: string;
 };
 
 type CourseRow = RowDataPacket & {
@@ -581,6 +594,10 @@ type McpNodeContextRow = RowDataPacket & {
   positionIndex: number | string;
   isCollapsed: number | string | boolean;
   updatedAt: Date | string;
+};
+
+type McpNodeRefRow = RowDataPacket & {
+  nodeId: string;
 };
 
 type McpNodeContextDocumentRow = RowDataPacket & {
@@ -872,6 +889,7 @@ type InformationProcessProgress = {
 let mainWindow: BrowserWindow | null = null;
 let mysqlRuntime: MysqlRuntime | null = null;
 let mysqlRuntimePromise: Promise<MysqlRuntime> | null = null;
+let databaseReconnectPromise: Promise<DatabaseReconnectResult> | null = null;
 const beforeCloseResolvers = new Map<string, () => void>();
 const CHROME_PORT_MYSQL_STATE_TIMEOUT_MS = 1500;
 const chromePortDefinitions: ChromePortDefinition[] = [
@@ -4692,26 +4710,69 @@ function isRecoverableDatabaseConnectionError(error: unknown) {
 }
 
 function parseManagedMysqlIniPort(text: string) {
-  const match = text.match(/^\s*port\s*=\s*(\d+)\s*$/im);
-  return match ? parsePort(match[1], 3306) : 3306;
+  let currentSection = "";
+  let fallbackPort: number | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim().toLowerCase();
+      continue;
+    }
+
+    const portMatch = trimmed.match(/^port\s*=\s*(\d+)\s*(?:[#;].*)?$/i);
+    if (!portMatch) continue;
+    const parsedPort = parsePort(portMatch[1], 3306);
+    if (currentSection === "mysqld") return parsedPort;
+    if (fallbackPort === null) fallbackPort = parsedPort;
+  }
+  return fallbackPort ?? 3306;
 }
 
-async function readManagedMysqlRuntimeConfig() {
+async function readManagedMysqlRuntimeConfig(): Promise<ManagedMysqlRuntimeConfig> {
+  const iniPath = path.join(getProgramDataAistudyRoot(), "mysql", "my.ini");
+  return readMysqlRuntimeConfigFromIni(iniPath);
+}
+
+async function readMysqlRuntimeConfigFromIni(iniPath: string): Promise<ManagedMysqlRuntimeConfig> {
   try {
-    const iniPath = path.join(getProgramDataAistudyRoot(), "mysql", "my.ini");
     const iniText = await fs.readFile(iniPath, "utf8");
+    const runtimeRoot = path.dirname(iniPath);
+    const mysqldCandidates = [
+      path.join(runtimeRoot, "bin", "mysqld.exe"),
+      path.join(runtimeRoot, "server", "bin", "mysqld.exe")
+    ];
+    const mysqldPath = mysqldCandidates.find((candidate) => existsSync(candidate)) ?? mysqldCandidates[0];
+    const startScriptPath = path.join(runtimeRoot, "start-mysql.ps1");
     return {
       host: "127.0.0.1",
       port: parseManagedMysqlIniPort(iniText),
       user: "root",
-      password: ""
-    } satisfies Partial<MysqlConfig>;
+      password: "",
+      iniPath,
+      mysqldPath,
+      ...(existsSync(startScriptPath) ? { startScriptPath } : {})
+    };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return {};
     }
     throw error;
   }
+}
+
+async function readMysqlStartRuntimeConfigs(): Promise<ManagedMysqlRuntimeConfig[]> {
+  const iniPaths = [
+    path.join(getProgramDataAistudyRoot(), "mysql", "my.ini"),
+    "F:\\AIAPP\\MySQL\\my.ini"
+  ];
+  const uniqueIniPaths = Array.from(new Set(iniPaths.map((iniPath) => path.normalize(iniPath))));
+  const configs: ManagedMysqlRuntimeConfig[] = [];
+  for (const iniPath of uniqueIniPaths) {
+    const runtimeConfig = await readMysqlRuntimeConfigFromIni(iniPath);
+    if (hasMysqlConnectionSetting(runtimeConfig)) configs.push(runtimeConfig);
+  }
+  return configs;
 }
 
 async function waitForLocalPort(port: number, timeoutMs: number) {
@@ -4723,11 +4784,43 @@ async function waitForLocalPort(port: number, timeoutMs: number) {
   return false;
 }
 
+async function tryStartManagedMysqlProcess(config: ManagedMysqlRuntimeConfig) {
+  if (!config.iniPath || !config.mysqldPath) return;
+  if (config.startScriptPath) {
+    try {
+      await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", config.startScriptPath], {
+        windowsHide: true,
+        timeout: 8000
+      });
+      return;
+    } catch (error) {
+      console.warn("Managed MySQL start script did not complete.", error);
+    }
+  }
+
+  try {
+    await fs.access(config.mysqldPath);
+  } catch {
+    return;
+  }
+
+  try {
+    const child = spawn(config.mysqldPath, [`--defaults-file=${config.iniPath}`], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.unref();
+  } catch (error) {
+    console.warn("Managed MySQL process fallback did not start.", error);
+  }
+}
+
 async function tryStartManagedMysqlRuntime(config: MysqlConfig) {
   if (config.provider !== "mysql") return;
   if (process.platform !== "win32" || !isLocalMysqlHost(config.host)) return;
 
-  const managedConfig = await readManagedMysqlRuntimeConfig();
+  const managedConfig = (await readMysqlStartRuntimeConfigs()).find((runtimeConfig) => Number(runtimeConfig.port) === config.port) ?? {};
   if (!hasMysqlConnectionSetting(managedConfig) || Number(managedConfig.port) !== config.port) return;
   if (await canConnectToLocalPort(config.port, 600)) return;
 
@@ -4738,9 +4831,13 @@ async function tryStartManagedMysqlRuntime(config: MysqlConfig) {
     });
   } catch {
     // The service may already be starting or require elevation; the actual MySQL connection check remains authoritative.
+    await tryStartManagedMysqlProcess(managedConfig);
   }
 
-  await waitForLocalPort(config.port, MANAGED_MYSQL_START_TIMEOUT_MS);
+  if (!await waitForLocalPort(config.port, MANAGED_MYSQL_START_TIMEOUT_MS)) {
+    await tryStartManagedMysqlProcess(managedConfig);
+    await waitForLocalPort(config.port, MANAGED_MYSQL_START_TIMEOUT_MS);
+  }
 }
 
 function hasPublicMysqlEnvSetting() {
@@ -5801,6 +5898,27 @@ async function getMysqlRuntime() {
     recoveredRuntime.lastVerifiedAt = Date.now();
     return recoveredRuntime;
   }
+}
+
+async function reconnectDatabase(): Promise<DatabaseReconnectResult> {
+  if (databaseReconnectPromise) return databaseReconnectPromise;
+
+  databaseReconnectPromise = (async () => {
+    await resetMysqlRuntime();
+    const runtime = await getMysqlRuntime();
+    await runtime.pool.query("SELECT 1");
+    runtime.lastVerifiedAt = Date.now();
+    return {
+      connected: true,
+      provider: runtime.provider,
+      sourceKey: runtime.sourceKey,
+      checkedAt: new Date(runtime.lastVerifiedAt).toISOString()
+    };
+  })().finally(() => {
+    databaseReconnectPromise = null;
+  });
+
+  return databaseReconnectPromise;
 }
 
 function warmMysqlRuntime() {
@@ -9100,6 +9218,101 @@ async function resolveCourseForMcp(courseIdValue: unknown, required = false) {
   return { store, course };
 }
 
+function normalizeMcpRefPart(value: unknown, label: string) {
+  const text = String(value || "").trim();
+  if (!/^[a-z0-9_-]{4,120}$/i.test(text)) {
+    throw createAppError("APP_INVALID_ARGUMENT", `MCP ${label} reference is invalid.`);
+  }
+  return text;
+}
+
+function parseMcpNodeRef(value: unknown) {
+  const ref = typeof value === "string" ? value.trim() : "";
+  if (!ref) return null;
+  let url: URL;
+  try {
+    url = new URL(ref);
+  } catch {
+    throw createAppError("APP_INVALID_ARGUMENT", "MCP node ref is invalid.");
+  }
+
+  const protocol = url.protocol.toLowerCase();
+  const host = url.hostname.toLowerCase();
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (protocol === "aistudy:" && host === "node" && parts.length >= 2) {
+    return {
+      ref,
+      coursePrefix: normalizeMcpRefPart(parts[0], "course"),
+      nodePrefix: normalizeMcpRefPart(parts[1], "node"),
+      mindMapPrefix: url.searchParams.get("map") ? normalizeMcpRefPart(url.searchParams.get("map"), "mind map") : ""
+    };
+  }
+  if (protocol === "as:" && host === "n" && parts.length >= 2) {
+    return {
+      ref,
+      coursePrefix: normalizeMcpRefPart(parts[0], "course"),
+      nodePrefix: normalizeMcpRefPart(parts[1], "node"),
+      mindMapPrefix: url.searchParams.get("m") ? normalizeMcpRefPart(url.searchParams.get("m"), "mind map") : ""
+    };
+  }
+  throw createAppError("APP_INVALID_ARGUMENT", "MCP node ref is invalid.");
+}
+
+function pickUniqueMcpPrefixMatch<T extends Record<string, unknown>>(items: T[], field: keyof T, prefix: string, label: string) {
+  const exact = items.find((item) => item[field] === prefix);
+  if (exact) return exact;
+  const matches = items.filter((item) => String(item[field] || "").startsWith(prefix));
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) throw createAppError("APP_INVALID_ARGUMENT", `MCP ${label} reference was not found.`);
+  throw createAppError("APP_INVALID_ARGUMENT", `MCP ${label} reference is ambiguous; use a longer ref.`);
+}
+
+async function findMcpMindMapByPrefix(runtime: MysqlRuntime, courseId: string, prefix: string) {
+  if (!prefix) return findMindMapByCourse(runtime.pool, runtime.mindMapTable, courseId);
+  const [rows] = await runtime.pool.execute<MindMapRow[]>(
+    `SELECT id, course_id AS courseId, title, current_snapshot_id AS currentSnapshotId,
+            node_count AS nodeCount, updated_at AS updatedAt
+     FROM ${runtime.mindMapTable}
+     WHERE course_id = ? AND (id = ? OR id LIKE ?) AND deleted_at IS NULL
+     ORDER BY id = ? DESC, updated_at DESC
+     LIMIT 2`,
+    [courseId, prefix, `${prefix}%`, prefix]
+  );
+  const exact = rows.find((row) => row.id === prefix);
+  const matches = exact ? [exact] : rows;
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) throw createAppError("APP_INVALID_ARGUMENT", "MCP mind map reference was not found.");
+  throw createAppError("APP_INVALID_ARGUMENT", "MCP mind map reference is ambiguous; use a longer ref.");
+}
+
+async function findMcpNodeIdByPrefix(runtime: MysqlRuntime, courseId: string, mindMapId: string, prefix: string) {
+  const [rows] = await runtime.pool.execute<McpNodeRefRow[]>(
+    `SELECT node_id AS nodeId
+     FROM ${runtime.mindMapNodeTable}
+     WHERE course_id = ? AND mind_map_id = ? AND (node_id = ? OR node_id LIKE ?) AND deleted_at IS NULL
+     ORDER BY node_id = ? DESC
+     LIMIT 2`,
+    [courseId, mindMapId, prefix, `${prefix}%`, prefix]
+  );
+  const exact = rows.find((row) => row.nodeId === prefix);
+  const matches = exact ? [exact] : rows;
+  if (matches.length === 1) return matches[0].nodeId;
+  if (matches.length === 0) throw createAppError("APP_INVALID_ARGUMENT", "MCP node reference was not found.");
+  throw createAppError("APP_INVALID_ARGUMENT", "MCP node reference is ambiguous; use a longer ref.");
+}
+
+async function resolveMcpNodeRef(args: Record<string, unknown>) {
+  const parsed = parseMcpNodeRef(args.ref);
+  if (!parsed) return null;
+  const store = await readCourseStore();
+  const runtime = await getMysqlRuntime();
+  const course = pickUniqueMcpPrefixMatch(store.courses, "id", parsed.coursePrefix, "course");
+  const map = await findMcpMindMapByPrefix(runtime, course.id, parsed.mindMapPrefix);
+  if (!map) throw createAppError("APP_INVALID_ARGUMENT", "Mind map is missing.");
+  const nodeId = await findMcpNodeIdByPrefix(runtime, course.id, map.id, parsed.nodePrefix);
+  return { course, mindMapId: map.id, nodeId, ref: parsed.ref };
+}
+
 async function summarizeMindMapForCourse(course: CourseRecord) {
   const document = await readMindMapDocument(course.id);
   return {
@@ -10025,6 +10238,8 @@ function formatMcpDocumentSnapshotPreservingText(snapshot: KnowledgeDocumentSnap
 }
 
 async function resolveMcpDocumentTarget(args: Record<string, unknown>) {
+  const refTarget = await resolveMcpNodeRef(args);
+  if (refTarget) return refTarget;
   const course = await getRequiredCourseForMcp(args.courseId);
   const mapId = normalizeMcpText(args.mindMapId, "") || (await readMindMapDocument(course.id))?.mapId || "";
   const nodeId = normalizeMcpText(args.nodeId, "");
@@ -10165,10 +10380,11 @@ async function readMcpContextDocuments(
 }
 
 async function readMcpNodeContext(args: Record<string, unknown>) {
-  const course = await getRequiredCourseForMcp(args.courseId);
-  const nodeId = normalizeMcpText(args.nodeId, "");
+  const refTarget = await resolveMcpNodeRef(args);
+  const course = refTarget?.course ?? (await getRequiredCourseForMcp(args.courseId));
+  const nodeId = refTarget?.nodeId ?? normalizeMcpText(args.nodeId, "");
   if (!nodeId) throw createAppError("APP_INVALID_ARGUMENT", "MCP node context requires nodeId.");
-  const requestedMindMapId = normalizeMcpText(args.mindMapId, "");
+  const requestedMindMapId = refTarget?.mindMapId ?? normalizeMcpText(args.mindMapId, "");
   const runtime = await getMysqlRuntime();
   const map = requestedMindMapId
     ? await findMindMapById(runtime.pool, runtime.mindMapTable, course.id, requestedMindMapId)
@@ -10197,8 +10413,8 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
 
   const includeAncestors = args.includeAncestors !== false;
   const includeDescendants = args.includeDescendants !== false;
-  const maxDepth = normalizeMcpContextInteger(args.maxDepth, 8, 0, 32);
-  const maxNodes = normalizeMcpContextInteger(args.maxNodes, 160, 1, 500);
+  const maxDepth = normalizeMcpContextInteger(args.maxDepth, 4, 0, 32);
+  const maxNodes = normalizeMcpContextInteger(args.maxNodes, 120, 1, 500);
   const maxDocumentChars = normalizeMcpContextInteger(args.maxDocumentChars, 4000, 200, 20000);
   const documentMode = normalizeMcpContextDocumentMode(args);
 
@@ -10266,7 +10482,7 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
       nodeCount: Number(map.nodeCount) || rows.length,
       updatedAt: toIsoTimestamp(map.updatedAt)
     },
-    request: { nodeId, includeAncestors, includeDescendants, documentMode, maxDepth, maxNodes, maxDocumentChars },
+    request: { nodeId, ref: refTarget?.ref ?? null, includeAncestors, includeDescendants, documentMode, maxDepth, maxNodes, maxDocumentChars },
     target: toSummary(targetRow),
     ancestors: ancestors.map(toSummary),
     subtree: includeDescendants ? {
@@ -11441,6 +11657,14 @@ ipcMain.handle("database:save-settings", async (_event, input) => {
   } catch (error) {
     await recordAppError({ source: "database:save-settings", userMessage: "数据源切换失败。", error });
     throw new Error(`数据源切换失败：${getSafeDatabaseSettingsErrorMessage(error)}`);
+  }
+});
+ipcMain.handle("database:reconnect", async () => {
+  try {
+    return await reconnectDatabase();
+  } catch (error) {
+    await recordAppError({ source: "database:reconnect", userMessage: "数据库连接失败。", error });
+    throw new Error(`数据库连接失败：${getSafeDatabaseSettingsErrorMessage(error)}`);
   }
 });
 

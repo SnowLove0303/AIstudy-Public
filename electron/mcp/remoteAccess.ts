@@ -442,6 +442,7 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
     let toolArgs: Record<string, unknown> | null = null;
     let statusCode = 500;
     let message = "";
+    let parsedUrl: URL | null = null;
     setSecurityHeaders(response);
     try {
       if (request.method === "OPTIONS") {
@@ -452,6 +453,7 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
         return;
       }
       const url = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
+      parsedUrl = url;
       if (!validateOrigin(request)) {
         statusCode = 403;
         message = "Origin denied";
@@ -477,7 +479,7 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
         toolArgs = getJsonRpcToolArguments(body as JsonRpcRequest);
         const result = await handleRemoteJsonRpc(body as JsonRpcRequest);
         const hasError = Boolean(result && typeof result === "object" && "error" in result);
-        statusCode = hasError ? 400 : 200;
+        statusCode = 200;
         message = hasError ? getJsonRpcErrorMessage(result) : "MCP 调用完成";
         sendJson(response, statusCode, result);
         return;
@@ -546,9 +548,18 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
       message = "Not found";
       sendJson(response, statusCode, { error: "Not found." });
     } catch (error) {
-      statusCode = 500;
-      message = error instanceof Error ? error.message : "Request failed.";
-      sendJson(response, statusCode, { error: message });
+      message = normalizeRemoteHttpErrorMessage(error);
+      if (parsedUrl?.pathname === "/mcp" && request.method === "POST") {
+        statusCode = 200;
+        sendJson(response, statusCode, {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32603, message }
+        });
+      } else {
+        statusCode = 500;
+        sendJson(response, statusCode, { error: message });
+      }
     } finally {
       recordRemoteCall({
         startedAt,
@@ -690,6 +701,23 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
       chunks.push(buffer);
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  }
+
+  function normalizeRemoteHttpErrorMessage(error: unknown) {
+    const rawMessage = error instanceof Error ? error.message : String(error ?? "");
+    try {
+      const parsed = JSON.parse(rawMessage) as Record<string, unknown>;
+      const detail = typeof parsed.detail === "string" ? parsed.detail : "";
+      const messageValue = typeof parsed.message === "string" ? parsed.message : "";
+      if (/bad request/i.test(detail || messageValue)) return "Invalid MCP request.";
+      return detail || messageValue || "Request failed.";
+    } catch {
+      // Preserve normal JavaScript error messages below.
+    }
+    if (/Unexpected token|JSON|parse/i.test(rawMessage)) return "Invalid JSON-RPC request body.";
+    if (/too large/i.test(rawMessage)) return "Request body is too large.";
+    if (/bad request/i.test(rawMessage)) return "Invalid MCP request.";
+    return rawMessage || "Request failed.";
   }
 
   function setSecurityHeaders(response: ServerResponse) {

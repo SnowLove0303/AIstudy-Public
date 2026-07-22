@@ -292,6 +292,7 @@ declare global {
     aistudyDatabase?: {
       getSettings: () => Promise<DatabaseSettings>;
       saveSettings: (input: DatabaseSettings) => Promise<DatabaseSettings>;
+      reconnect: () => Promise<unknown>;
     };
     aistudyRuntime?: {
       diagnose: () => Promise<RuntimeDiagnosticResult>;
@@ -1314,6 +1315,7 @@ function App() {
   async function retryCourseSync() {
     setCourseSyncStatus((current) => ({ ...current, state: "saving" }));
     try {
+      await window.aistudyDatabase?.reconnect();
       const store = await courseApi.load();
       applyCourseStore(store);
       setExternalContentRevision(Date.now());
@@ -1338,6 +1340,7 @@ function App() {
 
     const attemptRecovery = async () => {
       try {
+        await window.aistudyDatabase?.reconnect();
         const store = await courseApi.load();
         if (isCancelled) return;
         applyCourseStore(store);
@@ -1542,30 +1545,20 @@ function App() {
 
   async function copyCatalogNodeDocumentPath(item: MindMapOutlineItem) {
     if (!activeCourse || !item.nodeId) return;
-    const sectionName = activeCourse.sectionId ? sectionNameById.get(activeCourse.sectionId) ?? "" : "";
-    const locatorPath = await window.aistudyCourseLocators?.createPath?.({
-      courseId: activeCourse.id,
-      courseName: activeCourse.name,
-      courseDescription: activeCourse.description,
-      sectionId: activeCourse.sectionId,
-      sectionName
-    });
-    if (!locatorPath) {
-      throw new Error("文档路径生成没有完成。");
-    }
-
-    const readArgs = activeMindMapId
-      ? { courseId: activeCourse.id, mindMapId: activeMindMapId, nodeId: item.nodeId }
-      : { courseId: activeCourse.id, nodeId: item.nodeId };
+    const shortCourseId = activeCourse.id.slice(0, 8);
+    const shortNodeId = item.nodeId.slice(0, 8);
+    const shortMindMapId = activeMindMapId ? activeMindMapId.slice(0, 12) : "";
+    const ref = `aistudy://node/${shortCourseId}/${shortNodeId}${shortMindMapId ? `?map=${shortMindMapId}` : ""}`;
+    const contextArgs = { ref, documentMode: "text", maxDepth: 4, maxNodes: 120, maxDocumentChars: 4000 };
+    const documentArgs = { ref };
     const pathText = [
-      "AIstudy MCP 文档路径",
-      `locatorPath: ${locatorPath}`,
-      `courseId: ${activeCourse.id}`,
-      activeMindMapId ? `mindMapId: ${activeMindMapId}` : "",
-      `nodeId: ${item.nodeId}`,
-      `nodeTitle: ${item.title.replace(/\s+/g, " ").trim()}`,
-      "tool: read_node_document",
-      `arguments: ${JSON.stringify(readArgs)}`
+      "AIstudy MCP 快速定位",
+      `ref: ${ref}`,
+      `title: ${activeCourse.name.replace(/\s+/g, " ").trim()} / ${item.title.replace(/\s+/g, " ").trim()}`,
+      "read: read_node_context",
+      `arguments: ${JSON.stringify(contextArgs)}`,
+      "fullDocument: read_node_document",
+      `fullArguments: ${JSON.stringify(documentArgs)}`
     ].filter(Boolean).join("\n");
 
     if (window.aistudyClipboard?.writeText) {

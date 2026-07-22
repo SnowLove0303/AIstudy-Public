@@ -70,6 +70,10 @@ assertContains(main, "转录需要后续处理", "Partial collection result must
 assertContains(runtime, "organizeInformationDocumentWithMimo", "Runtime must own the Mimo organization boundary.");
 assertContains(runtime, "AISTUDY_MIMO_API_KEY", "Mimo credentials must be read from environment only.");
 assertContains(runtime, "token-plan-cn.xiaomimimo.com", "Mimo Token Plan keys must use the token-plan endpoint by default.");
+assertContains(runtime, '"authorization": `Bearer ${apiKey}`', "Mimo requests must support OpenAI-compatible Bearer authentication.");
+assertContains(runtime, '"api-key": apiKey', "Mimo requests must keep Token Plan api-key authentication.");
+assertContains(runtime, "shouldRetryMimoWithoutJsonFormat", "Mimo 400/422 request-format failures must retry without response_format.");
+assertContains(runtime, "createMimoHttpError", "Mimo HTTP errors must be normalized instead of exposing raw provider JSON.");
 
 assertContains(storageBoundary, "id: \"information-collection\"", "Storage boundary registry must include information collection runtime cache.");
 assertContains(storageBoundary, "runtime-cache", "Information collection runtime files must be classified as runtime cache.");

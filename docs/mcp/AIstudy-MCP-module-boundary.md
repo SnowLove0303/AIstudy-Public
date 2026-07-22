@@ -34,6 +34,8 @@ MCP 现在按独立模块管理，主进程不再直接维护 MCP 工具状态�
 - 暴露外部客户端真实会调用的工具清单。
 - 提供 Chrome 端口管理工具：`chrome_ports_status`、`chrome_port_open_page`。
 
+Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC, one JSON object per line. It is intentionally not a `Content-Length` framed transport. Use `scripts/mcp/call-aistudy-mcp.mjs` for ad-hoc same-machine calls.
+
 `electron/mcp/remoteAccess.ts` 负责：
 
 - 设置页“内网访问”开关。

@@ -26,11 +26,14 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 1. Collect the connection shape.
    - HTTP/Tailscale: MCP URL, optional API URL, `Authorization: Bearer ...`.
    - Local stdio: server script path, data root, app root, and edit flag.
+   - Important: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC on stdio: write one JSON object plus `\n`, then read one JSON object per line. Do not use `Content-Length` MCP framing for this local script.
+   - For ad-hoc local reads, prefer `node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120` instead of writing a temporary wrapper.
 2. Start read-only.
    - Call `mcp_get_started`.
    - Call `read_courses`.
    - Use `mcp_resolve_target` before reading or editing a specific knowledge base.
 3. Read before editing.
+   - If AIstudy copied a compact node ref such as `aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1`, call `read_node_context({ ref, documentMode: "text", maxDepth: 4, maxNodes: 120 })` directly.
    - Use exact `courseId`.
    - For node documents, use exact `nodeId`.
    - After every edit, re-read the affected course, node, or document.

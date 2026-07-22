@@ -8,6 +8,34 @@
 
 Use `text` or `textClean` as the readable node-document body. Use `textRaw` only when auditing extraction behavior. `document.snapshot` is editor JSON and may contain style or structure metadata such as `title`, `list`, `ol`, `separator`, or `rgb(...)`; do not treat it as prose.
 
+## Compact MCP node ref
+
+AIstudy node-document copy may return a compact ref instead of a long `locatorPath`, for example:
+
+```text
+aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
+```
+
+Use it directly with `read_node_context`:
+
+```json
+{"ref":"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1","documentMode":"text","maxDepth":4,"maxNodes":120}
+```
+
+Use `read_node_document({ "ref": "..." })` only when the full editor snapshot is required. Use `resolve_course_locator` only when another agent explicitly needs a local boundary file.
+
+## Local stdio transport
+
+When using `F:\XIANGMU\AIstudy-public\scripts\mcp\aistudy-mcp-server.mjs` directly, the transport is line-delimited JSON-RPC over stdio. Send one JSON-RPC object followed by `\n`, then read one JSON response per line.
+
+Do not use standard MCP `Content-Length` framing with this local script. If a temporary client hangs after `initialize`, stop it and switch to line-delimited JSON-RPC.
+
+For same-machine reads, use the maintained helper instead of writing a custom wrapper:
+
+```powershell
+node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1" --max-depth 4 --max-nodes 120
+```
+
 ## 给 Codex/Claude Code 的 Skill 提示
 
 ```text
@@ -22,6 +50,7 @@ Workflow:
 1. Collect the connection shape.
    - HTTP/Tailscale: MCP URL, optional API URL, Authorization: Bearer ...
    - Local stdio: server script path, data root, app root, and edit flag.
+   - Local script transport: line-delimited JSON-RPC, not Content-Length MCP framing.
 2. Verify reachability before doing useful work.
    - HTTP: confirm the host is reachable and the token is present.
    - stdio: confirm Node.js can run the server script and the AIstudy data root exists.
@@ -121,6 +150,8 @@ Authorization: Bearer ...
 ```
 
 `AISTUDY_MCP_ALLOW_EDIT=1` 只在明确要编辑时开启。
+
+Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes one JSON-RPC object per line. Do not frame local stdio messages with `Content-Length`.
 
 ## 第一次使用顺序
 

@@ -18,6 +18,20 @@ Never guess `courseId` from a display name.
 
 ## Search Nodes And Read Documents
 
+For local stdio calls against `scripts/mcp/aistudy-mcp-server.mjs`, use line-delimited JSON-RPC, not `Content-Length` framing. The maintained helper is:
+
+```text
+node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120
+```
+
+If AIstudy copied a compact node ref, skip locator files and call:
+
+```text
+read_node_context({ ref, documentMode: "text", maxDepth: 4, maxNodes: 120 })
+```
+
+Use `read_node_document({ ref })` only when the full editor snapshot is required.
+
 ```text
 mcp_resolve_target({ courseName, nodeQuery })
 -> search_nodes({ courseId, query })
@@ -68,6 +82,8 @@ read_courses -> resolve_course_locator({ courseId })
 Without `courseId`, `resolve_course_locator` creates locators for the full library.
 
 Locator files may include the public runtime data root, fixed database name, fixed table names, and course ids. Treat database/table values as boundary metadata only; AIstudy Public does not support overriding database or table names through MCP setup.
+
+Do not use locator files for ordinary node-document handoff. Prefer compact refs copied from AIstudy, such as `aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1`, because MCP can expand unique id prefixes directly.
 
 ## Open A Fixed Chrome Port
 

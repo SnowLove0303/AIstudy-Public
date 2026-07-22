@@ -180,6 +180,7 @@ const documentSchema = {
   type: "object",
   additionalProperties: true,
   properties: {
+    ref: { type: "string", maxLength: 160 },
     courseId: { type: "string", maxLength: 120 },
     mindMapId: { type: "string", maxLength: 120 },
     nodeId: { type: "string", maxLength: 120 },
@@ -197,8 +198,8 @@ const documentSchema = {
 const nodeContextSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["courseId", "nodeId"],
   properties: {
+    ref: { type: "string", maxLength: 160 },
     courseId: { type: "string", maxLength: 120 },
     mindMapId: { type: "string", maxLength: 120 },
     nodeId: { type: "string", maxLength: 120 },
@@ -540,11 +541,11 @@ function createMcpInstructions() {
     "AIstudy MCP gives external AI clients controlled access to local AIstudy knowledge bases, mind maps, and node documents.",
     "Start every new session with mcp_get_started. It returns health status, available library scope, safety rules, and the recommended next tool order.",
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
-    "For read work: use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
+    "For read work: if AIstudy copied a compact aistudy://node/... ref, pass it directly to read_node_context. Otherwise use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
     "For document writes: use write_node_document only for new content or explicit whole-document replacement with replaceExisting=true. Use append_node_document for additions. Pass structured plain text: section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line, and do not add blank lines only for visual spacing. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. Use format_node_document for style cleanup that preserves every value, and update_node_document_style for simple whole-document style changes.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
-    "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
+    "For node-document handoff, prefer the compact aistudy://node/... ref. When a user explicitly asks for a local boundary file, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
 }
 

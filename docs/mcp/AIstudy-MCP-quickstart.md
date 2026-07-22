@@ -59,6 +59,18 @@ AISTUDY_APP_ROOT = "F:\\XIANGMU\\AIstudy-public"
 AISTUDY_MCP_ALLOW_EDIT = "0"
 ```
 
+## Local stdio protocol
+
+The local script `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC over stdio. Write one JSON-RPC object plus `\n`, then read one JSON object per line.
+
+Do not use `Content-Length` framing against this local script. If a self-written client hangs after `initialize`, stop it and switch to line-delimited JSON-RPC.
+
+For quick local reads, use:
+
+```powershell
+node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1" --max-depth 4 --max-nodes 120
+```
+
 ## 第一次运行顺序
 
 1. 调用 `mcp_get_started`，读取健康状态、全库概览、安全规则和下一步建议。
@@ -241,8 +253,25 @@ AISTUDY_MCP_ALLOW_EDIT=1
 - `MCP edit calls are disabled by configuration.`：编辑权限没有打开，这是默认安全行为。
 - `resolve_course_locator` 返回的 `locatorPath`：这是给外部 Codex 使用的本地定位文件路径，里面包含数据目录、固定数据库名、固定表名和知识库 ID；其中数据库名和表名只是边界元数据，不代表公开版运行时支持覆盖库名或表名。
 - `Unknown tool: copy_config`：当前连接的是独立 `scripts/mcp` 服务，复制接入配置请在 AIstudy 设置页里点按钮。
+- Local stdio client hangs after `initialize`：客户端大概率用了 `Content-Length` MCP framing。改用 line-delimited JSON-RPC，或直接用 `scripts/mcp/call-aistudy-mcp.mjs`。
 - `Chrome executable is missing`：Chrome 路径没找到，可配置 `AISTUDY_CHROME_PATH`。
 
 ## read_node_document text fields
 
 Use `text` or `textClean` as the readable node-document body. Use `textRaw` only when auditing extraction behavior. `document.snapshot` is editor JSON and may contain style or structure metadata such as `title`, `list`, `ol`, `separator`, or `rgb(...)`; do not treat it as prose.
+
+## Compact MCP node ref
+
+AIstudy node-document copy may return a compact ref instead of a long `locatorPath`, for example:
+
+```text
+aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
+```
+
+Use it directly for the fast default read:
+
+```json
+{"ref":"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1","documentMode":"text","maxDepth":4,"maxNodes":120}
+```
+
+Preferred tool: `read_node_context`. Use `read_node_document({ "ref": "..." })` only when the full editor snapshot is required. Use `resolve_course_locator` only when another agent explicitly needs a local boundary file.

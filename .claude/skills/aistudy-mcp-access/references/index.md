@@ -17,6 +17,7 @@ This skill is the canonical agent-facing entry for AIstudy MCP access.
 - Remote HTTP/Tailscale access: `electron/mcp/remoteAccess.ts`
 - Main-process tool implementations: `electron/main.ts`
 - External stdio MCP server: `scripts/mcp/aistudy-mcp-server.mjs`
+- External stdio line JSON-RPC helper: `scripts/mcp/call-aistudy-mcp.mjs`
 - User docs: `docs/mcp/*.md`
 
 ## Update Order

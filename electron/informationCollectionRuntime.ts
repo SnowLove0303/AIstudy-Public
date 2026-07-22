@@ -136,6 +136,75 @@ function readMimoModel() {
   return process.env.AISTUDY_MIMO_MODEL?.trim() || process.env.MIMO_MODEL?.trim() || "mimo-v2.5-pro";
 }
 
+async function readMimoResponseText(response: Response) {
+  try {
+    return (await response.text()).slice(0, 2000);
+  } catch {
+    return "";
+  }
+}
+
+function getMimoErrorDetail(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.map(getMimoErrorDetail).filter(Boolean).join("; ");
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return getMimoErrorDetail(record.message) || getMimoErrorDetail(record.detail) || getMimoErrorDetail(record.error);
+  }
+  return "";
+}
+
+function createMimoHttpError(status: number, responseText: string) {
+  let detail = responseText.trim();
+  try {
+    detail = getMimoErrorDetail(JSON.parse(responseText)) || detail;
+  } catch {
+    // Some compatible endpoints return plain text for request-level errors.
+  }
+  const normalized = /bad request/i.test(detail)
+    ? "Mimo rejected the request format."
+    : detail || "Mimo request failed.";
+  return new Error(`Mimo returned HTTP ${status}: ${normalized}`.slice(0, 500));
+}
+
+function shouldRetryMimoWithoutJsonFormat(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const status = Number(message.match(/HTTP (\d+)/)?.[1] ?? 0);
+  const lowerMessage = message.toLowerCase();
+  return status === 400 || status === 422 || lowerMessage.includes("response_format") || lowerMessage.includes("bad request");
+}
+
+function createMimoChatCompletionBody(prompt: string, useJsonResponseFormat: boolean) {
+  const body: Record<string, unknown> = {
+    model: readMimoModel(),
+    messages: [
+      { role: "system", content: "你负责把视频转录整理成可入库的中文早报文档，只能输出 JSON。" },
+      { role: "user", content: prompt }
+    ],
+    max_tokens: 4096
+  };
+  if (useJsonResponseFormat) {
+    body.response_format = { type: "json_object" };
+  }
+  return body;
+}
+
+async function requestMimoChatCompletion(apiKey: string, prompt: string, useJsonResponseFormat: boolean) {
+  const response = await fetch(`${readMimoBaseUrl(apiKey)}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${apiKey}`,
+      "api-key": apiKey,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(createMimoChatCompletionBody(prompt, useJsonResponseFormat))
+  });
+  if (!response.ok) {
+    throw createMimoHttpError(response.status, await readMimoResponseText(response));
+  }
+  return await response.json() as Record<string, unknown>;
+}
+
 function collectSourceUrls(value: string) {
   return Array.from(new Set(String(value || "").match(/https?:\/\/[^\s"'<>，。；、)）]+/gi) ?? []));
 }
@@ -246,24 +315,13 @@ export async function organizeInformationDocumentWithMimo(input: {
   ].join("\n");
 
   try {
-    const response = await fetch(`${readMimoBaseUrl(apiKey)}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "api-key": apiKey,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model: readMimoModel(),
-        messages: [
-          { role: "system", content: "你负责把视频转录整理成可入库的中文早报文档，只能输出 JSON。" },
-          { role: "user", content: prompt }
-        ],
-        response_format: { type: "json_object" },
-        max_tokens: 4096
-      })
-    });
-    if (!response.ok) throw new Error(`Mimo returned ${response.status}`);
-    const payload = await response.json() as Record<string, unknown>;
+    let payload: Record<string, unknown>;
+    try {
+      payload = await requestMimoChatCompletion(apiKey, prompt, true);
+    } catch (firstError) {
+      if (!shouldRetryMimoWithoutJsonFormat(firstError)) throw firstError;
+      payload = await requestMimoChatCompletion(apiKey, prompt, false);
+    }
     const choices = Array.isArray(payload.choices) ? payload.choices : [];
     const firstChoice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
     const message = firstChoice?.message && typeof firstChoice.message === "object" ? firstChoice.message as Record<string, unknown> : null;

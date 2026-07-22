@@ -206,7 +206,8 @@ contextBridge.exposeInMainWorld("aistudyErrorLogs", {
 
 contextBridge.exposeInMainWorld("aistudyDatabase", {
   getSettings: () => invokeApp("database:get-settings"),
-  saveSettings: (input: unknown) => invokeApp("database:save-settings", input)
+  saveSettings: (input: unknown) => invokeApp("database:save-settings", input),
+  reconnect: () => invokeApp("database:reconnect")
 });
 
 contextBridge.exposeInMainWorld("aistudyRuntime", {

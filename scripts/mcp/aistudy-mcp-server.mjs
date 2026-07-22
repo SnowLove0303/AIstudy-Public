@@ -245,20 +245,20 @@ const toolDefinitions = [
   {
     name: "read_node_document",
     mode: "read",
-    description: "Read a node document by courseId and nodeId. mindMapId is optional and defaults to the latest map in the course.",
+    description: "Read a node document by compact ref or by courseId and nodeId. mindMapId is optional and defaults to the latest map in the course.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 } } }
+    inputSchema: { type: "object", additionalProperties: false, properties: { ref: { type: "string", maxLength: 160 }, courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 } } }
   },
   {
     name: "read_node_context",
     mode: "read",
-    description: "Read a structured node context in one call: target node, ancestor chain, bounded descendant subtree, and linked node documents.",
+    description: "Fast default node read. Accepts compact ref or courseId/nodeId and returns target node, ancestors, bounded descendant subtree, and linked documents.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      required: ["courseId", "nodeId"],
       properties: {
+        ref: { type: "string", maxLength: 160 },
         courseId: { type: "string", maxLength: 120 },
         mindMapId: { type: "string", maxLength: 120 },
         nodeId: { type: "string", maxLength: 120 },
@@ -266,8 +266,8 @@ const toolDefinitions = [
         includeDescendants: { type: "boolean", description: "Default true. Include a nested subtree rooted at nodeId." },
         includeDocuments: { type: "boolean", description: "Default true. Attach current node documents for returned nodes." },
         documentMode: { type: "string", enum: ["none", "summary", "text"], description: "Default text. summary omits body text; text returns cleaned text with truncation." },
-        maxDepth: { type: "integer", minimum: 0, maximum: 32, description: "Default 8. Descendant depth relative to target." },
-        maxNodes: { type: "integer", minimum: 1, maximum: 500, description: "Default 160. Maximum returned descendant nodes." },
+        maxDepth: { type: "integer", minimum: 0, maximum: 32, description: "Default 4. Descendant depth relative to target." },
+        maxNodes: { type: "integer", minimum: 1, maximum: 500, description: "Default 120. Maximum returned descendant nodes." },
         maxDocumentChars: { type: "integer", minimum: 200, maximum: 20000, description: "Default 4000. Maximum cleaned text chars per document." }
       }
     }
@@ -347,11 +347,11 @@ function createMcpInstructions() {
     "AIstudy MCP gives external AI clients controlled access to local AIstudy knowledge bases, mind maps, and node documents.",
     "Start every new session with mcp_get_started. It returns health status, available library scope, safety rules, and the recommended next tool order.",
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
-    "For read work: use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
+    "For read work: if AIstudy copied a compact aistudy://node/... ref, pass it directly to read_node_context. Otherwise use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
     "For document writes: pass structured plain text or Markdown-style headings to write_node_document or append_node_document. Use section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line; do not add blank lines only for visual spacing. Do not write raw Mermaid or Markdown fenced blocks as document body; use mind map tools for mind maps, or convert diagrams into headings and lists. If fenced blocks are included, AIstudy normalizes them and converts Mermaid mindmap blocks into stable numbered outlines instead of showing source code or whitespace-dependent trees. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
-    "When a user asks for a local handoff path, use resolve_course_locator instead of returning display breadcrumbs."
+    "For node-document handoff, prefer the compact aistudy://node/... ref. When a user explicitly asks for a local boundary file, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
 }
 
@@ -1010,6 +1010,97 @@ async function resolveCourse(runtime, args = {}, required = false) {
     throw new Error("MCP requires an explicit knowledge base.");
   }
   return { store, course };
+}
+
+function normalizeMcpRefPart(value, label) {
+  const text = String(value || "").trim();
+  if (!/^[a-z0-9_-]{4,120}$/i.test(text)) throw new Error(`MCP ${label} reference is invalid.`);
+  return text;
+}
+
+function parseMcpNodeRef(value) {
+  const ref = typeof value === "string" ? value.trim() : "";
+  if (!ref) return null;
+  let url;
+  try {
+    url = new URL(ref);
+  } catch {
+    throw new Error("MCP node ref is invalid.");
+  }
+  const protocol = url.protocol.toLowerCase();
+  const host = url.hostname.toLowerCase();
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (protocol === "aistudy:" && host === "node" && parts.length >= 2) {
+    return {
+      ref,
+      coursePrefix: normalizeMcpRefPart(parts[0], "course"),
+      nodePrefix: normalizeMcpRefPart(parts[1], "node"),
+      mindMapPrefix: url.searchParams.get("map") ? normalizeMcpRefPart(url.searchParams.get("map"), "mind map") : ""
+    };
+  }
+  if (protocol === "as:" && host === "n" && parts.length >= 2) {
+    return {
+      ref,
+      coursePrefix: normalizeMcpRefPart(parts[0], "course"),
+      nodePrefix: normalizeMcpRefPart(parts[1], "node"),
+      mindMapPrefix: url.searchParams.get("m") ? normalizeMcpRefPart(url.searchParams.get("m"), "mind map") : ""
+    };
+  }
+  throw new Error("MCP node ref is invalid.");
+}
+
+function pickUniquePrefixMatch(items, field, prefix, label) {
+  const exact = items.find((item) => item[field] === prefix);
+  if (exact) return exact;
+  const matches = items.filter((item) => String(item[field] || "").startsWith(prefix));
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) throw new Error(`MCP ${label} reference was not found.`);
+  throw new Error(`MCP ${label} reference is ambiguous; use a longer ref.`);
+}
+
+async function findMindMapByPrefix(runtime, courseId, prefix) {
+  if (!prefix) return findMindMapByCourse(runtime, courseId);
+  const [rows] = await runtime.pool.execute(
+    `SELECT id, course_id AS courseId, title, root_node_id AS rootNodeId,
+            current_snapshot_id AS currentSnapshotId, node_count AS nodeCount, updated_at AS updatedAt
+     FROM ${escapeIdentifier(runtime.config.mindMapTable, "mind map table")}
+     WHERE course_id = ? AND (id = ? OR id LIKE ?) AND deleted_at IS NULL
+     ORDER BY id = ? DESC, updated_at DESC
+     LIMIT 2`,
+    [courseId, prefix, `${prefix}%`, prefix]
+  );
+  const exact = rows.find((row) => row.id === prefix);
+  const matches = exact ? [exact] : rows;
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) throw new Error("MCP mind map reference was not found.");
+  throw new Error("MCP mind map reference is ambiguous; use a longer ref.");
+}
+
+async function findNodeIdByPrefix(runtime, courseId, mindMapId, prefix) {
+  const [rows] = await runtime.pool.execute(
+    `SELECT node_id AS nodeId
+     FROM ${escapeIdentifier(runtime.config.mindMapNodeTable, "node table")}
+     WHERE course_id = ? AND mind_map_id = ? AND (node_id = ? OR node_id LIKE ?) AND deleted_at IS NULL
+     ORDER BY node_id = ? DESC
+     LIMIT 2`,
+    [courseId, mindMapId, prefix, `${prefix}%`, prefix]
+  );
+  const exact = rows.find((row) => row.nodeId === prefix);
+  const matches = exact ? [exact] : rows;
+  if (matches.length === 1) return matches[0].nodeId;
+  if (matches.length === 0) throw new Error("MCP node reference was not found.");
+  throw new Error("MCP node reference is ambiguous; use a longer ref.");
+}
+
+async function resolveMcpNodeRef(runtime, args = {}) {
+  const parsed = parseMcpNodeRef(args.ref);
+  if (!parsed) return null;
+  const store = await readCourses(runtime);
+  const course = pickUniquePrefixMatch(store.courses, "id", parsed.coursePrefix, "course");
+  const map = await findMindMapByPrefix(runtime, course.id, parsed.mindMapPrefix);
+  if (!map) throw new Error("Mind map is missing.");
+  const nodeId = await findNodeIdByPrefix(runtime, course.id, map.id, parsed.nodePrefix);
+  return { course, mindMapId: map.id, nodeId, ref: parsed.ref };
 }
 
 async function resolveCourseLocator(runtime, args = {}) {
@@ -2824,6 +2915,8 @@ function formatDocumentSnapshotPreservingText(snapshot) {
 }
 
 async function resolveDocumentTarget(runtime, args) {
+  const refTarget = await resolveMcpNodeRef(runtime, args);
+  if (refTarget) return refTarget;
   const { course } = await resolveCourse(runtime, args, true);
   const nodeId = normalizeName(args.nodeId, "nodeId");
   const mindMapId = normalizeText(args.mindMapId, "") || (await findMindMapByCourse(runtime, course.id))?.id;
@@ -2994,9 +3087,10 @@ async function readContextDocuments(runtime, courseId, mindMapId, nodeIds, docum
 }
 
 async function readNodeContext(runtime, args) {
-  const { course } = await resolveCourse(runtime, args, true);
-  const nodeId = normalizeName(args.nodeId, "nodeId");
-  const requestedMindMapId = normalizeText(args.mindMapId, "");
+  const refTarget = await resolveMcpNodeRef(runtime, args);
+  const course = refTarget?.course ?? (await resolveCourse(runtime, args, true)).course;
+  const nodeId = refTarget?.nodeId ?? normalizeName(args.nodeId, "nodeId");
+  const requestedMindMapId = refTarget?.mindMapId ?? normalizeText(args.mindMapId, "");
   const map = requestedMindMapId
     ? await findMindMapById(runtime, course.id, requestedMindMapId)
     : await findMindMapByCourse(runtime, course.id);
@@ -3043,8 +3137,8 @@ async function readNodeContext(runtime, args) {
 
   const includeAncestors = args.includeAncestors !== false;
   const includeDescendants = args.includeDescendants !== false;
-  const maxDepth = normalizeContextInteger(args.maxDepth, 8, 0, 32);
-  const maxNodes = normalizeContextInteger(args.maxNodes, 160, 1, 500);
+  const maxDepth = normalizeContextInteger(args.maxDepth, 4, 0, 32);
+  const maxNodes = normalizeContextInteger(args.maxNodes, 120, 1, 500);
   const maxDocumentChars = normalizeContextInteger(args.maxDocumentChars, 4000, 200, 20000);
   const documentMode = normalizeContextDocumentMode(args);
 
@@ -3114,6 +3208,7 @@ async function readNodeContext(runtime, args) {
     },
     request: {
       nodeId,
+      ref: refTarget?.ref ?? null,
       includeAncestors,
       includeDescendants,
       documentMode,

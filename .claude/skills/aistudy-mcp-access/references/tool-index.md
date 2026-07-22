@@ -16,8 +16,20 @@ Keep this file synchronized with `electron/mcp/controller.ts`, `electron/mcp/rem
 - `read_current_mindmap`
 - `search_nodes`
 - `list_node_documents`
-- `read_node_document`: returns `text`/`textClean` for human-readable content, `textRaw` for audit, and `document.snapshot` as editor JSON for advanced tooling.
-- `read_node_context`: preferred node-level read. Given `courseId + nodeId`, returns the target node, ancestor chain, bounded descendant subtree, and linked documents in one structured response. Use this before `read_current_mindmap` when the target node is known.
+- `read_node_document`: accepts compact `ref` or `courseId + nodeId`; returns `text`/`textClean` for human-readable content, `textRaw` for audit, and `document.snapshot` as editor JSON for advanced tooling.
+- `read_node_context`: preferred node-level read. Given compact `ref` or `courseId + nodeId`, returns the target node, ancestor chain, bounded descendant subtree, and linked documents in one structured response. Use this before `read_current_mindmap` when the target node is known.
+
+## Compact Node References
+
+AIstudy document-copy actions may return a compact node reference such as:
+
+```text
+aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
+```
+
+Pass it directly as `{"ref":"..."}` to `read_node_context` for fast structured reads, or to `read_node_document` only when the full editor snapshot is required. The MCP server expands short prefixes to full ids and refuses ambiguous matches instead of guessing.
+
+For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs` to call compact refs through the local stdio server. That helper uses AIstudy's line-delimited JSON-RPC transport. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
 
 ## Course And Section Edits
 
