@@ -1070,12 +1070,15 @@ function syncBubbleTextWrapWidths(node: any) {
   if (!node) return;
   const data = readNodeData(node);
   const bubbleWidth = normalizeBubbleWidth(data.customBubbleWidth);
-  if (bubbleWidth !== undefined && normalizeTextWrapWidth(data.customTextWidth) === undefined) {
+  if (bubbleWidth !== undefined) {
     const naturalWidth = normalizeBubbleWidth(node?.__aistudyNaturalNodeRect?.width ?? node?.width);
     const textWrapWidth = getNodeTextWrapWidthForBubble(node, bubbleWidth);
-    if (textWrapWidth !== undefined) {
+    if (textWrapWidth !== undefined && normalizeTextWrapWidth(data.customTextWidth) !== textWrapWidth) {
       data.customTextWidth = textWrapWidth;
       node.customTextWidth = textWrapWidth;
+      if (typeof node.setData === "function") {
+        node.setData({ customTextWidth: textWrapWidth });
+      }
       if (normalizeBubbleWidth(data.aistudyNaturalBubbleWidth) === undefined && naturalWidth !== undefined) {
         data.aistudyNaturalBubbleWidth = naturalWidth;
       }
