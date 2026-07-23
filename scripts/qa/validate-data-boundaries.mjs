@@ -109,6 +109,9 @@ const preload = read("electron/preload.cts");
 if (/mysql|fs\.|node:fs/i.test(preload)) {
   fail("preload must not expose raw MySQL or filesystem capabilities");
 }
+if (!preload.includes('storageFootprint: () => invokeApp("runtime:storage-footprint")') || !preload.includes('cleanCaches: () => invokeApp("runtime:clean-caches")')) {
+  fail("preload must expose only scoped storage footprint and cache cleanup actions");
+}
 
 const main = read("electron/main.ts");
 for (const directAnnotationImport of [
@@ -153,6 +156,37 @@ if (
 }
 
 if (
+  !main.includes('ipcMain.handle("runtime:storage-footprint"')
+  || !main.includes('ipcMain.handle("runtime:clean-caches"')
+  || !main.includes("information_schema.tables")
+  || !main.includes("session.defaultSession.clearCache")
+) {
+  fail("main runtime must provide safe cache inspection/cleanup and database footprint checks");
+}
+
+const cacheMaintenance = read("electron/cacheMaintenance.ts");
+if (
+  !cacheMaintenance.includes('"cache-information-collection"')
+  || !cacheMaintenance.includes('"cache-update-temp"')
+  || !cacheMaintenance.includes('"cache-chrome-profiles"')
+  || !cacheMaintenance.includes('"cache-electron-session"')
+  || !cacheMaintenance.includes('true,\n    "字幕、音频、转写中间稿和单次任务目录，可清理。"')
+  || !cacheMaintenance.includes('false, "课程、导图、文档、资产和运行数据根目录，只统计。"')
+  || !cacheMaintenance.includes('"database"')
+) {
+  fail("cache maintenance must separate cleanable caches from database and durable content");
+}
+
+if (
+  cacheMaintenance.includes("removeSafeCacheDirectories(options.localDatabasePaths")
+  || cacheMaintenance.includes("removeDirectoryContents(path.join(options.dataRoot, \"state\")")
+  || cacheMaintenance.includes("removeDirectoryContents(path.join(options.dataRoot, \"assets\")")
+  || cacheMaintenance.includes("removeDirectoryContents(path.join(options.dataRoot, \"locators\")")
+) {
+  fail("cache maintenance must not delete database, state, asset, or locator content");
+}
+
+if (
   main.includes("readDbFirstStore(createCourseStorageProvider())")
   || main.includes("writeDbFirstStore(createCourseStorageProvider()")
   || !main.includes('throw createAppError("MYSQL_UNAVAILABLE", "数据库未连接，本次知识库操作未保存。')
@@ -169,6 +203,15 @@ if (
   || !appEntry.includes("setExternalContentRevision(Date.now())")
 ) {
   fail("renderer must clear stale course state on load failures and must not reload the app shell after a failed database switch");
+}
+
+if (
+  !appEntry.includes('type SettingsPage = "runtime" | "storage"')
+  || !appEntry.includes("缓存空间")
+  || !appEntry.includes("storageFootprint")
+  || !appEntry.includes("cleanCaches")
+) {
+  fail("renderer settings must expose cache/space maintenance without raw filesystem controls");
 }
 
 const courseSidebar = read("src/renderer/features/course/CourseSidebar.tsx");

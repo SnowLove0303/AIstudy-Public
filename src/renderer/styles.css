@@ -5374,6 +5374,219 @@ h3 {
   gap: 14px;
 }
 
+.storage-maintenance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.storage-maintenance-intro {
+  padding: 14px 15px;
+  border: 1px solid rgba(123, 145, 169, 0.14);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.storage-maintenance-intro .settings-section-heading {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.storage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.storage-summary-grid article {
+  min-height: 66px;
+  padding: 12px;
+  border: 1px solid rgba(123, 145, 169, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.storage-summary-grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.storage-summary-grid strong {
+  color: var(--text-primary);
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.storage-details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.storage-details-section h3 {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.storage-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.storage-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 1px solid rgba(123, 145, 169, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.storage-entry.cleanable {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(239, 246, 255, 0.42);
+}
+
+.storage-entry-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+
+.storage-entry-title strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.storage-entry-title span,
+.storage-entry-title em {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 20px;
+}
+
+.storage-entry-title em {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.storage-entry-main p,
+.storage-entry-main small,
+.storage-database-card small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-entry-main p {
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.storage-entry-main small,
+.storage-entry-size span,
+.storage-database-card small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.storage-entry-size {
+  text-align: right;
+}
+
+.storage-entry-size strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.storage-database-card {
+  padding: 12px;
+  border: 1px solid rgba(249, 115, 22, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 247, 237, 0.64);
+}
+
+.storage-database-card.connected {
+  border-color: rgba(34, 197, 94, 0.2);
+  background: rgba(240, 253, 244, 0.58);
+}
+
+.storage-database-card div {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.storage-database-card strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.storage-database-card span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.storage-database-card p {
+  margin: 0 0 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.storage-table-list {
+  overflow: hidden;
+  border: 1px solid rgba(123, 145, 169, 0.14);
+  border-radius: 8px;
+}
+
+.storage-table-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.6fr) 70px repeat(3, 82px);
+  gap: 8px;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 10px;
+  border-top: 1px solid rgba(123, 145, 169, 0.1);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.storage-table-row:first-child {
+  border-top: 0;
+}
+
+.storage-table-row.header {
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.storage-table-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .database-source-row {
   display: flex;
   align-items: center;

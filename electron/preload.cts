@@ -214,5 +214,7 @@ contextBridge.exposeInMainWorld("aistudyRuntime", {
   diagnose: () => invokeApp("runtime:diagnose"),
   copyDiagnosticReport: () => invokeApp("runtime:copy-diagnostic-report"),
   openDataRoot: () => invokeApp("runtime:open-data-root"),
+  storageFootprint: () => invokeApp("runtime:storage-footprint"),
+  cleanCaches: () => invokeApp("runtime:clean-caches"),
   openExternalUrl: (url: string) => invokeApp("runtime:open-external-url", url)
 });

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, session, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
@@ -12,6 +12,14 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { AISTUDY_CORE_CONTRACT } from "./coreContract.js";
 import { classifyAppError, createAppError, getAppErrorDefinition } from "./appErrors.js";
+import {
+  cleanRuntimeCaches,
+  createDisconnectedDatabaseFootprint,
+  scanStorageFootprint,
+  type CacheMaintenanceOptions,
+  type DatabaseFootprint,
+  type DatabaseTableFootprint
+} from "./cacheMaintenance.js";
 import { exportKnowledgeDocumentDocx } from "./documentExport.js";
 import { ensureExamTables, readExamStoreFromMysql, writeExamStoreToMysql, type ExamMysqlRuntime } from "./examStore.js";
 import { summarizeStorageBoundaries } from "./storageBoundary.js";
@@ -6446,6 +6454,103 @@ async function openAistudyDataRoot() {
   return true;
 }
 
+type DatabaseTableFootprintRow = RowDataPacket & {
+  tableName: string;
+  rowCount: number | string | null;
+  dataBytes: number | string | null;
+  indexBytes: number | string | null;
+};
+
+function toFootprintNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+async function readDatabaseFootprint(): Promise<DatabaseFootprint> {
+  const config = await readMysqlConfig();
+  const disconnected = (message: string) => createDisconnectedDatabaseFootprint({
+    provider: config.provider,
+    sourceKey: getDatabaseSourceKey(config),
+    database: config.database,
+    message
+  });
+
+  try {
+    const runtime = await getMysqlRuntime();
+    const [rows] = await runtime.pool.query<DatabaseTableFootprintRow[]>(
+      `SELECT table_name AS tableName,
+        table_rows AS rowCount,
+        COALESCE(data_length, 0) AS dataBytes,
+        COALESCE(index_length, 0) AS indexBytes
+      FROM information_schema.tables
+      WHERE table_schema = ?
+      ORDER BY (COALESCE(data_length, 0) + COALESCE(index_length, 0)) DESC`,
+      [config.database]
+    );
+    const tables: DatabaseTableFootprint[] = rows.map((row) => {
+      const dataBytes = toFootprintNumber(row.dataBytes);
+      const indexBytes = toFootprintNumber(row.indexBytes);
+      return {
+        name: String(row.tableName ?? ""),
+        rowCount: row.rowCount === null || row.rowCount === undefined ? null : toFootprintNumber(row.rowCount),
+        dataBytes,
+        indexBytes,
+        totalBytes: dataBytes + indexBytes
+      };
+    });
+    const totalBytes = tables.reduce((sum, table) => sum + table.totalBytes, 0);
+    return {
+      connected: true,
+      provider: config.provider,
+      sourceKey: runtime.sourceKey,
+      database: config.database,
+      totalBytes,
+      tableCount: tables.length,
+      tables,
+      message: tables.length ? "已读取当前数据库表体积。" : "当前数据库暂未发现业务表。"
+    };
+  } catch (error) {
+    return disconnected(getSafeDatabaseSettingsErrorMessage(error));
+  }
+}
+
+async function getLocalDatabaseFootprintPaths() {
+  const configs = await readMysqlStartRuntimeConfigs().catch(() => []);
+  const paths = configs
+    .map((config) => config.iniPath ? path.join(path.dirname(config.iniPath), "data") : "")
+    .filter(Boolean);
+  return Array.from(new Set([
+    ...paths,
+    path.join(getProgramDataAistudyRoot(), "mysql", "data"),
+    "F:\\AIAPP\\MySQL\\data"
+  ].map((candidate) => path.normalize(candidate))));
+}
+
+async function createCacheMaintenanceOptions(): Promise<CacheMaintenanceOptions> {
+  return {
+    dataRoot: getAistudyDataRoot(),
+    userDataRoot: app.getPath("userData"),
+    appRoot: app.getAppPath(),
+    chromeRuntimeRoot: getChromePortRuntimeRoot(),
+    legacyChromeRuntimeRoot: getLegacyChromePortRuntimeRoot() || undefined,
+    localDatabasePaths: await getLocalDatabaseFootprintPaths(),
+    database: await readDatabaseFootprint(),
+    clearSessionCache: () => session.defaultSession.clearCache()
+  };
+}
+
+async function readStorageFootprint() {
+  return scanStorageFootprint(await createCacheMaintenanceOptions());
+}
+
+async function cleanAistudyRuntimeCaches() {
+  return cleanRuntimeCaches(await createCacheMaintenanceOptions());
+}
+
 async function openExternalHttpUrl(input: unknown) {
   if (typeof input !== "string") throw new Error("invalid-url");
   const normalizedInput = input.trim().toLowerCase().startsWith("www.") ? `https://${input.trim()}` : input.trim();
@@ -11673,6 +11778,10 @@ ipcMain.handle("runtime:diagnose", withUserFacingError("runtime:diagnose", "环�
 ipcMain.handle("runtime:copy-diagnostic-report", withUserFacingError("runtime:copy-diagnostic-report", "诊断报告暂时无法复制。", () => copyRuntimeDiagnosticReport()));
 
 ipcMain.handle("runtime:open-data-root", withUserFacingError("runtime:open-data-root", "数据目录暂时无法打开。", () => openAistudyDataRoot()));
+
+ipcMain.handle("runtime:storage-footprint", withUserFacingError("runtime:storage-footprint", "空间占用暂时无法检测。", () => readStorageFootprint()));
+
+ipcMain.handle("runtime:clean-caches", withUserFacingError("runtime:clean-caches", "缓存暂时无法清理。", () => cleanAistudyRuntimeCaches()));
 
 ipcMain.handle("runtime:open-external-url", withUserFacingError("runtime:open-external-url", "链接暂时无法打开。", (_event, input) => openExternalHttpUrl(input)));
 
