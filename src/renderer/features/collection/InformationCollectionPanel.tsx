@@ -132,6 +132,7 @@ const DOCUMENT_EDITOR_VERSION = "canvas-editor@0.9.135";
 const TRANSCRIPT_EMPTY_TEXT = "当前视频没有检测到公开字幕。后续完成音频下载和语音转写后，正文会写入这里。";
 const TRANSCRIPT_MAX_PARAGRAPH_LENGTH = 180;
 const TRANSCRIPT_HEADING_MAX_LENGTH = 86;
+const DOCUMENT_FIRST_LINE_INDENT = "　　";
 
 function formatDateTime(value: string) {
   if (!value) return "时间未知";
@@ -193,10 +194,21 @@ function addHeading(main: unknown[], text: string, level = 1) {
 }
 
 function addParagraph(main: unknown[], text: string, options: Record<string, unknown> = {}) {
-  for (const line of text.split(/\n+/).map((item) => item.trim()).filter(Boolean)) {
-    main.push(createTextElement(line, options));
+  const { firstLineIndent = true, ...elementOptions } = options;
+  for (const paragraph of getDocumentParagraphs(text)) {
+    const value = firstLineIndent ? `${DOCUMENT_FIRST_LINE_INDENT}${paragraph}` : paragraph;
+    main.push(createTextElement(value, elementOptions));
     main.push(createLine());
   }
+}
+
+function getDocumentParagraphs(value: string) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.split(/\n+/).map((line) => line.trim()).filter(Boolean).join(" "))
+    .map((paragraph) => paragraph.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean);
 }
 
 function normalizeTranscriptFragment(value: string) {
@@ -389,7 +401,7 @@ function addTranscriptBlock(main: unknown[], block: TranscriptBlock) {
 }
 
 function addSourceLink(main: unknown[], url: string) {
-  main.push(createTextElement(url, { color: "#2563eb", underline: true, href: url, url }));
+  main.push(createTextElement(`${DOCUMENT_FIRST_LINE_INDENT}来源链接`, { color: "#2563eb", underline: true, href: url, url }));
   main.push(createLine());
 }
 
@@ -397,16 +409,17 @@ function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSna
   const main: unknown[] = [];
   const prepared = video.preparedDocument;
   addHeading(main, prepared?.title || video.title, 1);
-  addParagraph(main, `来源：${video.author} / ${video.platform === "youtube" ? "YouTube" : "B站"} / ${video.sourceId || video.bvid}`);
-  addParagraph(main, `发布时间：${formatDateTime(video.publishedAt)}    时长：${formatDuration(video.durationSeconds) || "未知"}`);
-  main.push(createTextElement("链接："));
-  main.push(createTextElement(video.url, { color: "#2563eb", underline: true, href: video.url, url: video.url }));
+  addParagraph(main, `来源：${video.author} / ${video.platform === "youtube" ? "YouTube" : "B站"} / ${video.sourceId || video.bvid}`, { firstLineIndent: false });
+  addParagraph(main, `发布时间：${formatDateTime(video.publishedAt)}    时长：${formatDuration(video.durationSeconds) || "未知"}`, { firstLineIndent: false });
+  main.push(createTextElement("视频来源："));
+  main.push(createTextElement("打开视频来源", { color: "#2563eb", underline: true, href: video.url, url: video.url }));
   main.push(createLine());
   main.push(createLine());
 
   addHeading(main, "转录状态", 2);
   addParagraph(main, prepared?.message || video.transcript.message, {
-    color: video.transcript.status === "available" ? "#047857" : "#b45309"
+    color: video.transcript.status === "available" ? "#047857" : "#b45309",
+    firstLineIndent: false
   });
   main.push(createLine());
 
@@ -842,20 +855,26 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
               <>
                 <h1>{selectedVideo.title}</h1>
                 <p className="collection-word-meta">{selectedVideo.author} · {selectedVideo.platform === "youtube" ? "YouTube" : "B站"} · {selectedVideo.sourceId || selectedVideo.bvid} · {formatDateTime(selectedVideo.publishedAt)}</p>
-                <p>播放 {formatNumber(selectedVideo.stats.view)} · 点赞 {formatNumber(selectedVideo.stats.like)} · 收藏 {formatNumber(selectedVideo.stats.favorite)}</p>
-                {selectedVideo.description ? <p>{selectedVideo.description}</p> : null}
+                <p className="collection-word-meta">播放 {formatNumber(selectedVideo.stats.view)} · 点赞 {formatNumber(selectedVideo.stats.like)} · 收藏 {formatNumber(selectedVideo.stats.favorite)}</p>
+                {selectedVideo.description ? getDocumentParagraphs(selectedVideo.description).map((paragraph, index) => (
+                  <p className="collection-document-paragraph" key={`description-${index}`}>{paragraph}</p>
+                )) : null}
                 <h2>转录状态</h2>
-                <p>{selectedVideo.preparedDocument?.message || selectedVideo.transcript.message}</p>
+                <p className="collection-word-status">{selectedVideo.preparedDocument?.message || selectedVideo.transcript.message}</p>
                 {selectedVideo.preparedDocument ? (
                   <>
                     <h2>今日概览</h2>
-                    <p>{selectedVideo.preparedDocument.overview}</p>
+                    {getDocumentParagraphs(selectedVideo.preparedDocument.overview).map((paragraph, index) => (
+                      <p className="collection-document-paragraph" key={`overview-${index}`}>{paragraph}</p>
+                    ))}
                     <h2>分点内容</h2>
                     <div className="collection-word-transcript">
                       {selectedVideo.preparedDocument.items.map((item, index) => (
                         <section className="collection-transcript-item" key={`${index}-${item.title.slice(0, 16)}`}>
                           <h3>{index + 1}. {item.title}</h3>
-                          <p>{item.mainContent}</p>
+                          {getDocumentParagraphs(item.mainContent).map((paragraph, paragraphIndex) => (
+                            <p className="collection-document-paragraph" key={`${index}-content-${paragraphIndex}`}>{paragraph}</p>
+                          ))}
                         </section>
                       ))}
                     </div>
@@ -872,7 +891,7 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
                     block.kind === "heading" ? (
                       <h3 key={`${index}-${block.text.slice(0, 16)}`}>{block.text}</h3>
                     ) : (
-                      <p className={block.kind === "item" ? "collection-transcript-item" : undefined} key={`${index}-${block.text.slice(0, 16)}`}>
+                      <p className={`collection-document-paragraph${block.kind === "item" ? " collection-transcript-item" : ""}`} key={`${index}-${block.text.slice(0, 16)}`}>
                         {block.text}
                       </p>
                     )

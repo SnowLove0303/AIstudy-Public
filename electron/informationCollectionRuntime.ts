@@ -136,6 +136,10 @@ function readMimoModel() {
   return process.env.AISTUDY_MIMO_MODEL?.trim() || process.env.MIMO_MODEL?.trim() || "mimo-v2.5-pro";
 }
 
+const MIMO_REQUEST_TIMEOUT_MS = 90_000;
+const MIMO_PROBE_TIMEOUT_MS = 10_000;
+const MAX_MIMO_PROMPT_CHARS = 48_000;
+
 async function readMimoResponseText(response: Response) {
   try {
     return (await response.text()).slice(0, 2000);
@@ -190,19 +194,31 @@ function createMimoChatCompletionBody(prompt: string, useJsonResponseFormat: boo
 }
 
 async function requestMimoChatCompletion(apiKey: string, prompt: string, useJsonResponseFormat: boolean) {
-  const response = await fetch(`${readMimoBaseUrl(apiKey)}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${apiKey}`,
-      "api-key": apiKey,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify(createMimoChatCompletionBody(prompt, useJsonResponseFormat))
-  });
-  if (!response.ok) {
-    throw createMimoHttpError(response.status, await readMimoResponseText(response));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MIMO_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${readMimoBaseUrl(apiKey)}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${apiKey}`,
+        "api-key": apiKey,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(createMimoChatCompletionBody(prompt, useJsonResponseFormat)),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw createMimoHttpError(response.status, await readMimoResponseText(response));
+    }
+    return await response.json() as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Mimo request timed out after 90 seconds.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return await response.json() as Record<string, unknown>;
 }
 
 function collectSourceUrls(value: string) {
@@ -211,9 +227,10 @@ function collectSourceUrls(value: string) {
 
 function splitInformationTranscriptParagraphs(value: string) {
   return String(value || "")
-    .replace(/\r/g, "\n")
-    .split(/\n+/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .flatMap((block) => block.split(/\n+/).join(" "))
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
     .filter(Boolean)
     .filter((line, index, lines) => index === 0 || line !== lines[index - 1]);
 }
@@ -256,16 +273,31 @@ function createLocalInformationDocument(input: {
   message: string;
 }): InformationPreparedDocument {
   const paragraphs = splitInformationTranscriptParagraphs(input.transcript);
-  const itemLines = paragraphs.filter((line) => /^\d{1,2}[.、]\s*\S/.test(line));
-  const items = itemLines.length
-    ? itemLines.map((line) => {
-        const title = line.replace(/^\d{1,2}[.、]\s*/, "").trim();
-        return { title, mainContent: title, sourceUrls: [] };
-      })
+  const numberedItems: InformationDocumentItem[] = [];
+  let current: InformationDocumentItem | null = null;
+  for (const paragraph of paragraphs) {
+    const numbered = paragraph.match(/^\d{1,3}[.、]\s*(.+)$/);
+    if (numbered) {
+      if (current) numberedItems.push(current);
+      const content = numbered[1].trim();
+      current = { title: content.slice(0, 48), mainContent: content, sourceUrls: [] };
+      continue;
+    }
+    if (current) {
+      current.mainContent = `${current.mainContent}\n\n${paragraph}`;
+    }
+  }
+  if (current) numberedItems.push(current);
+
+  const items = numberedItems.length
+    ? numberedItems.slice(0, 24)
     : paragraphs
         .filter((line) => line.length >= 16)
         .slice(0, 12)
-        .map((line) => ({ title: line.slice(0, 48), mainContent: line, sourceUrls: [] }));
+        .map((line) => {
+          const title = line.split(/[。！？!?；;]/)[0]?.trim() || line;
+          return { title: title.slice(0, 48), mainContent: line, sourceUrls: [] };
+        });
 
   return {
     status: "fallback",
@@ -276,6 +308,36 @@ function createLocalInformationDocument(input: {
     transcript: input.transcript,
     message: input.message || "Mimo 未配置或暂时不可用，已使用本地规则整理。"
   };
+}
+
+function formatMimoFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/timed out/i.test(message)) return "Mimo 整理超时，已使用本地规则整理。";
+  const status = message.match(/HTTP (\d{3})/i)?.[1];
+  if (status) return `Mimo 整理请求失败（HTTP ${status}），已使用本地规则整理。`;
+  return "Mimo 整理请求失败，已使用本地规则整理。";
+}
+
+function readMimoMessageContent(payload: Record<string, unknown>) {
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const firstChoice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
+  const message = firstChoice?.message && typeof firstChoice.message === "object"
+    ? firstChoice.message as Record<string, unknown>
+    : null;
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (!part || typeof part !== "object") return "";
+        const record = part as Record<string, unknown>;
+        return typeof record.text === "string" ? record.text : typeof record.content === "string" ? record.content : "";
+      })
+      .join("\n")
+      .trim();
+  }
+  return typeof message?.reasoning_content === "string" ? message.reasoning_content : "";
 }
 
 export async function organizeInformationDocumentWithMimo(input: {
@@ -311,7 +373,10 @@ export async function organizeInformationDocumentWithMimo(input: {
     input.description || "无",
     "",
     "转录内容：",
-    input.transcript
+    input.transcript.slice(0, MAX_MIMO_PROMPT_CHARS),
+    input.transcript.length > MAX_MIMO_PROMPT_CHARS
+      ? "（转录过长，本次整理使用了前 48000 个字符；完整原始转录仍会保留在文档中。）"
+      : ""
   ].join("\n");
 
   try {
@@ -322,10 +387,7 @@ export async function organizeInformationDocumentWithMimo(input: {
       if (!shouldRetryMimoWithoutJsonFormat(firstError)) throw firstError;
       payload = await requestMimoChatCompletion(apiKey, prompt, false);
     }
-    const choices = Array.isArray(payload.choices) ? payload.choices : [];
-    const firstChoice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
-    const message = firstChoice?.message && typeof firstChoice.message === "object" ? firstChoice.message as Record<string, unknown> : null;
-    const content = typeof message?.content === "string" ? message.content : "";
+    const content = readMimoMessageContent(payload);
     const parsed = parseMimoJsonPayload(content);
     if (!parsed) throw new Error("Mimo response is not valid JSON.");
     const items = Array.isArray(parsed.items)
@@ -342,11 +404,30 @@ export async function organizeInformationDocumentWithMimo(input: {
     };
     await fs.writeFile(path.join(input.workDir, "mimo-document.json"), `${JSON.stringify(document, null, 2)}\n`, "utf8").catch(() => undefined);
     return document;
-  } catch {
+  } catch (error) {
     return {
       ...fallback,
-      message: "Mimo 整理暂时不可用，已使用本地规则整理。"
+      message: formatMimoFailureMessage(error)
     };
+  }
+}
+
+async function probeMimoConnection(apiKey: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MIMO_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${readMimoBaseUrl(apiKey)}/models`, {
+      headers: {
+        "authorization": `Bearer ${apiKey}`,
+        "api-key": apiKey
+      },
+      signal: controller.signal
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -378,14 +459,20 @@ export async function readInformationToolStatus(): Promise<InformationToolStatus
       };
     }
   }));
+  const mimoKey = readMimoApiKey();
+  const mimoConnected = mimoKey ? await probeMimoConnection(mimoKey) : false;
   return [
     ...runtimeTools,
     {
       id: "mimo",
       name: "内容整理",
-      available: Boolean(readMimoApiKey()),
-      version: readMimoApiKey() ? readMimoModel() : "",
-      message: readMimoApiKey() ? "Mimo 已配置。" : "未配置 Mimo 密钥，将使用本地规则整理。"
+      available: mimoConnected,
+      version: mimoKey ? readMimoModel() : "",
+      message: !mimoKey
+        ? "未配置 Mimo 密钥，将使用本地规则整理。"
+        : mimoConnected
+          ? "Mimo 已连接。"
+          : "Mimo 暂时无法连接，将使用本地规则整理。"
     }
   ];
 }

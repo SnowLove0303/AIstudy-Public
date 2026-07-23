@@ -74,9 +74,17 @@ assertContains(runtime, '"authorization": `Bearer ${apiKey}`', "Mimo requests mu
 assertContains(runtime, '"api-key": apiKey', "Mimo requests must keep Token Plan api-key authentication.");
 assertContains(runtime, "shouldRetryMimoWithoutJsonFormat", "Mimo 400/422 request-format failures must retry without response_format.");
 assertContains(runtime, "createMimoHttpError", "Mimo HTTP errors must be normalized instead of exposing raw provider JSON.");
+assertContains(runtime, "MIMO_REQUEST_TIMEOUT_MS", "Mimo organization requests must have a bounded timeout.");
+assertContains(runtime, "probeMimoConnection", "Mimo status must verify the configured endpoint instead of only checking for a key.");
+assertContains(runtime, "readMimoMessageContent", "Mimo response parsing must support compatible content shapes.");
 
 assertContains(storageBoundary, "id: \"information-collection\"", "Storage boundary registry must include information collection runtime cache.");
 assertContains(storageBoundary, "runtime-cache", "Information collection runtime files must be classified as runtime cache.");
 assertContains(packageScript, "bilibili-cookies.txt", "Installer clean source guard must reject Bilibili cookie files.");
+
+assertContains(panel, "DOCUMENT_FIRST_LINE_INDENT", "Generated information documents must preserve first-line indentation.");
+assertContains(panel, "打开视频来源", "Generated source links must remain clickable without forcing raw URLs into the page.");
+assertContains(panel, "collection-document-paragraph", "Information collection preview must render paragraph-level structure.");
+assertContains(read("src/renderer/styles.css"), "overflow-wrap: anywhere", "Information collection documents must wrap long content inside the page.");
 
 console.log("information collection policy: ok");

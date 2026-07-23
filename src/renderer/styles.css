@@ -6004,6 +6004,7 @@ h3 {
 }
 
 .collection-word-page {
+  box-sizing: border-box;
   min-height: 420px;
   max-width: 860px;
   width: min(100%, 860px);
@@ -6015,6 +6016,14 @@ h3 {
   padding: 48px 58px;
   color: #111827;
   line-height: 1.8;
+}
+
+.collection-word-page,
+.collection-word-page * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .collection-word-page h1 {
@@ -6032,6 +6041,17 @@ h3 {
 .collection-word-page p {
   margin: 8px 0;
   font-size: 16px;
+  white-space: pre-wrap;
+}
+
+.collection-word-page .collection-document-paragraph {
+  text-indent: 2em;
+}
+
+.collection-word-page .collection-word-meta,
+.collection-word-page .collection-word-status {
+  color: #64748b;
+  text-indent: 0;
 }
 
 .collection-word-transcript {
@@ -6048,16 +6068,16 @@ h3 {
 
 .collection-word-transcript p {
   margin: 0;
-  overflow-wrap: break-word;
-  word-break: normal;
 }
 
 .collection-word-transcript .collection-transcript-item {
   margin-top: 10px;
-  padding-left: 28px;
   color: #17466f;
-  font-weight: 650;
-  text-indent: -28px;
+  font-weight: 400;
+}
+
+.collection-word-transcript .collection-transcript-item h3 {
+  font-weight: 700;
 }
 
 .collection-word-meta {
