@@ -27,7 +27,6 @@ import {
   RefreshCw,
   Settings,
   SlidersHorizontal,
-  Trash2,
   X
 } from "lucide-react";
 import { AiAssistantPanel } from "./features/assistant/AiAssistantPanel";
@@ -39,6 +38,11 @@ import type { Course, CourseSection, CourseStore, CourseSyncStatus } from "./fea
 import { ExamWorkspace } from "./features/exam/ExamWorkspace";
 import { McpControlPanel } from "./features/mcp/McpControlPanel";
 import { MindMapCatalog, type MindMapCatalogCollapseRequest } from "./features/mindmap/MindMapCatalog";
+import {
+  StorageMaintenancePanel,
+  type CacheCleanupResult,
+  type StorageFootprintReport
+} from "./features/settings/StorageMaintenancePanel";
 import {
   formatMindMapShortcutFromEvent,
   MIND_MAP_BRANCH_SHORTCUTS,
@@ -217,59 +221,6 @@ type DatabaseSettings = DatabaseSettingsProfile & {
   profiles: Record<DatabaseProvider, DatabaseSettingsProfile>;
 };
 
-type StorageFootprintKind = "application" | "data" | "runtime-cache" | "database" | "backup" | "log" | "preference";
-
-type StorageFootprintEntry = {
-  id: string;
-  name: string;
-  kind: StorageFootprintKind;
-  path: string;
-  exists: boolean;
-  bytes: number;
-  files: number;
-  directories: number;
-  cleanable: boolean;
-  note: string;
-};
-
-type DatabaseTableFootprint = {
-  name: string;
-  rowCount: number | null;
-  dataBytes: number;
-  indexBytes: number;
-  totalBytes: number;
-};
-
-type DatabaseFootprint = {
-  connected: boolean;
-  provider: DatabaseProvider;
-  sourceKey: string;
-  database: string;
-  totalBytes: number;
-  tableCount: number;
-  tables: DatabaseTableFootprint[];
-  message: string;
-};
-
-type StorageFootprintReport = {
-  scannedAt: string;
-  dataRoot: string;
-  userDataRoot: string;
-  appRoot: string;
-  totalBytes: number;
-  cleanableBytes: number;
-  databaseBytes: number;
-  entries: StorageFootprintEntry[];
-  database: DatabaseFootprint;
-};
-
-type CacheCleanupResult = {
-  cleanedAt: string;
-  releasedBytes: number;
-  removedEntries: number;
-  report: StorageFootprintReport;
-};
-
 function parseDatabaseConnectionStringPreview(value: string, fallbackProvider: DatabaseProvider): Partial<DatabaseSettings> {
   if (!value.trim()) return {};
   const raw = value.trim().replace(/^[`'"]+|[`'"]+$/g, "").trim();
@@ -360,19 +311,6 @@ declare global {
   }
 }
 
-function formatStorageSize(size: number) {
-  if (!Number.isFinite(size) || size <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = size;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(digits)} ${units[unitIndex]}`;
-}
-
 function formatFileSize(size: number) {
   if (!size) return "";
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -400,16 +338,6 @@ function getDiagnosticStatusText(status: RuntimeDiagnosticStatus) {
   return "未启用";
 }
 
-function getStorageKindLabel(kind: StorageFootprintKind) {
-  if (kind === "application") return "程序";
-  if (kind === "data") return "数据";
-  if (kind === "runtime-cache") return "缓存";
-  if (kind === "database") return "数据库";
-  if (kind === "backup") return "备份";
-  if (kind === "log") return "日志";
-  return "配置";
-}
-
 async function loadUpdateInfo() {
   if (!window.aistudyUpdates) {
     throw new Error("更新服务不可用。");
@@ -426,11 +354,6 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
   const [diagnosticResult, setDiagnosticResult] = React.useState<RuntimeDiagnosticResult | null>(null);
   const [isCheckingRuntime, setIsCheckingRuntime] = React.useState(false);
   const [runtimeMessage, setRuntimeMessage] = React.useState("");
-  const [storageReport, setStorageReport] = React.useState<StorageFootprintReport | null>(null);
-  const [isScanningStorage, setIsScanningStorage] = React.useState(false);
-  const [isCleaningCaches, setIsCleaningCaches] = React.useState(false);
-  const [storageMessage, setStorageMessage] = React.useState("");
-  const [storageError, setStorageError] = React.useState("");
   const [errorLogs, setErrorLogs] = React.useState<ErrorLogEntry[]>([]);
   const [isLoadingErrorLogs, setIsLoadingErrorLogs] = React.useState(false);
   const [errorLogMessage, setErrorLogMessage] = React.useState("");
@@ -595,58 +518,11 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
       });
   }, []);
 
-  const scanStorageFootprint = React.useCallback(() => {
-    if (!window.aistudyRuntime?.storageFootprint) {
-      setStorageError("空间检测暂时不可用。");
-      return;
-    }
-
-    setIsScanningStorage(true);
-    setStorageMessage("");
-    setStorageError("");
-    window.aistudyRuntime.storageFootprint()
-      .then((report) => {
-        setStorageReport(report);
-        setStorageMessage(`检测完成，可清理缓存 ${formatStorageSize(report.cleanableBytes)}。`);
-      })
-      .catch((scanError: unknown) => {
-        setStorageReport(null);
-        setStorageError(scanError instanceof Error ? scanError.message : "空间占用暂时无法检测。");
-      })
-      .finally(() => setIsScanningStorage(false));
-  }, []);
-
-  const cleanAistudyCaches = React.useCallback(() => {
-    if (!window.aistudyRuntime?.cleanCaches) {
-      setStorageError("缓存清理暂时不可用。");
-      return;
-    }
-
-    setIsCleaningCaches(true);
-    setStorageMessage("");
-    setStorageError("");
-    window.aistudyRuntime.cleanCaches()
-      .then((result) => {
-        setStorageReport(result.report);
-        setStorageMessage(`已清理 ${formatStorageSize(result.releasedBytes)} 缓存。`);
-      })
-      .catch((cleanError: unknown) => {
-        setStorageError(cleanError instanceof Error ? cleanError.message : "缓存暂时无法清理。");
-      })
-      .finally(() => setIsCleaningCaches(false));
-  }, []);
-
   React.useEffect(() => {
     if (activePage === "runtime" && !diagnosticResult && !isCheckingRuntime) {
       runRuntimeDiagnostics();
     }
   }, [activePage, diagnosticResult, isCheckingRuntime, runRuntimeDiagnostics]);
-
-  React.useEffect(() => {
-    if (activePage === "storage" && !storageReport && !isScanningStorage) {
-      scanStorageFootprint();
-    }
-  }, [activePage, isScanningStorage, scanStorageFootprint, storageReport]);
 
   const loadErrorLogs = React.useCallback(() => {
     if (!window.aistudyErrorLogs) {
@@ -972,123 +848,7 @@ function SettingsDialog({ onClose, onDatabaseChanged }: { onClose: () => void; o
               )}
             </div>
           ) : activePage === "storage" ? (
-            <div className="storage-maintenance-panel">
-              <section className="settings-section storage-maintenance-intro">
-                <div className="settings-section-heading">
-                  <div>
-                    <h3>AIstudy 占用检测</h3>
-                    <p>按程序、数据、缓存、数据库、备份和日志分开统计。清理只处理可再生成缓存，不处理知识库、文档、导图、图片、备份和数据库。</p>
-                  </div>
-                  <div className="runtime-check-actions">
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={scanStorageFootprint}
-                      disabled={isScanningStorage || isCleaningCaches}
-                    >
-                      <RefreshCw size={15} />
-                      {isScanningStorage ? "检测中" : "重新检测"}
-                    </button>
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={cleanAistudyCaches}
-                      disabled={isScanningStorage || isCleaningCaches || !storageReport?.cleanableBytes}
-                    >
-                      <Trash2 size={15} />
-                      {isCleaningCaches ? "清理中" : "清理缓存"}
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              {storageMessage ? <p className="update-status">{storageMessage}</p> : null}
-              {storageError ? <p className="status-message error">{storageError}</p> : null}
-
-              {storageReport ? (
-                <>
-                  <section className="storage-summary-grid" aria-label="空间占用汇总">
-                    <article>
-                      <span>系统占用</span>
-                      <strong>{formatStorageSize(storageReport.totalBytes)}</strong>
-                    </article>
-                    <article>
-                      <span>可清缓存</span>
-                      <strong>{formatStorageSize(storageReport.cleanableBytes)}</strong>
-                    </article>
-                    <article>
-                      <span>数据库占用</span>
-                      <strong>{formatStorageSize(storageReport.databaseBytes)}</strong>
-                    </article>
-                    <article>
-                      <span>数据表</span>
-                      <strong>{storageReport.database.tableCount}</strong>
-                    </article>
-                  </section>
-
-                  <section className="storage-details-section">
-                    <h3>路径明细</h3>
-                    <div className="storage-entry-list">
-                      {[...storageReport.entries]
-                        .sort((left, right) => Number(right.cleanable) - Number(left.cleanable) || right.bytes - left.bytes)
-                        .map((entry) => (
-                          <article className={entry.cleanable ? "storage-entry cleanable" : "storage-entry"} key={entry.id}>
-                            <div className="storage-entry-main">
-                              <div className="storage-entry-title">
-                                <strong>{entry.name}</strong>
-                                <span>{getStorageKindLabel(entry.kind)}</span>
-                                {entry.cleanable ? <em>可清理</em> : null}
-                              </div>
-                              <p>{entry.path}</p>
-                              <small>{entry.note}</small>
-                            </div>
-                            <div className="storage-entry-size">
-                              <strong>{formatStorageSize(entry.bytes)}</strong>
-                              <span>{entry.exists ? `${entry.files} 文件 / ${entry.directories} 目录` : "未发现"}</span>
-                            </div>
-                          </article>
-                        ))}
-                    </div>
-                  </section>
-
-                  <section className="storage-details-section">
-                    <h3>数据库</h3>
-                    <div className={storageReport.database.connected ? "storage-database-card connected" : "storage-database-card"}>
-                      <div>
-                        <strong>{storageReport.database.provider === "tidb" ? "TiDB" : "MySQL"}</strong>
-                        <span>{storageReport.database.database}</span>
-                      </div>
-                      <p>{storageReport.database.message}</p>
-                      <small>{storageReport.database.sourceKey}</small>
-                    </div>
-                    {storageReport.database.tables.length ? (
-                      <div className="storage-table-list" aria-label="数据库表体积">
-                        <div className="storage-table-row header">
-                          <span>表</span>
-                          <span>行数</span>
-                          <span>数据</span>
-                          <span>索引</span>
-                          <span>合计</span>
-                        </div>
-                        {storageReport.database.tables.slice(0, 24).map((table) => (
-                          <div className="storage-table-row" key={table.name}>
-                            <span title={table.name}>{table.name}</span>
-                            <span>{table.rowCount ?? "-"}</span>
-                            <span>{formatStorageSize(table.dataBytes)}</span>
-                            <span>{formatStorageSize(table.indexBytes)}</span>
-                            <span>{formatStorageSize(table.totalBytes)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </section>
-                </>
-              ) : (
-                <div className="pane-empty-state runtime-empty-state">
-                  <strong>{isScanningStorage ? "正在检测占用" : "点击重新检测"}</strong>
-                </div>
-              )}
-            </div>
+            <StorageMaintenancePanel />
           ) : activePage === "database" ? (
             <div className="database-settings-panel">
               {databaseSettings ? (

@@ -72,6 +72,7 @@ export type CacheMaintenanceOptions = {
   legacyChromeRuntimeRoot?: string;
   localDatabasePaths: string[];
   database: DatabaseFootprint;
+  informationCollectionBusy?: boolean;
   clearSessionCache?: () => Promise<void>;
 };
 
@@ -329,8 +330,10 @@ export async function scanStorageFootprint(options: CacheMaintenanceOptions): Pr
     "runtime-cache",
     informationRuntimePath,
     await measureDirectory(informationRuntimePath),
-    true,
-    "字幕、音频、转写中间稿和单次任务目录，可清理。"
+    !options.informationCollectionBusy,
+    options.informationCollectionBusy
+      ? "采集任务正在运行，任务完成前不会清理。"
+      : "字幕、音频、转写中间稿和单次任务目录，可清理。"
   ));
 
   const updateTempPath = path.join(dataRoot, "updates");
@@ -470,9 +473,11 @@ export async function cleanRuntimeCaches(options: CacheMaintenanceOptions): Prom
   const before = await scanStorageFootprint(options);
   let removedEntries = 0;
 
-  const informationRuntimePath = path.join(options.dataRoot, "runtime", "information-collection");
-  removedEntries += await removeDirectoryContents(informationRuntimePath);
-  await fs.mkdir(informationRuntimePath, { recursive: true }).catch(() => undefined);
+  if (!options.informationCollectionBusy) {
+    const informationRuntimePath = path.join(options.dataRoot, "runtime", "information-collection");
+    removedEntries += await removeDirectoryContents(informationRuntimePath);
+    await fs.mkdir(informationRuntimePath, { recursive: true }).catch(() => undefined);
+  }
 
   removedEntries += await removeMatchingFiles(path.join(options.dataRoot, "updates"), (fileName) => /\.(download|tmp)$/i.test(fileName));
 

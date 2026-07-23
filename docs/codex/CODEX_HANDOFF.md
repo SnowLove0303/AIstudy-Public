@@ -8,7 +8,7 @@
 - GitHub 仓库：`https://github.com/SnowLove0303/AIstudy-Public.git`
 - 应用名：`AIstudy`
 - 当前包名：`aistudy`
-- 当前版本号：`0.1.76`，以 `package.json` 的 `version` 为准
+- 当前版本号：以 `package.json` 的 `version` 为唯一依据（本次同步时为 `0.1.90`）
 - 公开版定位：开发端、发布端、纯净版基线
 - 自用版仓库：`F:\XIANGMU\AIstudy`
 
@@ -16,18 +16,18 @@
 
 ## 1.1 当前接手状态
 
-截至 2026-07-02，本公开版已从 MCP/知识库主链路扩展到教材、考试、信息采集和词汇采集的完整应用壳：
+截至 2026-07-23，本公开版已从 MCP/知识库主链路扩展到教材、考试、信息采集、词汇采集和存储维护的完整应用壳：
 
-- 最新安装包：`release\AIstudy-Setup-0.1.76.exe`
+- 最新安装包：`release\AIstudy-Setup-<package.json version>.exe`，哈希和对应提交以 `release\build-manifest.json` 为准
 - 最新免安装运行版：`release\win-unpacked\AIstudy.exe`
 - 最新词汇采集 APK：`android\vocabulary-capture\dist\AIstudyVocabularyCapture-0.1.7-debug.apk`
 - 最新更新摘要见：`docs/updates/INDEX.md`
 - 当前主要分支：`main`
-- 本轮系统整理开始前，本地 HEAD 与远端 `origin/main` 一致，提交为 `b861d75 test: expand mind map catalog boundary coverage`；`git fetch --prune origin` 后无远端冲突。
+- 分支、HEAD、远端和工作区状态必须在接手时实时执行 `git status --short --branch`、`git rev-parse HEAD` 和 `git rev-parse origin/main` 判断；本文不再固化提交哈希。
 - 当前公开版已经具备课程/分区、思维导图、节点 Word 文档、教材 PDF 与节点笔记、题库考试、信息采集、词汇实时采集、AI 助手、Chrome 固定端口、MCP 设置页、Tailscale 内网访问、远程权限细分、远程调用监控、导图/文档 MCP 读写工具、更新管理、错误日志、数据库更新保护、左右侧栏折叠、导图快捷键设置、右键文字排版浮层和右侧文档格式面板。
 - 最近一轮更新集中在词汇采集 Android 伴随 APK、桌面端实时接收器、词汇过滤去重、DB-first 持久化、本地 pending 兜底、主导航词汇采集入口、百词斩前台状态实时心跳、纯净打包守卫补充、系统旧版本环境整理、APK 产物入库，以及知识库文档/教材重启恢复可靠性收口。
 
-2026-07-02 词汇采集收尾状态：
+2026-07-02 词汇采集历史收尾记录（不得作为当前发布基线）：
 
 - 当前工作区仍为未提交状态，不能直接笼统提交；接手线程应先用 `git status --short --branch` 和 `git diff --name-status` 核对范围后再分组提交。
 - Android 词汇采集 APK 已升级到 `0.1.7` / `versionCode=8`，产物为 `android\vocabulary-capture\dist\AIstudyVocabularyCapture-0.1.7-debug.apk`，SHA-256 为 `8ff3e6538472664aac28bea56589b3cef33568c106ea053ebc84dc7a0535fcbc`。
@@ -39,7 +39,7 @@
 
 接手时必须先执行 `git status --short --branch` 判断工作区状态。若已有未提交改动，先确认归属，不要用 `git reset --hard` 或 checkout 回滚用户或其他线程的改动。纯净发行版、数据库自动发现和 StorageProvider 收口都会触碰 `electron/main.ts`、打包脚本和文档，后续接手必须先看真实 diff 再继续。
 
-本轮功能遍历确认的主功能目录为 `assistant`、`chromePorts`、`collection`、`course`、`documents`、`exam`、`importer`、`mcp`、`mindmap`、`textbook`、`vocabulary`。其中 `textbook` 和 `vocabulary` 已真实接入主界面、preload、主进程、MySQL 和本地兜底，并已补齐模块 README。
+本轮功能遍历确认的主功能目录为 `assistant`、`chromePorts`、`collection`、`course`、`documents`、`exam`、`importer`、`mcp`、`mindmap`、`settings`、`textbook`、`vocabulary`。其中 `settings` 的存储维护面板已从主页面和全局样式拆为独立组件；`textbook` 和 `vocabulary` 已真实接入主界面、preload、主进程、MySQL 和本地兜底，并已补齐模块 README。
 
 当前应用壳不是多页面路由，而是 `src/renderer/main.tsx` 的单壳多功能区：左侧主导航切换知识库、信息采集、词汇采集、考试、Chrome 端口和 AI 助手；知识库内部再切换导图、文档、教材；`?view=textbook-pdf` 是教材 PDF 独立窗口的特殊入口。关闭主窗口前会通过 `aistudyLifecycle.onBeforeClose` 统一 drain 导图、文档和教材笔记保存任务；MCP 外部数据变更会触发课程重读和导图/文档刷新修订号。
 
@@ -235,20 +235,26 @@ scripts/mcp/aistudy-mcp-server.mjs  外部 stdio MCP server
 当前代码规模，用于判断改动风险和拆分优先级：
 
 ```text
-src/renderer/features/mindmap       10 files / 4017 lines
-src/renderer/features/exam           6 files / 3384 lines
-src/renderer/features/documents      4 files / 2659 lines
-src/renderer/features/textbook      10 files / 1657 lines
-src/renderer/features/course         4 files / 786 lines
-src/renderer/features/collection     2 files / 759 lines
-src/renderer/features/mcp            2 files / 719 lines
-src/renderer/features/assistant      2 files / 328 lines
-src/renderer/features/chromePorts    2 files / 199 lines
-electron/main.ts                     8537 lines
-scripts/mcp/aistudy-mcp-server.mjs   2714 lines
-electron/mcp/controller.ts           1296 lines
-electron/mcp/remoteAccess.ts         755 lines
+src/renderer/features/mindmap       10 files / 5504 lines
+src/renderer/features/documents      7 files / 4666 lines
+src/renderer/features/exam           6 files / 3569 lines
+src/renderer/features/textbook      10 files / 2741 lines
+src/renderer/features/collection     2 files / 945 lines
+src/renderer/features/course         4 files / 883 lines
+src/renderer/features/mathInput      3 files / 816 lines
+src/renderer/features/mcp            2 files / 779 lines
+src/renderer/features/assistant      2 files / 380 lines
+src/renderer/features/settings       3 files / 288 lines
+src/renderer/features/chromePorts    2 files / 232 lines
+electron/main.ts                    11854 lines
+src/renderer/main.tsx                1939 lines
+src/renderer/styles.css              7936 lines
+scripts/mcp/aistudy-mcp-server.mjs   3780 lines
+electron/mcp/controller.ts           1394 lines
+electron/mcp/remoteAccess.ts          865 lines
 ```
+
+以上为 2026-07-23 快照，只用于识别聚合文件风险；接手时应重新统计，不把行数当作发布版本标识。
 
 模块开发原则：
 
@@ -759,7 +765,7 @@ android/vocabulary-capture/
 - `src/renderer/features/textbook/` 原本缺 README，本轮已补齐；后续教材功能变化要同步维护该 README。
 - `scripts/mcp/aistudy-mcp-server.mjs` 的 Chrome 端口平台列表已补齐 `xiaohongshu`，并与主进程、MCP controller 和 MCP 文档保持一致；后续改端口平台时仍必须同步 UI、主进程、外部 MCP server 和文档。
 - `docs/deployment-new-machine.md` 已改为当前版本通用安装包示例；具体版本仍必须以 `package.json`、`docs/updates/INDEX.md` 和 `release/AIstudy-Setup-*.exe` 为准。
-- `docs/ARCHITECTURE.md` 的 “Current Implemented Surfaces” 已同步到 `0.1.76`，并补充教材、DB-first 边界、QA 和打包 manifest 规则。
+- `docs/ARCHITECTURE.md` 的 “Current Implemented Surfaces” 不再复制版本号，具体发布版本以 `package.json` 为准；架构文档同步记录 DB-first、缓存维护互斥、QA 和打包 manifest 规则。
 - `electron/main.ts` 仍承载大量业务服务逻辑，但教材 PDF 批注已经抽到 `electron/textbookAnnotationService.ts`。继续扩展考试、教材、采集或 MCP 时，优先抽到独立 main-side service 文件，再通过 preload 暴露，不要继续扩大主进程巨文件。
 - DB-first 数据边界已新增 `electron/storageBoundary.ts`，`npm run build` 会先跑 `qa:data-boundaries`；后续新增本地缓存、preload 能力或打包运行数据时要同步更新该清单和 QA 守卫。
 - 词汇采集已新增 `src/renderer/features/vocabulary/README.md` 和 `android/vocabulary-capture/README.md`。后续改采集筛选、端口、APK 包名、授权方式、MySQL 表或 pending 文件时必须同步这两个 README、`docs/ARCHITECTURE.md` 和本接手文档。
@@ -769,7 +775,7 @@ android/vocabulary-capture/
 - 知识库文档本地镜像和教材延迟保存新增 `npm run qa:knowledge-reliability` 守卫；涉及 DB-first 恢复、重启状态、切换课程/导图保存时必须运行。
 - 本轮检索了 `TODO/FIXME/placeholder/mock/sample/lorem/测试/占位/假/dummy/fake`。新增可疑业务假入口未发现；命中主要是历史研究文档里的 fixture/sample 计划、CSS/输入框 placeholder、导入报告 `sample` 字段，以及考试政治真题种子入口。后续如果改 UI，应继续遵守“不展示未接入真实能力的入口”。
 - 当前工作区已有用户/历史改动，交接者在任何提交、打包或发布前必须重新跑 `git status --short --branch` 并确认改动归属。
-- 2026-07-02 环境整理后，`release` 下旧 `AIstudy-Setup-0.1.68` 到 `0.1.75` 安装包已移入 `F:\AIAPP\Codex\cleanup-quarantine\AIstudy-public-20260702-1708`；当前桌面主版本只保留 `0.1.76`。该隔离区是回滚点，不属于仓库源码。
+- 2026-07-02 环境整理时，`release` 下旧 `AIstudy-Setup-0.1.68` 到 `0.1.75` 安装包曾移入 `F:\AIAPP\Codex\cleanup-quarantine\AIstudy-public-20260702-1708`。这是历史回滚记录，不代表当前版本；当前产物必须以 `package.json` 和 `release\build-manifest.json` 为准。
 
 ## 14. 新线程培训与交接规则
 

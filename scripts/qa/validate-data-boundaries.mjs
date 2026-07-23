@@ -170,7 +170,8 @@ if (
   || !cacheMaintenance.includes('"cache-update-temp"')
   || !cacheMaintenance.includes('"cache-chrome-profiles"')
   || !cacheMaintenance.includes('"cache-electron-session"')
-  || !cacheMaintenance.includes('true,\n    "字幕、音频、转写中间稿和单次任务目录，可清理。"')
+  || !cacheMaintenance.includes("!options.informationCollectionBusy")
+  || !cacheMaintenance.includes("任务完成前不会清理")
   || !cacheMaintenance.includes('false, "课程、导图、文档、资产和运行数据根目录，只统计。"')
   || !cacheMaintenance.includes('"database"')
 ) {
@@ -184,6 +185,16 @@ if (
   || cacheMaintenance.includes("removeDirectoryContents(path.join(options.dataRoot, \"locators\")")
 ) {
   fail("cache maintenance must not delete database, state, asset, or locator content");
+}
+
+const runtimeMaintenanceCoordinator = read("electron/runtimeMaintenanceCoordinator.ts");
+if (
+  !runtimeMaintenanceCoordinator.includes("runInformationCollectionTask")
+  || !runtimeMaintenanceCoordinator.includes("runCacheCleanup")
+  || !main.includes("runtimeMaintenanceCoordinator.runInformationCollectionTask")
+  || !main.includes("runtimeMaintenanceCoordinator.runCacheCleanup")
+) {
+  fail("runtime maintenance must serialize cache cleanup against active information collection tasks");
 }
 
 if (
@@ -205,13 +216,18 @@ if (
   fail("renderer must clear stale course state on load failures and must not reload the app shell after a failed database switch");
 }
 
+const storageMaintenancePanel = read("src/renderer/features/settings/StorageMaintenancePanel.tsx");
 if (
   !appEntry.includes('type SettingsPage = "runtime" | "storage"')
   || !appEntry.includes("缓存空间")
-  || !appEntry.includes("storageFootprint")
-  || !appEntry.includes("cleanCaches")
+  || !appEntry.includes("<StorageMaintenancePanel />")
+  || !storageMaintenancePanel.includes("storageFootprint")
+  || !storageMaintenancePanel.includes("cleanCaches")
+  || storageMaintenancePanel.includes("entry.path")
+  || storageMaintenancePanel.includes("sourceKey}</")
+  || storageMaintenancePanel.includes("table.name")
 ) {
-  fail("renderer settings must expose cache/space maintenance without raw filesystem controls");
+  fail("renderer settings must expose scoped cache maintenance without raw paths or database internals");
 }
 
 const courseSidebar = read("src/renderer/features/course/CourseSidebar.tsx");

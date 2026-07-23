@@ -48,7 +48,7 @@ npm run dev:app
 词汇采集 APK 当前固定提交路径：
 
 ```text
-android/vocabulary-capture/dist/AIstudyVocabularyCapture-0.1.4-debug.apk
+android/vocabulary-capture/dist/AIstudyVocabularyCapture-0.1.7-debug.apk
 ```
 
 Android 工程源码位于 `android/vocabulary-capture/`。`app/build/` 是本机构建中间目录，不进入仓库。

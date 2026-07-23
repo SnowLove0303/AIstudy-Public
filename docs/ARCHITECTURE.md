@@ -260,7 +260,7 @@ Reusable deployment rules are tracked in `docs/功能规划/开箱即用与外�
 
 Word editor comes after the mind-map persistence contract is stable.
 
-## Current Implemented Surfaces - 0.1.76
+## Current Implemented Surfaces
 
 The public version has moved beyond the first milestone. Current shipped surfaces are:
 
@@ -281,14 +281,14 @@ The public version has moved beyond the first milestone. Current shipped surface
 - Chrome fixed-port metadata is DB-first through `chrome_port_states`, while real login cookies stay in per-platform Chrome profiles. Production builds use a stable runtime root outside the app install directory on F drive when available so packaging cleanup or reinstalling does not reset browser login state.
 - Information collection targets Bilibili and YouTube video workflows. Electron main owns platform requests, Bilibili Chrome cookie reuse, YouTube metadata/search routing, and source opening, while `electron/informationCollectionRuntime.ts` owns tool detection, external command execution, run ids, subtitle text reading, MiMo document organization, and tool-failure wording. Each processing run writes to `runtime/information-collection/{platform}/{sourceId}/{runId}` and reports `information-collection:process-progress` to the requesting renderer only. Formal output is the existing node Word document snapshot built from `preparedDocument`; runtime cookies, subtitles, audio, article HTML, MiMo intermediate JSON, and transcription intermediates must not be packaged.
 - Vocabulary capture is a desktop receiver plus Android Accessibility companion APK. The Electron main process listens on port `38673`, filters Baicizhan word-card text, deduplicates accepted words, persists to `vocabulary_capture_documents` and `vocabulary_capture_events`, and uses local pending files only while MySQL is unavailable. The APK sends near-real-time heartbeat payloads with foreground target activity so the renderer can distinguish waiting for the APK, waiting for Baicizhan, and active capture while only showing status plus the filtered word document.
-- Settings contains runtime diagnostics, MCP control, shortcut settings, update management, and user-facing error logs.
+- Settings contains runtime diagnostics, scoped cache maintenance, database selection, MCP control, shortcut settings, update management, and user-facing error logs. Cache maintenance reports only user-relevant categories in the renderer; filesystem paths and database internals stay in the main process.
 - AI assistant sends prompts through fixed Chrome debugging ports. Chrome discovery accepts registered executables, common install paths, and PATH launchers such as `chrome.cmd` when they point to a real `chrome.exe`; ChatGPT submission prepares the web input, sends through a trusted CDP Enter key event, then reads the reply by conversation order after the current send. Electron main uses Node `ws` with safe Buffer decoding for CDP calls.
 - MCP is a first-class module with renderer UI, Electron controller, external stdio server, HTTP remote access, Tailscale LAN exposure, read/edit tool boundaries, permissions, and call monitoring.
 - Tailscale LAN access is not public internet access. It uses Tailscale Serve for same-tailnet devices and must keep remote edit permissions off by default.
 - App updates preserve runtime data and database configuration. Version updates must not overwrite user courses, mind maps, documents, MCP remote state, or MySQL config.
 - The Windows installer is a slim app package. MySQL and VC++ runtime setup is handled by `build/installer/install-aistudy-mysql-runtime.ps1` during install and may download runtime dependencies on the target machine; dependency setup failure must not block opening the app.
 - The main knowledge workspace has collapsible left knowledge-base pane and right catalog pane. Collapsing side panes must not collapse or zero-width the central mind-map/document canvas.
-- Storage boundaries are declared in `electron/storageBoundary.ts` and checked by `npm run qa:data-boundaries` during build. Knowledge-base recovery rules are checked by `npm run qa:knowledge-reliability`. Vocabulary capture status and heartbeat contracts are checked by `npm run qa:vocabulary-capture`. Bilibili information collection runtime and progress contracts are checked by `npm run qa:information-collection`.
+- Storage boundaries are declared in `electron/storageBoundary.ts` and checked by `npm run qa:data-boundaries` during build. Cache cleanup is implemented in `electron/cacheMaintenance.ts`, serialized against information collection by `electron/runtimeMaintenanceCoordinator.ts`, and exercised on an isolated F-drive filesystem by `npm run qa:cache-maintenance`. Knowledge-base recovery rules are checked by `npm run qa:knowledge-reliability`. Vocabulary capture status and heartbeat contracts are checked by `npm run qa:vocabulary-capture`. Bilibili information collection runtime and progress contracts are checked by `npm run qa:information-collection`.
 - ChatGPT/KaTeX/MathML/plain-text math paste normalization lives in `src/renderer/features/mathInput/` and is checked by `npm run qa:math-clipboard` during build.
 - `dist:oneclick` removes runtime data from the installer source and writes `release/build-manifest.json` with version, commit, dirty state, and artifact hashes.
 - Do not re-embed `mysql-8.4.7-winx64.zip` or `vc_redist.x64.exe` into the main NSIS package unless explicitly building a separate offline dependency package.
@@ -310,6 +310,12 @@ electron/vocabularyCaptureService.ts
 
 electron/informationCollectionRuntime.ts
   Main-side runtime helpers for information collection tools, run directories, external command execution, and text-file extraction.
+
+electron/cacheMaintenance.ts
+  Read-only storage footprint scanning and deletion of explicitly classified, regenerable caches.
+
+electron/runtimeMaintenanceCoordinator.ts
+  Main-process exclusion between information collection tasks and cache cleanup.
 
 electron/preload.cts
   ContextBridge surface for renderer APIs. Renderer must not bypass this layer.

@@ -61,6 +61,7 @@ import {
 } from "./knowledgeAssetService.js";
 import { createMcpController } from "./mcp/controller.js";
 import { createMcpRemoteAccessController } from "./mcp/remoteAccess.js";
+import { RuntimeMaintenanceCoordinator } from "./runtimeMaintenanceCoordinator.js";
 import { createVocabularyCaptureService } from "./vocabularyCaptureService.js";
 import { createVocabularyCaptureCompanionLauncher } from "./vocabularyCaptureCompanionLauncher.js";
 
@@ -74,6 +75,7 @@ const BEFORE_CLOSE_DRAIN_TIMEOUT_MS = 2500;
 const INLINE_DATA_URL_PATTERN = /^data:[^;,]+(?:;[^,]+)*;base64,/i;
 const UPDATE_DOWNLOAD_CHUNK_SIZE_BYTES = 4 * 1024 * 1024;
 const UPDATE_DOWNLOAD_RETRY_LIMIT = 4;
+const runtimeMaintenanceCoordinator = new RuntimeMaintenanceCoordinator();
 const UPDATE_DOWNLOAD_NET_TIMEOUT_MS = 120000;
 const TEXTBOOK_PDF_PROTOCOL = "aistudy-pdf";
 const MANAGED_MYSQL_SERVICE_NAME = "AIstudyMySQL";
@@ -6539,6 +6541,7 @@ async function createCacheMaintenanceOptions(): Promise<CacheMaintenanceOptions>
     legacyChromeRuntimeRoot: getLegacyChromePortRuntimeRoot() || undefined,
     localDatabasePaths: await getLocalDatabaseFootprintPaths(),
     database: await readDatabaseFootprint(),
+    informationCollectionBusy: runtimeMaintenanceCoordinator.informationCollectionBusy,
     clearSessionCache: () => session.defaultSession.clearCache()
   };
 }
@@ -6548,7 +6551,9 @@ async function readStorageFootprint() {
 }
 
 async function cleanAistudyRuntimeCaches() {
-  return cleanRuntimeCaches(await createCacheMaintenanceOptions());
+  return runtimeMaintenanceCoordinator.runCacheCleanup(async () => (
+    cleanRuntimeCaches(await createCacheMaintenanceOptions())
+  ));
 }
 
 async function openExternalHttpUrl(input: unknown) {
@@ -11728,18 +11733,22 @@ ipcMain.handle("chrome-ports:open-page", withUserFacingError("chrome-ports:open-
 
 ipcMain.handle(
   "information-collection:bilibili-collect",
-  withUserFacingError("information-collection:bilibili-collect", "信息采集没有完成，请稍后再试。", (_event, input) => collectBilibiliInformation(input))
+  withUserFacingError("information-collection:bilibili-collect", "信息采集没有完成，请稍后再试。", (_event, input) => (
+    runtimeMaintenanceCoordinator.runInformationCollectionTask(() => collectBilibiliInformation(input))
+  ))
 );
 
 ipcMain.handle(
   "information-collection:bilibili-process",
   withUserFacingError("information-collection:bilibili-process", "视频处理没有完成，请稍后再试。", (event, input) => {
     const sender = (event as IpcMainInvokeEvent).sender;
-    return processBilibiliVideo(input, (progress) => {
-      if (!sender.isDestroyed()) {
-        sender.send("information-collection:process-progress", progress);
-      }
-    });
+    return runtimeMaintenanceCoordinator.runInformationCollectionTask(() => (
+      processBilibiliVideo(input, (progress) => {
+        if (!sender.isDestroyed()) {
+          sender.send("information-collection:process-progress", progress);
+        }
+      })
+    ));
   })
 );
 
