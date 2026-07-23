@@ -11,8 +11,8 @@
   - `runtime/information-collection/bilibili/{bvid}/{runId}`
   - `runtime/information-collection/youtube/{videoId}/{runId}`
 - 字幕优先；没有字幕时再下载音频并调用本地 Whisper。任何一步缺工具或失败都停在真实状态，不写假转录。
-- 转录完成后进入“整理文档”步骤。若配置了 `AISTUDY_MIMO_API_KEY` 或 `MIMO_API_KEY`，调用 MiMo OpenAI-compatible API 生成概览、分点标题、主要内容、来源链接和完整转录；未配置或调用失败时使用本地规则兜底整理，并明确显示状态。
-- Word 预览和写入优先使用整理后的 `preparedDocument`，不再直接把原始字幕碎片作为最终文档。
+- 转录完成后进入“整理文档”步骤。若配置了 `AISTUDY_MIMO_API_KEY` 或 `MIMO_API_KEY`，调用 MiMo OpenAI-compatible API 生成概览、分点标题、主要内容和来源链接；未配置或调用失败时使用本地规则兜底整理，并明确显示状态。
+- Word 预览和写入优先使用整理后的 `preparedDocument`。原始转录只作为运行缓存和整理依据保留，不再作为最终文档正文写入，避免把字幕碎片、异常状态和长链接混入正式内容。
 
 ## 数据边界
 

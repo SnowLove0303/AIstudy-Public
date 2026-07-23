@@ -6251,6 +6251,13 @@ h3 {
   font-size: 20px;
 }
 
+.collection-word-page h3 {
+  margin: 18px 0 6px;
+  color: #17466f;
+  font-size: 18px;
+  line-height: 1.55;
+}
+
 .collection-word-page p {
   margin: 8px 0;
   font-size: 16px;
@@ -6291,6 +6298,20 @@ h3 {
 
 .collection-word-transcript .collection-transcript-item h3 {
   font-weight: 700;
+}
+
+.collection-source-links {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 4px;
+  padding-left: 2em;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.collection-source-links a {
+  color: #2563eb;
+  text-decoration: underline;
 }
 
 .collection-word-meta {

@@ -138,7 +138,9 @@ function readMimoModel() {
 
 const MIMO_REQUEST_TIMEOUT_MS = 90_000;
 const MIMO_PROBE_TIMEOUT_MS = 10_000;
-const MAX_MIMO_PROMPT_CHARS = 48_000;
+const MAX_MIMO_PROMPT_CHARS = 32_000;
+const MAX_LOCAL_ITEM_COUNT = 24;
+const MAX_OVERVIEW_ITEM_COUNT = 10;
 
 async function readMimoResponseText(response: Response) {
   try {
@@ -225,14 +227,84 @@ function collectSourceUrls(value: string) {
   return Array.from(new Set(String(value || "").match(/https?:\/\/[^\s"'<>，。；、)）]+/gi) ?? []));
 }
 
-function splitInformationTranscriptParagraphs(value: string) {
+function normalizeInformationText(value: string) {
   return String(value || "")
+    .replace(/\u00a0/g, " ")
     .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([，。！？；：、,.!?;:])/g, "$1")
+    .replace(/([（(【[])\s+/g, "$1")
+    .replace(/\s+([）)】\]])/g, "$1")
+    .trim();
+}
+
+function stripSourceUrls(value: string) {
+  return normalizeInformationText(value).replace(/https?:\/\/[^\s"'<>，。；、)）]+/gi, "").replace(/\s{2,}/g, " ").trim();
+}
+
+function splitInformationSentences(value: string, maxLength = 180) {
+  const text = normalizeInformationText(value);
+  if (!text) return [];
+  const sentences = text.match(/[^。！？!?；;]+[。！？!?；;]?/g)?.map(normalizeInformationText).filter(Boolean) ?? [text];
+  const paragraphs: string[] = [];
+  let buffer = "";
+  const flush = () => {
+    const next = normalizeInformationText(buffer);
+    if (next) paragraphs.push(next);
+    buffer = "";
+  };
+  for (const sentence of sentences) {
+    if (!buffer) {
+      buffer = sentence;
+      continue;
+    }
+    if (buffer.length + sentence.length > maxLength) {
+      flush();
+      buffer = sentence;
+    } else {
+      buffer = `${buffer}${sentence}`;
+    }
+  }
+  flush();
+  return paragraphs;
+}
+
+function splitInformationTranscriptParagraphs(value: string) {
+  return normalizeInformationText(value)
+    .replace(/[ \t]+(?=#\d{1,3}\s+)/g, "\n")
+    .replace(/(^|\n)\s*#(\d{1,3})(?=\s|$)/g, "$1$2. ")
+    .replace(/([。！？!?；;])\s+(?=\d{1,3}[.、]\s+\S)/g, "$1\n")
+    .replace(/[ \t]+(?=\d{1,3}[.、]\s+\S)/g, "\n")
     .split(/\n{2,}/)
-    .flatMap((block) => block.split(/\n+/).join(" "))
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .flatMap((block) => block.split(/\n+/))
+    .map(stripSourceUrls)
     .filter(Boolean)
     .filter((line, index, lines) => index === 0 || line !== lines[index - 1]);
+}
+
+function normalizeInformationItemTitle(value: string) {
+  const text = stripSourceUrls(value).replace(/^\d{1,3}[.、]\s*/, "");
+  const title = text.split(/[。！？!?；;\n]/)[0]?.trim() || text;
+  return title.replace(/^#\d{1,3}\s*/, "").slice(0, 64);
+}
+
+function formatInformationItemContent(value: string) {
+  const urls = collectSourceUrls(value);
+  const content = stripSourceUrls(value);
+  const paragraphs = splitInformationSentences(content, 190);
+  return {
+    mainContent: paragraphs.join("\n\n") || content,
+    sourceUrls: urls
+  };
+}
+
+function createOverviewText(title: string, items: InformationDocumentItem[]) {
+  const itemTitles = items.map((item) => normalizeInformationItemTitle(item.title || item.mainContent)).filter(Boolean);
+  if (!itemTitles.length) return title ? `本次内容围绕「${title}」整理。` : "本次内容已整理为结构化分点。";
+  return [
+    `本次共整理 ${items.length} 条重点内容，主要包括：`,
+    ...itemTitles.slice(0, MAX_OVERVIEW_ITEM_COUNT).map((item, index) => `${index + 1}. ${item}`)
+  ].join("\n");
 }
 
 function normalizeInformationDocumentItem(value: unknown): InformationDocumentItem | null {
@@ -240,14 +312,16 @@ function normalizeInformationDocumentItem(value: unknown): InformationDocumentIt
   const record = value as Record<string, unknown>;
   const title = typeof record.title === "string" ? record.title.trim() : "";
   const mainContent = typeof record.mainContent === "string" ? record.mainContent.trim() : "";
+  const contentUrls = collectSourceUrls(mainContent);
+  const formatted = formatInformationItemContent(mainContent || title);
   const sourceUrls = Array.isArray(record.sourceUrls)
     ? record.sourceUrls.filter((item): item is string => typeof item === "string" && /^https?:\/\//i.test(item.trim())).map((item) => item.trim())
     : [];
   if (!title && !mainContent) return null;
   return {
-    title: title || mainContent.slice(0, 60),
-    mainContent,
-    sourceUrls: Array.from(new Set(sourceUrls))
+    title: normalizeInformationItemTitle(title || mainContent) || formatted.mainContent.slice(0, 60),
+    mainContent: formatted.mainContent,
+    sourceUrls: Array.from(new Set([...sourceUrls, ...contentUrls, ...formatted.sourceUrls]))
   };
 }
 
@@ -280,30 +354,41 @@ function createLocalInformationDocument(input: {
     if (numbered) {
       if (current) numberedItems.push(current);
       const content = numbered[1].trim();
-      current = { title: content.slice(0, 48), mainContent: content, sourceUrls: [] };
+      const formatted = formatInformationItemContent(content);
+      current = {
+        title: normalizeInformationItemTitle(content),
+        mainContent: formatted.mainContent,
+        sourceUrls: formatted.sourceUrls
+      };
       continue;
     }
     if (current) {
-      current.mainContent = `${current.mainContent}\n\n${paragraph}`;
+      const formatted = formatInformationItemContent(paragraph);
+      current.mainContent = [current.mainContent, formatted.mainContent].filter(Boolean).join("\n\n");
+      current.sourceUrls = Array.from(new Set([...current.sourceUrls, ...formatted.sourceUrls]));
     }
   }
   if (current) numberedItems.push(current);
 
   const items = numberedItems.length
-    ? numberedItems.slice(0, 24)
+    ? numberedItems.slice(0, MAX_LOCAL_ITEM_COUNT)
     : paragraphs
         .filter((line) => line.length >= 16)
         .slice(0, 12)
         .map((line) => {
-          const title = line.split(/[。！？!?；;]/)[0]?.trim() || line;
-          return { title: title.slice(0, 48), mainContent: line, sourceUrls: [] };
+          const formatted = formatInformationItemContent(line);
+          return {
+            title: normalizeInformationItemTitle(line),
+            mainContent: formatted.mainContent,
+            sourceUrls: formatted.sourceUrls
+          };
         });
 
   return {
     status: "fallback",
     provider: "local",
     title: input.title,
-    overview: paragraphs.slice(0, 3).join(" "),
+    overview: createOverviewText(input.title, items),
     items,
     transcript: input.transcript,
     message: input.message || "Mimo 未配置或暂时不可用，已使用本地规则整理。"
@@ -360,8 +445,8 @@ export async function organizeInformationDocumentWithMimo(input: {
   const prompt = [
     "你是 AIstudy 的信息采集整理器。请只基于提供的视频元数据、来源链接和转录内容整理，不要补充未经材料支持的信息。",
     "输出必须是 JSON，不要 Markdown，不要解释。",
-    "JSON 结构：{\"title\":\"文档标题\",\"overview\":\"今日概览，一段话\",\"items\":[{\"title\":\"分点标题\",\"mainContent\":\"主要内容\",\"sourceUrls\":[\"https://...\"]}],\"transcript\":\"清理后的完整转录\"}。",
-    "要求：每个早报分点都要有独立标题和主要内容；来源链接只使用材料中出现过的 URL；保留完整转录；删除口播寒暄之外的重复字幕碎片。",
+    "JSON 结构：{\"title\":\"文档标题\",\"overview\":\"今日概览，使用多行短句或编号清单，不要写成长段落\",\"items\":[{\"title\":\"分点标题\",\"mainContent\":\"2 到 5 段主要内容，段落之间使用两个换行\",\"sourceUrls\":[\"https://...\"]}]}。",
+    "要求：每个早报分点都要有独立标题和主要内容；标题不要重复编号；正文按自然段整理，避免把所有内容挤成一段；来源链接只使用材料中出现过的 URL；不要返回完整转录。",
     "",
     `视频标题：${input.title}`,
     `发布者：${input.author}`,
@@ -397,9 +482,11 @@ export async function organizeInformationDocumentWithMimo(input: {
       status: "available",
       provider: "mimo",
       title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : input.title,
-      overview: typeof parsed.overview === "string" ? parsed.overview.trim() : fallback.overview,
+      overview: typeof parsed.overview === "string" && parsed.overview.trim()
+        ? splitInformationTranscriptParagraphs(parsed.overview).join("\n")
+        : createOverviewText(input.title, items.length ? items : fallback.items),
       items: items.length ? items : fallback.items,
-      transcript: typeof parsed.transcript === "string" && parsed.transcript.trim() ? parsed.transcript.trim() : input.transcript,
+      transcript: input.transcript,
       message: "已通过 Mimo 整理转录内容。"
     };
     await fs.writeFile(path.join(input.workDir, "mimo-document.json"), `${JSON.stringify(document, null, 2)}\n`, "utf8").catch(() => undefined);

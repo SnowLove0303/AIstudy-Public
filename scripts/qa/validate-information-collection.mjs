@@ -77,6 +77,12 @@ assertContains(runtime, "createMimoHttpError", "Mimo HTTP errors must be normali
 assertContains(runtime, "MIMO_REQUEST_TIMEOUT_MS", "Mimo organization requests must have a bounded timeout.");
 assertContains(runtime, "probeMimoConnection", "Mimo status must verify the configured endpoint instead of only checking for a key.");
 assertContains(runtime, "readMimoMessageContent", "Mimo response parsing must support compatible content shapes.");
+assertContains(runtime, "不要返回完整转录", "Mimo must not be asked to return full transcripts inside JSON.");
+assertContains(runtime, "createOverviewText", "Information collection fallback must create structured overview text.");
+assertContains(runtime, "formatInformationItemContent", "Information collection fallback must normalize item paragraphs and source links.");
+if (runtime.includes('\\"transcript\\":\\"清理后的完整转录\\"') || runtime.includes("保留完整转录")) {
+  throw new Error("Mimo prompt must not request full transcript output; it makes long reports fail or truncate.");
+}
 
 assertContains(storageBoundary, "id: \"information-collection\"", "Storage boundary registry must include information collection runtime cache.");
 assertContains(storageBoundary, "runtime-cache", "Information collection runtime files must be classified as runtime cache.");
@@ -85,6 +91,16 @@ assertContains(packageScript, "bilibili-cookies.txt", "Installer clean source gu
 assertContains(panel, "DOCUMENT_FIRST_LINE_INDENT", "Generated information documents must preserve first-line indentation.");
 assertContains(panel, "打开视频来源", "Generated source links must remain clickable without forcing raw URLs into the page.");
 assertContains(panel, "collection-document-paragraph", "Information collection preview must render paragraph-level structure.");
+assertContains(panel, "collection-source-links", "Information collection preview must render source links separately from body paragraphs.");
+if (panel.includes('addHeading(main, "完整转录"') || panel.includes('<h2>完整转录</h2>')) {
+  throw new Error("Prepared information documents must not append raw transcript as final document body.");
+}
+assertMatches(
+  panel,
+  /if \(prepared\) \{[\s\S]*addHeading\(main, "今日概览", 2\)[\s\S]*addHeading\(main, "分点内容", 2\)[\s\S]*\} else \{[\s\S]*addHeading\(main, "转录状态", 2\)/,
+  "Transcript status must stay out of prepared final documents and only appear for unprepared transcript fallback."
+);
 assertContains(read("src/renderer/styles.css"), "overflow-wrap: anywhere", "Information collection documents must wrap long content inside the page.");
+assertContains(read("src/renderer/styles.css"), ".collection-source-links", "Information collection source links must have dedicated wrapping styles.");
 
 console.log("information collection policy: ok");

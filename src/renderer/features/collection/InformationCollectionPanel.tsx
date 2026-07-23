@@ -205,8 +205,7 @@ function addParagraph(main: unknown[], text: string, options: Record<string, unk
 function getDocumentParagraphs(value: string) {
   return String(value || "")
     .replace(/\r\n?/g, "\n")
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.split(/\n+/).map((line) => line.trim()).filter(Boolean).join(" "))
+    .split(/\n+/)
     .map((paragraph) => paragraph.replace(/[ \t]+/g, " ").trim())
     .filter(Boolean);
 }
@@ -401,8 +400,19 @@ function addTranscriptBlock(main: unknown[], block: TranscriptBlock) {
 }
 
 function addSourceLink(main: unknown[], url: string) {
-  main.push(createTextElement(`${DOCUMENT_FIRST_LINE_INDENT}来源链接`, { color: "#2563eb", underline: true, href: url, url }));
+  main.push(createTextElement(`${DOCUMENT_FIRST_LINE_INDENT}相关链接：`, { color: "#64748b" }));
+  main.push(createTextElement(url, { color: "#2563eb", underline: true, href: url, url }));
   main.push(createLine());
+}
+
+function addOverview(main: unknown[], overview: string) {
+  for (const paragraph of getDocumentParagraphs(overview)) {
+    const isListLine = /^\d{1,3}[.、]\s+/.test(paragraph);
+    addParagraph(main, paragraph, {
+      firstLineIndent: !isListLine,
+      color: isListLine ? "#111827" : "#374151"
+    });
+  }
 }
 
 function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSnapshot {
@@ -416,16 +426,9 @@ function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSna
   main.push(createLine());
   main.push(createLine());
 
-  addHeading(main, "转录状态", 2);
-  addParagraph(main, prepared?.message || video.transcript.message, {
-    color: video.transcript.status === "available" ? "#047857" : "#b45309",
-    firstLineIndent: false
-  });
-  main.push(createLine());
-
   if (prepared) {
     addHeading(main, "今日概览", 2);
-    addParagraph(main, prepared.overview || "暂无概览。");
+    addOverview(main, prepared.overview || "暂无概览。");
     main.push(createLine());
 
     addHeading(main, "分点内容", 2);
@@ -435,12 +438,14 @@ function createVideoDocumentSnapshot(video: BilibiliVideo): KnowledgeDocumentSna
       item.sourceUrls.forEach((url) => addSourceLink(main, url));
       main.push(createLine());
     });
-
-    addHeading(main, "完整转录", 2);
-    for (const block of buildReadableTranscriptBlocks(prepared.transcript || video.transcript.text)) {
-      addTranscriptBlock(main, block);
-    }
   } else {
+    addHeading(main, "转录状态", 2);
+    addParagraph(main, video.transcript.message, {
+      color: video.transcript.status === "available" ? "#047857" : "#b45309",
+      firstLineIndent: false
+    });
+    main.push(createLine());
+
     addHeading(main, "基础信息", 2);
     addParagraph(main, `播放 ${formatNumber(video.stats.view)} · 点赞 ${formatNumber(video.stats.like)} · 收藏 ${formatNumber(video.stats.favorite)} · 评论 ${formatNumber(video.stats.reply)}`);
     if (video.description) addParagraph(main, video.description);
@@ -859,13 +864,11 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
                 {selectedVideo.description ? getDocumentParagraphs(selectedVideo.description).map((paragraph, index) => (
                   <p className="collection-document-paragraph" key={`description-${index}`}>{paragraph}</p>
                 )) : null}
-                <h2>转录状态</h2>
-                <p className="collection-word-status">{selectedVideo.preparedDocument?.message || selectedVideo.transcript.message}</p>
                 {selectedVideo.preparedDocument ? (
                   <>
                     <h2>今日概览</h2>
                     {getDocumentParagraphs(selectedVideo.preparedDocument.overview).map((paragraph, index) => (
-                      <p className="collection-document-paragraph" key={`overview-${index}`}>{paragraph}</p>
+                      <p className={/^\d{1,3}[.、]\s+/.test(paragraph) ? "" : "collection-document-paragraph"} key={`overview-${index}`}>{paragraph}</p>
                     ))}
                     <h2>分点内容</h2>
                     <div className="collection-word-transcript">
@@ -875,28 +878,35 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
                           {getDocumentParagraphs(item.mainContent).map((paragraph, paragraphIndex) => (
                             <p className="collection-document-paragraph" key={`${index}-content-${paragraphIndex}`}>{paragraph}</p>
                           ))}
+                          {item.sourceUrls.length ? (
+                            <div className="collection-source-links">
+                              {item.sourceUrls.map((url) => (
+                                <a href={url} key={url} rel="noreferrer" target="_blank">{url}</a>
+                              ))}
+                            </div>
+                          ) : null}
                         </section>
                       ))}
                     </div>
-                    <h2>完整转录</h2>
                   </>
                 ) : (
-                  <h2>{getTranscriptHeading(selectedVideo)}</h2>
+                  <>
+                    <h2>转录状态</h2>
+                    <p className="collection-word-status">{selectedVideo.transcript.message}</p>
+                    <h2>{getTranscriptHeading(selectedVideo)}</h2>
+                    <div className="collection-word-transcript">
+                      {selectedTranscriptBlocks.map((block, index) => (
+                        block.kind === "heading" ? (
+                          <h3 key={`${index}-${block.text.slice(0, 16)}`}>{block.text}</h3>
+                        ) : (
+                          <p className={`collection-document-paragraph${block.kind === "item" ? " collection-transcript-item" : ""}`} key={`${index}-${block.text.slice(0, 16)}`}>
+                            {block.text}
+                          </p>
+                        )
+                      ))}
+                    </div>
+                  </>
                 )}
-                <div className="collection-word-transcript">
-                  {(selectedVideo.preparedDocument
-                    ? buildReadableTranscriptBlocks(selectedVideo.preparedDocument.transcript)
-                    : selectedTranscriptBlocks
-                  ).map((block, index) => (
-                    block.kind === "heading" ? (
-                      <h3 key={`${index}-${block.text.slice(0, 16)}`}>{block.text}</h3>
-                    ) : (
-                      <p className={`collection-document-paragraph${block.kind === "item" ? " collection-transcript-item" : ""}`} key={`${index}-${block.text.slice(0, 16)}`}>
-                        {block.text}
-                      </p>
-                    )
-                  ))}
-                </div>
               </>
             ) : (
               <div className="collection-word-empty">暂无文档</div>
