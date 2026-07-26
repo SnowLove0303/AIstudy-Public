@@ -606,6 +606,7 @@ export function KnowledgeDocumentWorkspace({
   const activeSaveRef = React.useRef<Promise<KnowledgeDocumentRecord | null>>(Promise.resolve(null));
   const documentDirtyRef = React.useRef(false);
   const latestSnapshotRef = React.useRef<KnowledgeDocumentSnapshot | null>(null);
+  const currentSnapshotIdRef = React.useRef<string | null>(null);
   const loadSequenceRef = React.useRef(0);
   const documentStatusMapRef = React.useRef<Map<string, KnowledgeDocumentStatus>>(new Map());
   const documentStatusReadyRef = React.useRef(false);
@@ -897,7 +898,11 @@ export function KnowledgeDocumentWorkspace({
           throw new Error("文档数据库服务不可用");
         }
 
-        const document = await window.aistudyKnowledgeDocuments.save(input);
+        const document = await window.aistudyKnowledgeDocuments.save({
+          ...input,
+          expectedSnapshotId: currentSnapshotIdRef.current
+        });
+        currentSnapshotIdRef.current = document.currentSnapshotId;
         try {
           await saveLocalDocument(input);
         } catch {
@@ -1014,6 +1019,7 @@ export function KnowledgeDocumentWorkspace({
       if (!window.aistudyKnowledgeDocuments) {
         setSnapshot(null);
         latestSnapshotRef.current = null;
+        currentSnapshotIdRef.current = null;
         documentDirtyRef.current = false;
         setStorageMode("none");
         setError("文档读取失败，数据库未连接");
@@ -1025,6 +1031,7 @@ export function KnowledgeDocumentWorkspace({
         const document = await window.aistudyKnowledgeDocuments.load(request);
         if (loadSequenceRef.current !== sequence) return;
         const nextSnapshot = document?.snapshot ?? createEmptyKnowledgeDocumentSnapshot();
+        currentSnapshotIdRef.current = document?.currentSnapshotId ?? null;
         if (document) {
           try {
             if (document.snapshot) {
@@ -1066,6 +1073,7 @@ export function KnowledgeDocumentWorkspace({
         if (loadSequenceRef.current !== sequence) return;
         setSnapshot(null);
         latestSnapshotRef.current = null;
+        currentSnapshotIdRef.current = null;
         documentDirtyRef.current = false;
         setStorageMode("none");
         setError(getErrorMessage(error, "文档读取失败，数据库未连接"));

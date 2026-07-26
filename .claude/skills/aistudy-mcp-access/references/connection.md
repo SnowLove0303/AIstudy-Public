@@ -67,14 +67,25 @@ Do not use `Content-Length` framing with this local script. If a custom client h
 For one-off local reads, use the bundled helper:
 
 ```powershell
-node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1" --max-depth 4 --max-nodes 120
+node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1"
 ```
 
-For arbitrary tools:
+Prefer direct flags on Windows instead of shell-escaped `--args-json`:
 
 ```powershell
-node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool read_node_context --args-json "{`"ref`":`"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1`",`"documentMode`":`"text`"}"
+node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool mcp_resolve_target --course-name "Pynes" --node-query "目标节点"
 ```
+
+For multiple calls, keep one server process and MySQL pool alive:
+
+```powershell
+@(
+  '{"tool":"read_node_context","arguments":{"ref":"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1"}}'
+  '{"tool":"read_node_document","arguments":{"ref":"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1","mode":"text"}}'
+) | node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --session
+```
+
+The one-shot form intentionally starts and stops one server and is for diagnostics. Normal MCP clients and `--session` are the high-frequency paths.
 
 ## First Probe
 

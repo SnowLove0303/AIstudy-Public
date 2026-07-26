@@ -67,7 +67,7 @@ Chrome 端口：
 3. 先跑 `mcp_get_started`，让服务返回健康状态、全库概览、安全规则和下一步工具顺序。
 4. 再跑 `read_courses`，确认能看到全库知识库，并取到后续定向操作所需的 courseId。
 5. 再跑 `mcp_resolve_target`，按知识库名、courseId 或节点关键词解析目标。
-6. 再跑 `read_current_mindmap` 或 `search_nodes`。不传 courseId 是全库，传 courseId 是单库。
+6. 再跑 `read_current_mindmap` 或 `search_nodes`。定向调用传完整 `courseId`；只有明确需要跨库时才传 `scope: "all"`。
 7. 最后才考虑编辑工具；编辑前先跑 `mcp_plan_task`，导图编辑必须传 courseId，节点文档编辑必须传 courseId 和 nodeId。
 
 外部 MCP 客户端使用 `scripts/mcp/aistudy-mcp-server.mjs`。复制配置会默认写入 `AISTUDY_MCP_ALLOW_EDIT=0`，因此外部调用默认只读；需要开放编辑时必须显式改成 `1`，并传入明确的 courseId。MCP 不依赖客户端当前选中的知识库。支持 MCP resources/prompts 的客户端还能读取 `aistudy://guide/start`、`aistudy://guide/workflows`、`aistudy://guide/safety` 和 `aistudy://schema/tools`。

@@ -16,6 +16,8 @@
 - `update/`：发布更新记录脚本。
 - `npm-stubs/`：项目本地 npm stub 包。
 
+MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并保持 stdio 会话。单次诊断可用 `mcp/call-aistudy-mcp.mjs`；连续调用应使用 `--session`，以复用同一个 Node 进程和 MySQL 连接池。Windows 下优先使用 `--ref`、`--course-name`、`--node-query`、`--scope`、`--mode` 等直接参数，避免 shell 对 JSON 参数转义造成丢失。
+
 ## 使用边界
 
 - 需要安装依赖时使用 `npm run setup:install`。

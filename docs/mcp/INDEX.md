@@ -22,3 +22,5 @@
 - `electron/mcp/remoteAccess.ts`：HTTP/Tailscale 远程访问、权限和调用监控。
 - `electron/main.ts`：MCP 工具的主进程实现。
 - `scripts/mcp/aistudy-mcp-server.mjs`：外部 stdio MCP server。
+- `scripts/mcp/call-aistudy-mcp.mjs`：本机诊断辅助客户端；`--session` 可复用长期进程和连接池。
+- `scripts/qa/validate-mcp-runtime-safety.mjs`：严格目标、轻量读取、版本冲突保护和会话模式的静态契约验证。

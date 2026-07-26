@@ -1,20 +1,48 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import path from "node:path";
+import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..", "..");
 const serverPath = path.join(__dirname, "aistudy-mcp-server.mjs");
 const DEFAULT_TIMEOUT_MS = 30000;
+const EDIT_TOOLS = new Set([
+  "create_course",
+  "rename_course",
+  "move_course",
+  "delete_course",
+  "create_course_section",
+  "rename_course_section",
+  "move_course_section",
+  "delete_course_section",
+  "append_mindmap_node",
+  "create_mindmap_node",
+  "update_mindmap_node_text",
+  "move_mindmap_node",
+  "delete_mindmap_node",
+  "update_mindmap_node_style",
+  "update_mindmap_layout",
+  "write_node_document",
+  "append_node_document",
+  "format_node_document",
+  "update_node_document_style",
+  "chrome_port_open_page"
+]);
 
 function printUsageAndExit() {
   console.error(`Usage:
   node scripts/mcp/call-aistudy-mcp.mjs --tool read_node_context --args-json "{\\"ref\\":\\"aistudy://node/...\\",\\"documentMode\\":\\"text\\"}"
   node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120
+  node scripts/mcp/call-aistudy-mcp.mjs --session
+
+Session input (one JSON object per line):
+  {"tool":"read_node_context","arguments":{"ref":"aistudy://node/..."}}
 
 Notes:
-  This client talks to scripts/mcp/aistudy-mcp-server.mjs with one JSON-RPC object per line.
+  Standard MCP clients and --session keep one server process and MySQL pool alive across calls.
+  One-shot CLI calls are intended for diagnostics and shell scripts.
   Do not use Content-Length framing with this local stdio server.`);
   process.exit(2);
 }
@@ -31,12 +59,17 @@ function parseArgs(argv) {
   const parsed = {
     tool: "read_node_context",
     arguments: {},
-    timeoutMs: DEFAULT_TIMEOUT_MS
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    session: false
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") printUsageAndExit();
+    if (arg === "--session") {
+      parsed.session = true;
+      continue;
+    }
     if (arg === "--tool") {
       parsed.tool = takeValue(argv, index, arg);
       index += 1;
@@ -58,6 +91,11 @@ function parseArgs(argv) {
       index += 1;
       continue;
     }
+    if (arg === "--course-name") {
+      parsed.arguments.courseName = takeValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
     if (arg === "--mindmap-id") {
       parsed.arguments.mindMapId = takeValue(argv, index, arg);
       index += 1;
@@ -66,6 +104,34 @@ function parseArgs(argv) {
     if (arg === "--node-id") {
       parsed.arguments.nodeId = takeValue(argv, index, arg);
       index += 1;
+      continue;
+    }
+    if (arg === "--node-query") {
+      parsed.arguments.nodeQuery = takeValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--scope") {
+      parsed.arguments.scope = takeValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--mode") {
+      parsed.arguments.mode = takeValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--max-chars") {
+      parsed.arguments.maxChars = Number.parseInt(takeValue(argv, index, arg), 10);
+      index += 1;
+      continue;
+    }
+    if (arg === "--include-descendants") {
+      parsed.arguments.includeDescendants = true;
+      continue;
+    }
+    if (arg === "--no-ancestors") {
+      parsed.arguments.includeAncestors = false;
       continue;
     }
     if (arg === "--document-mode") {
@@ -120,6 +186,10 @@ function createLineJsonRpcClient(timeoutMs) {
   let stdoutBuffer = "";
   let stderrBuffer = "";
   const pending = new Map();
+  let resolveExit;
+  const exited = new Promise((resolve) => {
+    resolveExit = resolve;
+  });
 
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -157,6 +227,7 @@ function createLineJsonRpcClient(timeoutMs) {
       request.reject(error);
     }
     pending.clear();
+    resolveExit({ code, signal });
   });
 
   function request(method, params = {}) {
@@ -175,14 +246,15 @@ function createLineJsonRpcClient(timeoutMs) {
     });
   }
 
-  function close() {
+  function close(force = false) {
     child.stdin.end();
-    if (child.exitCode === null && !child.killed) child.kill();
+    if (force && child.exitCode === null && !child.killed) child.kill();
   }
 
   return {
     request,
     close,
+    exited,
     getStderr: () => stderrBuffer.trim()
   };
 }
@@ -195,6 +267,7 @@ function readToolText(response) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const client = createLineJsonRpcClient(options.timeoutMs);
+  let sessionHadEdit = false;
   try {
     await client.request("initialize", {
       protocolVersion: "2024-11-05",
@@ -202,20 +275,46 @@ async function main() {
       clientInfo: { name: "aistudy-line-jsonrpc-client", version: "1.0.0" }
     });
 
-    const response = await client.request("tools/call", {
-      name: options.tool,
-      arguments: options.arguments
-    });
+    const call = async (tool, argumentsValue) => {
+      const response = await client.request("tools/call", {
+        name: tool,
+        arguments: argumentsValue
+      });
+      if (response.error) {
+        throw new Error(response.error.message || JSON.stringify(response.error));
+      }
+      return response;
+    };
 
-    if (response.error) {
-      throw new Error(response.error.message || JSON.stringify(response.error));
-    }
-
-    const text = readToolText(response);
-    if (text) {
-      console.log(text);
+    if (options.session) {
+      const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+      for await (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        try {
+          const input = JSON.parse(line);
+          const tool = typeof input?.tool === "string" ? input.tool : "";
+          const argumentsValue = input?.arguments && typeof input.arguments === "object" ? input.arguments : {};
+          if (!tool) throw new Error("Session request requires tool.");
+          if (EDIT_TOOLS.has(tool)) sessionHadEdit = true;
+          const response = await call(tool, argumentsValue);
+          const output = response?.result?.structuredContent ?? JSON.parse(readToolText(response) || "null");
+          console.log(JSON.stringify({ ok: true, tool, result: output }));
+        } catch (error) {
+          console.log(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+        }
+      }
     } else {
-      console.log(JSON.stringify(response.result ?? response, null, 2));
+      const response = await call(options.tool, options.arguments);
+      const structured = response?.result?.structuredContent;
+      const text = readToolText(response);
+      if (structured) {
+        console.log(JSON.stringify(structured, null, 2));
+      } else if (text) {
+        console.log(text);
+      } else {
+        console.log(JSON.stringify(response.result ?? response, null, 2));
+      }
     }
   } catch (error) {
     const stderr = client.getStderr();
@@ -223,7 +322,14 @@ async function main() {
     if (stderr) console.error(stderr);
     process.exitCode = 1;
   } finally {
-    client.close();
+    const forceClose = options.session ? !sessionHadEdit : !EDIT_TOOLS.has(options.tool);
+    client.close(forceClose);
+    if (!forceClose) {
+      await Promise.race([
+        client.exited,
+        new Promise((resolve) => setTimeout(resolve, 2000))
+      ]);
+    }
   }
 }
 

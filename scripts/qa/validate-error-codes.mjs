@@ -21,6 +21,12 @@ const cases = [
     expected: "DOCUMENT_NODE_MISSING"
   },
   {
+    name: "Document version conflict",
+    source: "knowledge-documents:save",
+    error: createAppError("DOCUMENT_VERSION_CONFLICT", "Knowledge document changed after it was read."),
+    expected: "DOCUMENT_VERSION_CONFLICT"
+  },
+  {
     name: "Document snapshot too large",
     source: "knowledge-documents:save",
     error: createAppError("DOCUMENT_SNAPSHOT_TOO_LARGE", "Knowledge document snapshot exceeds 2097152 bytes."),

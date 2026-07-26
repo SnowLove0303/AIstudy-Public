@@ -118,7 +118,10 @@ const emptySchema = { type: "object", additionalProperties: false, properties: {
 const courseScopeSchema = {
   type: "object",
   additionalProperties: false,
-  properties: { courseId: { type: "string", maxLength: 120 } }
+  properties: {
+    courseId: { type: "string", maxLength: 120 },
+    scope: { type: "string", enum: ["all"] }
+  }
 };
 const courseNameSchema = {
   type: "object",
@@ -187,6 +190,9 @@ const documentSchema = {
     title: { type: "string", maxLength: 255 },
     text: { type: "string", maxLength: 20000 },
     replaceExisting: { type: "boolean" },
+    expectedSnapshotId: { type: ["string", "null"], maxLength: 120 },
+    mode: { type: "string", enum: ["text", "snapshot", "audit"] },
+    maxChars: { type: "integer", minimum: 200, maximum: 200000 },
     snapshot: { type: "object" },
     fontSize: { type: "integer", minimum: 10, maximum: 72 },
     color: { type: "string", maxLength: 32 },
@@ -227,6 +233,7 @@ const mcpResolveTargetSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    ref: { type: "string", maxLength: 160 },
     courseName: { type: "string", maxLength: 120 },
     courseId: { type: "string", maxLength: 120 },
     nodeQuery: { type: "string", maxLength: 120 },
@@ -348,7 +355,7 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     id: "read_current_mindmap",
     mode: "read",
     title: "读取导图",
-    description: "全库模式返回各知识库导图摘要；指定 courseId 时读取该知识库导图。",
+    description: "指定 courseId 读取该知识库导图；全库摘要必须显式使用 scope=all。",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: courseScopeSchema
   },
@@ -356,13 +363,14 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     id: "search_nodes",
     mode: "read",
     title: "搜索导图节点",
-    description: "默认全库搜索导图节点；指定 courseId 时只搜索目标知识库。",
+    description: "指定 courseId 搜索目标知识库；跨库搜索必须显式使用 scope=all。",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         courseId: { type: "string", maxLength: 120 },
+        scope: { type: "string", enum: ["all"] },
         query: { type: "string", maxLength: 120 }
       }
     }
@@ -603,13 +611,13 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "# AIstudy MCP Workflows",
       "",
       "## 全库读取",
-      "`mcp_get_started` -> `read_courses` -> `read_current_mindmap`。",
+      "`mcp_get_started` -> `read_courses` -> `read_current_mindmap({ scope: \"all\" })`。",
       "",
       "## 指定知识库读取",
       "`read_courses` -> `mcp_resolve_target` -> `read_current_mindmap({ courseId })`。",
       "",
       "## 搜索节点",
-      "`mcp_resolve_target({ courseName, nodeQuery })`。如果范围不明确，再调用 `search_nodes({ query })` 做全库搜索；拿到 nodeId 后优先调用 `read_node_context({ courseId, nodeId })`。",
+      "`mcp_resolve_target({ courseName, nodeQuery })`。跨库搜索必须显式调用 `search_nodes({ scope: \"all\", query })`；拿到 nodeId 后优先调用 `read_node_context({ courseId, nodeId })`。",
       "",
       "## 编辑导图",
       "`mcp_plan_task({ intent, allowEdit: true })` -> `mcp_resolve_target` -> 具体编辑工具。",
@@ -757,7 +765,12 @@ function createMcpTaskPlan(args: Record<string, unknown>) {
   } else if (searchLike) {
     steps.push({ order: order++, tool: "search_nodes", arguments: { courseId: courseId || undefined, query: nodeQuery || targetName || "关键词" }, purpose: "按关键词搜索节点。" });
   } else {
-    steps.push({ order: order++, tool: "read_current_mindmap", arguments: { courseId: courseId || undefined }, purpose: "读取导图摘要或指定导图；已知 nodeId 时优先 read_node_context。" });
+    steps.push({
+      order: order++,
+      tool: "read_current_mindmap",
+      arguments: courseId ? { courseId } : { scope: "all" },
+      purpose: "读取导图摘要或指定导图；已知 nodeId 时优先 read_node_context。"
+    });
   }
   if (editLike) {
     steps.push({
@@ -937,11 +950,44 @@ export function createMcpController(dependencies: McpControllerDependencies) {
   }
 
   async function resolveMcpTarget(args: Record<string, unknown>) {
+    const ref = typeof args.ref === "string" ? args.ref.trim() : "";
+    if (ref) {
+      const context = await dependencies.runAdvancedTool("read_node_context", {
+        ref,
+        includeAncestors: false,
+        includeDescendants: false,
+        documentMode: "none"
+      }) as Record<string, unknown>;
+      const course = context.course ?? null;
+      const mindMap = context.mindMap && typeof context.mindMap === "object" ? context.mindMap as Record<string, unknown> : {};
+      const target = context.target && typeof context.target === "object" ? context.target as Record<string, unknown> : {};
+      return {
+        query: { ref },
+        course,
+        courseCandidates: course ? [course] : [],
+        nodeSearch: null,
+        documents: null,
+        confidence: "exact",
+        resolved: {
+          courseId: getRecordText(course, "id"),
+          mindMapId: getRecordText(mindMap, "mapId"),
+          nodeId: getRecordText(target, "nodeId"),
+          ref
+        },
+        nextTools: [{ tool: "read_node_context", arguments: { ref } }]
+      };
+    }
     const store = await dependencies.readCourseStore();
     const courses = Array.isArray(store.courses) ? store.courses : [];
     const courseId = typeof args.courseId === "string" ? args.courseId.trim() : "";
     const courseName = typeof args.courseName === "string" ? args.courseName.trim() : "";
     const nodeQuery = typeof args.nodeQuery === "string" ? args.nodeQuery.trim() : "";
+    if (!courseId && !courseName && !nodeQuery) {
+      throw dependencies.createAppError("APP_INVALID_ARGUMENT", "mcp_resolve_target requires ref, courseId, courseName, or nodeQuery.");
+    }
+    if (courseId && !courses.some((course) => getRecordText(course, "id") === courseId)) {
+      throw dependencies.createAppError("APP_INVALID_ARGUMENT", "MCP course id is invalid.");
+    }
     const matchedCourses = courses
       .map((course) => {
         const id = getRecordText(course, "id");
@@ -954,10 +1000,11 @@ export function createMcpController(dependencies: McpControllerDependencies) {
         if (courseName && includesNormalized(description, courseName)) score += 15;
         return { course, id, name, score };
       })
-      .filter((item) => item.score > 0 || (!courseId && !courseName))
+      .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, courseId || courseName ? 8 : 20);
-    const primaryCourse = matchedCourses[0]?.course ?? null;
+      .slice(0, 8);
+    const highConfidenceCourses = matchedCourses.filter((item) => item.score >= 80);
+    const primaryCourse = highConfidenceCourses.length === 1 ? highConfidenceCourses[0].course : null;
     const primaryCourseId = getRecordText(primaryCourse, "id");
     const nodes = nodeQuery
       ? await dependencies.searchCurrentMindMapNodes(nodeQuery, primaryCourseId || undefined).catch((error) => ({
@@ -978,10 +1025,13 @@ export function createMcpController(dependencies: McpControllerDependencies) {
       courseCandidates: matchedCourses.map((item) => item.course),
       nodeSearch: nodes,
       documents,
-      confidence: primaryCourse ? (matchedCourses[0].score >= 80 ? "high" : "medium") : "low",
+      confidence: primaryCourse ? "high" : "unresolved",
       nextTools: [
         primaryCourseId ? { tool: "read_current_mindmap", arguments: { courseId: primaryCourseId } } : { tool: "read_courses", arguments: {} },
-        nodeQuery ? { tool: "search_nodes", arguments: { courseId: primaryCourseId || undefined, query: nodeQuery } } : null,
+        nodeQuery ? {
+          tool: "search_nodes",
+          arguments: primaryCourseId ? { courseId: primaryCourseId, query: nodeQuery } : { scope: "all", query: nodeQuery }
+        } : null,
         nodeQuery ? { tool: "read_node_context", arguments: { courseId: primaryCourseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" } } : null
       ].filter(Boolean)
     };
@@ -1031,6 +1081,9 @@ export function createMcpController(dependencies: McpControllerDependencies) {
         data = toMcpCourseStore(store);
         summary = `读取 ${store.courses.length} 个知识库、${store.sections.length} 个分区`;
       } else if (tool.id === "read_current_mindmap") {
+        if (!candidate.courseId && candidate.scope !== "all") {
+          throw dependencies.createAppError("APP_INVALID_ARGUMENT", "read_current_mindmap requires courseId or explicit scope='all'.");
+        }
         data = await dependencies.readCurrentMindMapSummary(candidate.courseId);
         const nodeCount = typeof data === "object" && data && "nodeCount" in data ? Number((data as { nodeCount?: unknown }).nodeCount) || 0 : 0;
         const mapCount = typeof data === "object" && data && "mindMaps" in data && Array.isArray((data as { mindMaps?: unknown }).mindMaps)
@@ -1038,6 +1091,12 @@ export function createMcpController(dependencies: McpControllerDependencies) {
           : 0;
         summary = mapCount > 0 ? `读取全库导图：${mapCount} 张` : nodeCount > 0 ? `读取目标导图：${nodeCount} 个节点` : "没有可读取的导图";
       } else if (tool.id === "search_nodes") {
+        if (!candidate.courseId && candidate.scope !== "all") {
+          throw dependencies.createAppError("APP_INVALID_ARGUMENT", "search_nodes requires courseId or explicit scope='all'.");
+        }
+        if (typeof candidate.query !== "string" || !candidate.query.trim()) {
+          throw dependencies.createAppError("APP_INVALID_ARGUMENT", "search_nodes requires a non-empty query.");
+        }
         data = await dependencies.searchCurrentMindMapNodes(candidate.query, candidate.courseId);
         const nodes = typeof data === "object" && data && "nodes" in data ? (data as { nodes?: unknown }).nodes : [];
         summary = `搜索完成：${Array.isArray(nodes) ? nodes.length : 0} 条`;
@@ -1213,6 +1272,7 @@ export function createMcpController(dependencies: McpControllerDependencies) {
         }
         if (tool.mode === "edit") mcpEditEnabled = true;
         const response = await runTool(createToolCallInput(name, params.arguments));
+        const data = response.result.data ?? response.result.summary;
         return {
           jsonrpc: "2.0",
           id: request.id ?? null,
@@ -1220,9 +1280,10 @@ export function createMcpController(dependencies: McpControllerDependencies) {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(response.result.data ?? response.result.summary, null, 2)
+                text: JSON.stringify(data)
               }
             ],
+            structuredContent: data,
             isError: !response.result.ok
           }
         };

@@ -677,7 +677,8 @@ export function InformationCollectionPanel({ courses, activeCourseId }: Informat
         mindMapId: targetMindMap.mapId,
         nodeId: targetNodeId,
         title: selectedVideo.title,
-        snapshot: documentSnapshot
+        snapshot: documentSnapshot,
+        expectedSnapshotId: existing?.currentSnapshotId ?? null
       });
       setMessage("已写入所选分支文档。");
     } catch (saveError) {

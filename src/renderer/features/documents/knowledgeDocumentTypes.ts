@@ -20,6 +20,7 @@ export type KnowledgeDocumentRecord = {
   mindMapId: string;
   nodeId: string;
   documentId: string;
+  currentSnapshotId: string | null;
   title: string;
   snapshot: KnowledgeDocumentSnapshot;
   updatedAt: string | null;
@@ -44,6 +45,7 @@ export type KnowledgeDocumentSaveInput = {
   nodeId: string;
   title: string;
   snapshot: KnowledgeDocumentSnapshot;
+  expectedSnapshotId?: string | null;
 };
 
 export type KnowledgeDocumentCommand =

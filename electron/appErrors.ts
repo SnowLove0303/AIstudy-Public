@@ -203,6 +203,14 @@ export const APP_ERROR_DEFINITIONS = {
     action: "阻止写入孤儿文档，要求先落库导图节点投影。",
     retryable: true
   },
+  DOCUMENT_VERSION_CONFLICT: {
+    code: "DOCUMENT_VERSION_CONFLICT",
+    domain: "document",
+    userMessage: "文档已在其他位置更新，请重新打开后再保存。",
+    reason: "保存请求基于旧的文档快照，继续写入会覆盖更新内容。",
+    action: "拒绝旧版本写入，重新读取 currentSnapshotId 后由用户确认合并或重试。",
+    retryable: true
+  },
   DOCUMENT_SNAPSHOT_INVALID: {
     code: "DOCUMENT_SNAPSHOT_INVALID",
     domain: "document",

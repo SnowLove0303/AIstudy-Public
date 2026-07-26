@@ -3,10 +3,10 @@
 ## Read Full Library
 
 ```text
-mcp_get_started -> read_courses -> read_current_mindmap
+mcp_get_started -> read_courses -> read_current_mindmap({ scope: "all" })
 ```
 
-Without `courseId`, `read_current_mindmap` returns all knowledge-base map summaries.
+Cross-library reads are never implicit. Use `scope: "all"` only when the whole library is the intended target.
 
 ## Read A Specific Knowledge Base
 
@@ -21,16 +21,16 @@ Never guess `courseId` from a display name.
 For local stdio calls against `scripts/mcp/aistudy-mcp-server.mjs`, use line-delimited JSON-RPC, not `Content-Length` framing. The maintained helper is:
 
 ```text
-node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120
+node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..."
 ```
 
 If AIstudy copied a compact node ref, skip locator files and call:
 
 ```text
-read_node_context({ ref, documentMode: "text", maxDepth: 4, maxNodes: 120 })
+read_node_context({ ref })
 ```
 
-Use `read_node_document({ ref })` only when the full editor snapshot is required.
+The default context read returns ancestors, the target, document metadata, and no descendant subtree. Request `includeDescendants: true` and bounded limits only when needed. Request `documentMode: "text"` only when body text is needed.
 
 ```text
 mcp_resolve_target({ courseName, nodeQuery })
@@ -40,9 +40,9 @@ mcp_resolve_target({ courseName, nodeQuery })
 
 If multiple nodes match, present candidates or ask the user to choose.
 
-Use `read_node_context` as the default node-level read. It returns the target node, root-to-parent ancestors, a bounded child subtree, and linked documents in one structured payload. Use `read_node_document` only when you need the full editor snapshot for one specific node document.
+Use `read_node_context` as the default node-level read. Use `read_node_document({ ..., mode: "text" })` for one cleaned text copy, `mode: "snapshot"` for editor JSON, and `mode: "audit"` only for integrity diagnostics.
 
-For `read_node_document`, use `text` or `textClean` as the readable document body. `document.snapshot` is the editor JSON payload and can contain style or structure metadata such as list types, colors, and separators.
+Explicit IDs must be full IDs. Short prefixes are accepted only in compact refs and must be unique.
 
 ## Edit A Mind Map
 
@@ -60,12 +60,13 @@ Use exact `courseId`; use exact `nodeId` for node-level edits.
 
 ```text
 mcp_resolve_target({ courseName, nodeQuery })
--> read_node_document({ courseId, nodeId })
+-> read_node_document({ courseId, nodeId, mode: "snapshot" })
 -> append_node_document / format_node_document / update_node_document_style / write_node_document
--> read_node_document({ courseId, nodeId })
+-> read_node_document({ courseId, nodeId, mode: "text" })
 ```
 
 Use `write_node_document` for replacement only when the user explicitly asks for whole-document overwrite and `replaceExisting: true` is passed.
+Pass the last read `currentSnapshotId` as `expectedSnapshotId`. Stale writes fail instead of overwriting concurrent changes. Write tools return lightweight metadata; re-read only when the caller actually needs the new body.
 
 For `write_node_document` and `append_node_document` text, use structured plain text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line, but do not add extra blank lines merely for visual spacing.
 

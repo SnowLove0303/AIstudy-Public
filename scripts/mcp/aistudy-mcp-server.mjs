@@ -18,6 +18,8 @@ const MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY = "aistudySummaryAnchorNodeId";
 const MIND_MAP_SUMMARY_SNAPSHOT_KEY = "aistudySummarySnapshot";
 const DOCUMENT_EDITOR = "aistudy-word";
 const DOCUMENT_EDITOR_VERSION = "mcp-text";
+const DOCUMENT_READ_DEFAULT_MAX_CHARS = 12000;
+const SNAPSHOT_CACHE_MAX_ENTRIES = 64;
 const PUBLIC_MYSQL_DATABASE = "aistudy_public";
 const PUBLIC_MYSQL_TABLES = {
   courses: "course_management_courses",
@@ -50,6 +52,48 @@ const chromePortDefinitions = [
   { id: "xiaohongshu", name: "小红书", port: 9235, loginUrl: "https://www.xiaohongshu.com/explore", hostKeyword: "xiaohongshu.com" }
 ];
 
+const documentSnapshotCache = new Map();
+const mindMapSnapshotCache = new Map();
+let auditWriteQueue = Promise.resolve();
+
+function readCachedSnapshot(cache, snapshotId) {
+  const cached = cache.get(snapshotId);
+  if (!cached) return null;
+  cache.delete(snapshotId);
+  cache.set(snapshotId, cached);
+  return cached;
+}
+
+function getCachedSnapshot(cache, snapshotId, payloadJson, normalize) {
+  const cached = readCachedSnapshot(cache, snapshotId);
+  if (cached) {
+    return cached;
+  }
+  const snapshot = normalize(JSON.parse(payloadJson));
+  cache.set(snapshotId, snapshot);
+  if (cache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
+    cache.delete(cache.keys().next().value);
+  }
+  return snapshot;
+}
+
+function putCachedSnapshot(cache, snapshotId, snapshot) {
+  cache.delete(snapshotId);
+  cache.set(snapshotId, snapshot);
+  while (cache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
+    cache.delete(cache.keys().next().value);
+  }
+}
+
+function scheduleMcpDataChangeEvent(tool, args, data) {
+  if (!getMcpDataChangeKind(tool)) return;
+  auditWriteQueue = auditWriteQueue
+    .then(() => writeMcpDataChangeEvent(tool, args, data))
+    .catch((error) => {
+      process.stderr.write(`[AIstudy MCP audit] ${error instanceof Error ? error.message : String(error)}\n`);
+    });
+}
+
 const toolDefinitions = [
   {
     name: "mcp_get_started",
@@ -78,12 +122,13 @@ const toolDefinitions = [
   {
     name: "mcp_resolve_target",
     mode: "read",
-    description: "Resolve a course and optional node candidates from courseName, courseId, or nodeQuery. Use this before scoped reads or edits.",
+    description: "Resolve a compact node ref, course, and optional node candidates. At least one target argument is required; ambiguous targets are never guessed.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
+        ref: { type: "string", maxLength: 160 },
         courseName: { type: "string", maxLength: 120 },
         courseId: { type: "string", maxLength: 120 },
         nodeQuery: { type: "string", maxLength: 120 },
@@ -157,24 +202,28 @@ const toolDefinitions = [
   {
     name: "read_current_mindmap",
     mode: "read",
-    description: "Read mind maps. Without courseId it returns all knowledge-base map summaries; with courseId it returns that map.",
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: { courseId: { type: "string", maxLength: 120 } }
-    }
-  },
-  {
-    name: "search_nodes",
-    mode: "read",
-    description: "Search mind-map nodes. Without courseId it searches all knowledge bases; with courseId it searches that map.",
+    description: "Read one knowledge-base mind map. Use scope='all' explicitly for all knowledge-base summaries.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         courseId: { type: "string", maxLength: 120 },
+        scope: { type: "string", enum: ["all"] }
+      }
+    }
+  },
+  {
+    name: "search_nodes",
+    mode: "read",
+    description: "Search mind-map nodes in one knowledge base. Use scope='all' explicitly for a cross-library search.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        courseId: { type: "string", maxLength: 120 },
+        scope: { type: "string", enum: ["all"] },
         query: { type: "string", maxLength: 120 }
       }
     }
@@ -238,16 +287,16 @@ const toolDefinitions = [
   {
     name: "list_node_documents",
     mode: "read",
-    description: "List saved node documents. Without courseId it lists across all knowledge bases.",
+    description: "List saved node documents in one knowledge base. Use scope='all' explicitly for all knowledge bases.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, properties: { courseId: { type: "string", maxLength: 120 } } }
+    inputSchema: { type: "object", additionalProperties: false, properties: { courseId: { type: "string", maxLength: 120 }, scope: { type: "string", enum: ["all"] } } }
   },
   {
     name: "read_node_document",
     mode: "read",
-    description: "Read a node document by compact ref or by courseId and nodeId. mindMapId is optional and defaults to the latest map in the course.",
+    description: "Read a node document by compact ref or exact ids. Default mode=text returns one cleaned text copy; mode=snapshot returns editor JSON; mode=audit returns integrity diagnostics.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, properties: { ref: { type: "string", maxLength: 160 }, courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 } } }
+    inputSchema: { type: "object", additionalProperties: false, properties: { ref: { type: "string", maxLength: 160 }, courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, mode: { type: "string", enum: ["text", "snapshot", "audit"] }, maxChars: { type: "integer", minimum: 200, maximum: 200000 } } }
   },
   {
     name: "read_node_context",
@@ -263,9 +312,9 @@ const toolDefinitions = [
         mindMapId: { type: "string", maxLength: 120 },
         nodeId: { type: "string", maxLength: 120 },
         includeAncestors: { type: "boolean", description: "Default true. Include root-to-parent context." },
-        includeDescendants: { type: "boolean", description: "Default true. Include a nested subtree rooted at nodeId." },
-        includeDocuments: { type: "boolean", description: "Default true. Attach current node documents for returned nodes." },
-        documentMode: { type: "string", enum: ["none", "summary", "text"], description: "Default text. summary omits body text; text returns cleaned text with truncation." },
+        includeDescendants: { type: "boolean", description: "Default false. Include a nested subtree rooted at nodeId only when requested." },
+        includeDocuments: { type: "boolean", description: "Default true. Attach current node document metadata for returned nodes." },
+        documentMode: { type: "string", enum: ["none", "summary", "text"], description: "Default summary. text returns one cleaned text copy with truncation." },
         maxDepth: { type: "integer", minimum: 0, maximum: 32, description: "Default 4. Descendant depth relative to target." },
         maxNodes: { type: "integer", minimum: 1, maximum: 500, description: "Default 120. Maximum returned descendant nodes." },
         maxDocumentChars: { type: "integer", minimum: 200, maximum: 20000, description: "Default 4000. Maximum cleaned text chars per document." }
@@ -277,28 +326,28 @@ const toolDefinitions = [
     mode: "edit",
     description: "Create a node document from clean plain text or Markdown headings. If the node already has content, this refuses to overwrite unless replaceExisting=true is explicitly passed. Do not use this for formatting-only changes. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, text: { type: "string", maxLength: 20000 }, replaceExisting: { type: "boolean", description: "Required as true to overwrite an existing non-empty document." }, snapshot: { type: "object", description: "Advanced: only pass a snapshot previously returned by read_node_document. Arbitrary handcrafted editor fragments are normalized." } } }
+    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, text: { type: "string", maxLength: 20000 }, replaceExisting: { type: "boolean", description: "Required as true to overwrite an existing non-empty document." }, expectedSnapshotId: { type: ["string", "null"], maxLength: 120, description: "Required for replacing existing content. Use currentSnapshotId returned by the latest read." }, snapshot: { type: "object", description: "Advanced: only pass a snapshot previously returned by read_node_document mode=snapshot. Arbitrary handcrafted editor fragments are normalized." } } }
   },
   {
     name: "append_node_document",
     mode: "edit",
     description: "Append clean plain text or Markdown headings to a node document using the standard AIstudy document template. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId", "text"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, text: { type: "string", maxLength: 20000 } } }
+    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId", "text"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, text: { type: "string", maxLength: 20000 }, expectedSnapshotId: { type: ["string", "null"], maxLength: 120 } } }
   },
   {
     name: "format_node_document",
     mode: "edit",
     description: "Style-only format an existing node document while preserving every editor element value exactly. It never rewrites text, trims whitespace, deletes blank elements, inserts blank lines, or indents paragraphs. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 } } }
+    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId", "expectedSnapshotId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, expectedSnapshotId: { type: "string", maxLength: 120 } } }
   },
   {
     name: "update_node_document_style",
     mode: "edit",
     description: "Apply simple full-document text style only. This tool must not restructure text, add blank lines, split paragraphs, or replace content. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, fontSize: { type: "integer", minimum: 10, maximum: 72 }, color: { type: "string", maxLength: 32 }, bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" } } }
+    inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId", "expectedSnapshotId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, expectedSnapshotId: { type: "string", maxLength: 120 }, fontSize: { type: "integer", minimum: 10, maximum: 72 }, color: { type: "string", maxLength: 32 }, bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" } } }
   },
   {
     name: "health_check",
@@ -410,13 +459,13 @@ function createMcpResourceText(uri) {
       "# AIstudy MCP Workflows",
       "",
       "## 全库读取",
-      "`mcp_get_started` -> `read_courses` -> `read_current_mindmap`。",
+      "`mcp_get_started` -> `read_courses` -> `read_current_mindmap({ scope: \"all\" })`。",
       "",
       "## 指定知识库读取",
       "`read_courses` -> `mcp_resolve_target` -> `read_current_mindmap({ courseId })`。",
       "",
       "## 搜索节点",
-      "`mcp_resolve_target({ courseName, nodeQuery })`。如果范围不明确，再调用 `search_nodes({ query })` 做全库搜索；拿到 nodeId 后优先调用 `read_node_context({ courseId, nodeId })`。",
+      "`mcp_resolve_target({ courseName, nodeQuery })`。跨库搜索必须显式调用 `search_nodes({ scope: \"all\", query })`；拿到 nodeId 后优先调用 `read_node_context({ courseId, nodeId })`。",
       "",
       "## 编辑导图",
       "`mcp_plan_task({ intent, allowEdit: true })` -> `mcp_resolve_target` -> 具体编辑工具。",
@@ -521,7 +570,12 @@ function createMcpTaskPlan(args = {}) {
   } else if (searchLike) {
     steps.push({ order: order++, tool: "search_nodes", arguments: { courseId: courseId || undefined, query: nodeQuery || targetName || "关键词" }, purpose: "按关键词搜索节点。" });
   } else {
-    steps.push({ order: order++, tool: "read_current_mindmap", arguments: { courseId: courseId || undefined }, purpose: "读取导图摘要或指定导图；已知 nodeId 时优先 read_node_context。" });
+    steps.push({
+      order: order++,
+      tool: "read_current_mindmap",
+      arguments: courseId ? { courseId } : { scope: "all" },
+      purpose: "读取导图摘要或指定导图；已知 nodeId 时优先 read_node_context。"
+    });
   }
   if (editLike) {
     steps.push({
@@ -1010,6 +1064,17 @@ async function resolveCourse(runtime, args = {}, required = false) {
     throw new Error("MCP requires an explicit knowledge base.");
   }
   return { store, course };
+}
+
+function assertExplicitCourseOrAllScope(args, operation) {
+  const courseId = normalizeText(args?.courseId, "");
+  const scope = normalizeText(args?.scope, "");
+  if (!courseId && scope !== "all") {
+    throw new Error(`${operation} requires courseId. Pass scope="all" only when an all-library operation is explicitly intended.`);
+  }
+  if (courseId && scope) {
+    throw new Error(`${operation} accepts either courseId or scope="all", not both.`);
+  }
 }
 
 function normalizeMcpRefPart(value, label) {
@@ -2924,14 +2989,14 @@ async function resolveDocumentTarget(runtime, args) {
   return { course, mindMapId, nodeId };
 }
 
-async function findDocument(runtime, target) {
-  const [rows] = await runtime.pool.execute(
+async function findDocument(runtime, target, connection = runtime.pool, forUpdate = false, includeDeleted = false) {
+  const [rows] = await connection.execute(
     `SELECT id, course_id AS courseId, mind_map_id AS mindMapId, node_id AS nodeId, title,
             current_snapshot_id AS currentSnapshotId, current_byte_size AS currentByteSize,
             has_content AS hasContent, updated_at AS updatedAt
      FROM ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")}
-     WHERE course_id = ? AND mind_map_id = ? AND node_id = ? AND deleted_at IS NULL
-     LIMIT 1`,
+     WHERE course_id = ? AND mind_map_id = ? AND node_id = ?${includeDeleted ? "" : " AND deleted_at IS NULL"}
+     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     [target.course.id, target.mindMapId, target.nodeId]
   );
   return rows[0] || null;
@@ -2940,65 +3005,80 @@ async function findDocument(runtime, target) {
 async function readNodeDocument(runtime, args) {
   const target = await resolveDocumentTarget(runtime, args);
   const doc = await findDocument(runtime, target);
-  if (!doc?.currentSnapshotId) {
-    return {
-      course: target.course,
-      mindMapId: target.mindMapId,
-      nodeId: target.nodeId,
-      document: null,
-      text: "",
-      textClean: "",
-      textRaw: "",
-      textNormalized: "",
-      textNormalizedClean: "",
-      rawTextLength: 0,
-      rawTextCleanLength: 0,
-      normalizedTextLength: 0,
-      lostTextLength: 0,
-      textNoiseRemovedLength: 0,
-      textNoiseWarning: null,
-      warning: null,
-      readingGuidance: "Use text/textClean for human-readable content. document.snapshot is editor JSON for advanced tooling."
-    };
-  }
-  const [rows] = await runtime.pool.execute(
-    `SELECT payload_json AS payloadJson, byte_size AS byteSize
-     FROM ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")}
-     WHERE id = ? AND document_id = ? LIMIT 1`,
-    [doc.currentSnapshotId, doc.id]
-  );
-  const rawSnapshot = rows[0]?.payloadJson ? JSON.parse(rows[0].payloadJson) : null;
-  const rawText = extractDocumentText(rawSnapshot?.content || "");
-  const snapshot = rawSnapshot ? normalizeDocumentSnapshot(rawSnapshot) : null;
-  const normalizedText = extractDocumentText(snapshot?.content || "");
-  const textClean = cleanExtractedDocumentText(rawText);
-  const textNormalizedClean = cleanExtractedDocumentText(normalizedText);
-  const textIntegrity = createDocumentTextIntegrity(rawText, normalizedText);
-  const textNoise = createDocumentTextNoiseStats(rawText, textClean);
-  const document = snapshot ? {
-    courseId: target.course.id,
-    mindMapId: target.mindMapId,
-    nodeId: target.nodeId,
-    documentId: doc.id,
-    title: doc.title,
-    snapshot,
-    updatedAt: toIsoTimestamp(doc.updatedAt),
-    byteSize: Number(doc.currentByteSize) || 0,
-    hasContent: Boolean(Number(doc.hasContent))
-  } : null;
-  return {
+  const mode = ["text", "snapshot", "audit"].includes(args.mode) ? args.mode : "text";
+  const maxChars = normalizeContextInteger(args.maxChars, DOCUMENT_READ_DEFAULT_MAX_CHARS, 200, 200000);
+  const base = {
     course: target.course,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
-    document,
-    text: textClean,
-    textClean,
-    textRaw: rawText,
-    textNormalized: normalizedText,
-    textNormalizedClean,
-    ...textIntegrity,
-    ...textNoise,
-    readingGuidance: "Use text/textClean for human-readable content. document.snapshot is editor JSON for advanced tooling."
+    mode,
+    document: doc ? {
+      courseId: target.course.id,
+      mindMapId: target.mindMapId,
+      nodeId: target.nodeId,
+      documentId: doc.id,
+      title: doc.title,
+      currentSnapshotId: doc.currentSnapshotId || null,
+      updatedAt: toIsoTimestamp(doc.updatedAt),
+      byteSize: Number(doc.currentByteSize) || 0,
+      hasContent: Boolean(Number(doc.hasContent))
+    } : null
+  };
+  if (!doc?.currentSnapshotId) {
+    return {
+      ...base,
+      text: "",
+      textLength: 0,
+      textTruncated: false
+    };
+  }
+  let snapshot = mode === "audit" ? null : readCachedSnapshot(documentSnapshotCache, doc.currentSnapshotId);
+  let rawSnapshot = null;
+  let payloadHash = null;
+  if (!snapshot || mode === "audit") {
+    const [rows] = await runtime.pool.execute(
+      `SELECT payload_json AS payloadJson, payload_hash AS payloadHash
+       FROM ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")}
+       WHERE id = ? AND document_id = ? LIMIT 1`,
+      [doc.currentSnapshotId, doc.id]
+    );
+    payloadHash = rows[0]?.payloadHash || null;
+    rawSnapshot = rows[0]?.payloadJson ? JSON.parse(rows[0].payloadJson) : null;
+    snapshot = rows[0]?.payloadJson
+      ? getCachedSnapshot(documentSnapshotCache, doc.currentSnapshotId, rows[0].payloadJson, normalizeDocumentSnapshot)
+      : null;
+  }
+  if (!rawSnapshot) rawSnapshot = snapshot;
+  const rawText = extractDocumentText(rawSnapshot?.content || "");
+  const normalizedText = extractDocumentText(snapshot?.content || "");
+  const textClean = cleanExtractedDocumentText(rawText);
+  const text = textClean.slice(0, maxChars);
+  if (mode === "snapshot") {
+    return {
+      ...base,
+      document: base.document ? { ...base.document, snapshot } : null,
+      contentHash: payloadHash || (snapshot ? hashSnapshot(snapshot) : null)
+    };
+  }
+  if (mode === "audit") {
+    const textNormalizedClean = cleanExtractedDocumentText(normalizedText);
+    return {
+      ...base,
+      text: textClean,
+      textRaw: rawText,
+      textNormalized,
+      textNormalizedClean,
+      ...createDocumentTextIntegrity(rawText, normalizedText),
+      ...createDocumentTextNoiseStats(rawText, textClean),
+      contentHash: payloadHash || (snapshot ? hashSnapshot(snapshot) : null)
+    };
+  }
+  return {
+    ...base,
+    text,
+    textLength: textClean.length,
+    textTruncated: text.length < textClean.length,
+    contentHash: payloadHash || (snapshot ? hashSnapshot(snapshot) : null)
   };
 }
 
@@ -3010,8 +3090,8 @@ function normalizeContextInteger(value, fallback, min, max) {
 
 function normalizeContextDocumentMode(args) {
   if (args.includeDocuments === false) return "none";
-  const mode = normalizeText(args.documentMode, "text");
-  return ["none", "summary", "text"].includes(mode) ? mode : "text";
+  const mode = normalizeText(args.documentMode, "summary");
+  return ["none", "summary", "text"].includes(mode) ? mode : "summary";
 }
 
 function buildContextNodeSummary(row, childCount, document, snapshotNode = null) {
@@ -3049,6 +3129,7 @@ async function readContextDocuments(runtime, courseId, mindMapId, nodeIds, docum
     : "";
   const [rows] = await runtime.pool.execute(
     `SELECT d.id, d.course_id AS courseId, d.mind_map_id AS mindMapId, d.node_id AS nodeId, d.title,
+            d.current_snapshot_id AS currentSnapshotId,
             d.current_byte_size AS byteSize, d.has_content AS hasContent, d.updated_at AS updatedAt
             ${documentMode === "text" ? ", s.payload_json AS payloadJson" : ""}
      FROM ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")} d
@@ -3063,7 +3144,8 @@ async function readContextDocuments(runtime, courseId, mindMapId, nodeIds, docum
     let textLength = 0;
     if (documentMode === "text" && row.payloadJson) {
       try {
-        const snapshot = normalizeDocumentSnapshot(JSON.parse(row.payloadJson));
+        const snapshotId = row.currentSnapshotId || `${row.id}:${row.updatedAt || ""}`;
+        const snapshot = getCachedSnapshot(documentSnapshotCache, snapshotId, row.payloadJson, normalizeDocumentSnapshot);
         text = cleanExtractedDocumentText(extractDocumentText(snapshot?.content || ""));
         textLength = text.length;
         if (text.length > maxDocumentChars) {
@@ -3099,17 +3181,25 @@ async function readNodeContext(runtime, args) {
   let snapshotNodeById = new Map();
   if (map.currentSnapshotId) {
     try {
-      const [snapshotRows] = await runtime.pool.execute(
-        `SELECT payload_json AS payloadJson
-         FROM ${escapeIdentifier(runtime.config.mindMapSnapshotTable, "snapshot table")}
-         WHERE id = ? AND mind_map_id = ?
-         LIMIT 1`,
-        [map.currentSnapshotId, map.id]
-      );
-      if (snapshotRows[0]?.payloadJson) {
-        const currentSnapshot = normalizeMindMapSnapshot(JSON.parse(snapshotRows[0].payloadJson));
-        snapshotNodeById = indexMindMapSnapshotNodes(currentSnapshot.root);
+      let currentSnapshot = readCachedSnapshot(mindMapSnapshotCache, map.currentSnapshotId);
+      if (!currentSnapshot) {
+        const [snapshotRows] = await runtime.pool.execute(
+          `SELECT payload_json AS payloadJson
+           FROM ${escapeIdentifier(runtime.config.mindMapSnapshotTable, "snapshot table")}
+           WHERE id = ? AND mind_map_id = ?
+           LIMIT 1`,
+          [map.currentSnapshotId, map.id]
+        );
+        if (snapshotRows[0]?.payloadJson) {
+          currentSnapshot = getCachedSnapshot(
+            mindMapSnapshotCache,
+            map.currentSnapshotId,
+            snapshotRows[0].payloadJson,
+            normalizeMindMapSnapshot
+          );
+        }
       }
+      if (currentSnapshot) snapshotNodeById = indexMindMapSnapshotNodes(currentSnapshot.root);
     } catch {
       snapshotNodeById = new Map();
     }
@@ -3136,7 +3226,7 @@ async function readNodeContext(runtime, args) {
   }
 
   const includeAncestors = args.includeAncestors !== false;
-  const includeDescendants = args.includeDescendants !== false;
+  const includeDescendants = args.includeDescendants === true;
   const maxDepth = normalizeContextInteger(args.maxDepth, 4, 0, 32);
   const maxNodes = normalizeContextInteger(args.maxNodes, 120, 1, 500);
   const maxDocumentChars = normalizeContextInteger(args.maxDocumentChars, 4000, 200, 20000);
@@ -3244,7 +3334,7 @@ async function nextDocumentSequence(connection, runtime, documentId) {
   return Number(rows[0]?.nextSequence) || 1;
 }
 
-async function writeNodeDocumentSnapshot(runtime, target, title, snapshot) {
+async function writeNodeDocumentSnapshot(runtime, target, title, snapshot, expectedSnapshotId) {
   const normalizedSnapshot = normalizeDocumentSnapshot(snapshot);
   const connection = await runtime.pool.getConnection();
   const now = new Date();
@@ -3257,27 +3347,48 @@ async function writeNodeDocumentSnapshot(runtime, target, title, snapshot) {
       [target.course.id, target.mindMapId, target.nodeId]
     );
     if (!nodeRows[0]) throw new Error("Mind map node is missing.");
-    const existing = await findDocument(runtime, target);
+    const existing = await findDocument(runtime, target, connection, true, true);
+    const currentSnapshotId = existing?.currentSnapshotId || null;
+    if (expectedSnapshotId !== undefined && expectedSnapshotId !== currentSnapshotId) {
+      throw new Error(`DOCUMENT_VERSION_CONFLICT: expected snapshot ${expectedSnapshotId || "<none>"} but current snapshot is ${currentSnapshotId || "<none>"}. Read the latest document before retrying.`);
+    }
     const documentId = existing?.id || createEntityId("kdoc");
     const payloadJson = createSnapshotPayloadJson(normalizedSnapshot, updatedAt);
     const snapshotId = createEntityId("kdocsnap");
+    const payloadHash = hashSnapshot(normalizedSnapshot);
+    const byteSize = Buffer.byteLength(payloadJson, "utf8");
+    const hasContent = Boolean(extractDocumentText(normalizedSnapshot.content).trim());
     await connection.execute(
       `INSERT INTO ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")}
         (id, course_id, mind_map_id, node_id, title, current_snapshot_id, current_byte_size, has_content, created_at, updated_at, deleted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
        ON DUPLICATE KEY UPDATE title = VALUES(title), current_snapshot_id = VALUES(current_snapshot_id),
         current_byte_size = VALUES(current_byte_size), has_content = VALUES(has_content), updated_at = VALUES(updated_at), deleted_at = NULL`,
-      [documentId, target.course.id, target.mindMapId, target.nodeId, title, snapshotId, Buffer.byteLength(payloadJson, "utf8"), extractDocumentText(normalizedSnapshot.content).trim() ? 1 : 0, now, now]
+      [documentId, target.course.id, target.mindMapId, target.nodeId, title, snapshotId, byteSize, hasContent ? 1 : 0, now, now]
     );
     const sequenceNo = await nextDocumentSequence(connection, runtime, documentId);
     await connection.execute(
       `INSERT INTO ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")}
         (id, document_id, sequence_no, schema_version, editor, editor_version, payload_json, payload_hash, byte_size, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [snapshotId, documentId, sequenceNo, SCHEMA_VERSION, DOCUMENT_EDITOR, normalizedSnapshot.editorVersion, payloadJson, hashSnapshot(normalizedSnapshot), Buffer.byteLength(payloadJson, "utf8"), now]
+      [snapshotId, documentId, sequenceNo, SCHEMA_VERSION, DOCUMENT_EDITOR, normalizedSnapshot.editorVersion, payloadJson, payloadHash, byteSize, now]
     );
     await connection.commit();
-    return readNodeDocument(runtime, { courseId: target.course.id, mindMapId: target.mindMapId, nodeId: target.nodeId });
+    putCachedSnapshot(documentSnapshotCache, snapshotId, normalizedSnapshot);
+    return {
+      course: target.course,
+      mindMapId: target.mindMapId,
+      nodeId: target.nodeId,
+      documentId,
+      title,
+      previousSnapshotId: currentSnapshotId,
+      currentSnapshotId: snapshotId,
+      updatedAt,
+      byteSize,
+      hasContent,
+      textLength: extractDocumentText(normalizedSnapshot.content).length,
+      contentHash: payloadHash
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -3286,7 +3397,7 @@ async function writeNodeDocumentSnapshot(runtime, target, title, snapshot) {
   }
 }
 
-async function writeNodeDocumentSnapshotPreserved(runtime, target, documentId, title, snapshot) {
+async function writeNodeDocumentSnapshotPreserved(runtime, target, documentId, title, snapshot, expectedSnapshotId) {
   const connection = await runtime.pool.getConnection();
   const now = new Date();
   const updatedAt = now.toISOString();
@@ -3298,23 +3409,46 @@ async function writeNodeDocumentSnapshotPreserved(runtime, target, documentId, t
       [target.course.id, target.mindMapId, target.nodeId]
     );
     if (!nodeRows[0]) throw new Error("Mind map node is missing.");
+    const existing = await findDocument(runtime, target, connection, true, true);
+    if (!existing || existing.id !== documentId) throw new Error("Node document is missing.");
+    const currentSnapshotId = existing.currentSnapshotId || null;
+    if (!expectedSnapshotId || expectedSnapshotId !== currentSnapshotId) {
+      throw new Error(`DOCUMENT_VERSION_CONFLICT: expected snapshot ${expectedSnapshotId || "<none>"} but current snapshot is ${currentSnapshotId || "<none>"}. Read the latest document before retrying.`);
+    }
     const payloadJson = createSnapshotPayloadJson(snapshot, updatedAt);
     const snapshotId = createEntityId("kdocsnap");
+    const payloadHash = hashSnapshot(snapshot);
+    const byteSize = Buffer.byteLength(payloadJson, "utf8");
+    const hasContent = Boolean(extractDocumentText(snapshot.content).trim());
     await connection.execute(
       `UPDATE ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")}
        SET title = ?, current_snapshot_id = ?, current_byte_size = ?, has_content = ?, updated_at = ?, deleted_at = NULL
        WHERE id = ? AND course_id = ? AND mind_map_id = ? AND node_id = ? LIMIT 1`,
-      [title, snapshotId, Buffer.byteLength(payloadJson, "utf8"), extractDocumentText(snapshot.content).trim() ? 1 : 0, now, documentId, target.course.id, target.mindMapId, target.nodeId]
+      [title, snapshotId, byteSize, hasContent ? 1 : 0, now, documentId, target.course.id, target.mindMapId, target.nodeId]
     );
     const sequenceNo = await nextDocumentSequence(connection, runtime, documentId);
     await connection.execute(
       `INSERT INTO ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")}
         (id, document_id, sequence_no, schema_version, editor, editor_version, payload_json, payload_hash, byte_size, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [snapshotId, documentId, sequenceNo, SCHEMA_VERSION, DOCUMENT_EDITOR, snapshot.editorVersion, payloadJson, hashSnapshot(snapshot), Buffer.byteLength(payloadJson, "utf8"), now]
+      [snapshotId, documentId, sequenceNo, SCHEMA_VERSION, DOCUMENT_EDITOR, snapshot.editorVersion, payloadJson, payloadHash, byteSize, now]
     );
     await connection.commit();
-    return readNodeDocument(runtime, { courseId: target.course.id, mindMapId: target.mindMapId, nodeId: target.nodeId });
+    putCachedSnapshot(documentSnapshotCache, snapshotId, snapshot);
+    return {
+      course: target.course,
+      mindMapId: target.mindMapId,
+      nodeId: target.nodeId,
+      documentId,
+      title,
+      previousSnapshotId: currentSnapshotId,
+      currentSnapshotId: snapshotId,
+      updatedAt,
+      byteSize,
+      hasContent,
+      textLength: extractDocumentText(snapshot.content).length,
+      contentHash: payloadHash
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -3324,6 +3458,7 @@ async function writeNodeDocumentSnapshotPreserved(runtime, target, documentId, t
 }
 
 async function listNodeDocuments(runtime, args) {
+  assertExplicitCourseOrAllScope(args, "list_node_documents");
   const { store, course } = await resolveCourse(runtime, args, false);
   const ids = course ? [course.id] : store.courses.map((item) => item.id);
   if (ids.length === 0) return { scope: "all", documents: [] };
@@ -3346,14 +3481,20 @@ async function writeNodeDocument(runtime, args) {
   if (existing?.hasContent && args.replaceExisting !== true) {
     throw new Error("Node document already has content. Use append_node_document for additions, format_node_document for style-only cleanup, or pass replaceExisting=true only when the user explicitly wants to overwrite the whole document.");
   }
+  if (existing?.hasContent && typeof args.expectedSnapshotId !== "string") {
+    throw new Error("Replacing an existing document requires expectedSnapshotId from the latest read_node_document result.");
+  }
   const snapshot = args.snapshot ? normalizeDocumentSnapshot(args.snapshot) : createTextDocumentSnapshot(args.text || "");
-  return writeNodeDocumentSnapshot(runtime, target, normalizeText(args.title, "节点文档") || "节点文档", snapshot);
+  const expectedSnapshotId = Object.prototype.hasOwnProperty.call(args, "expectedSnapshotId")
+    ? normalizeText(args.expectedSnapshotId, "") || null
+    : undefined;
+  return writeNodeDocumentSnapshot(runtime, target, normalizeText(args.title, "节点文档") || "节点文档", snapshot, expectedSnapshotId);
 }
 
 async function appendNodeDocument(runtime, args) {
   assertEditEnabled();
   const target = await resolveDocumentTarget(runtime, args);
-  const existing = await readNodeDocument(runtime, args);
+  const existing = await readNodeDocument(runtime, { ...args, mode: "snapshot" });
   const snapshot = existing.document?.snapshot ? normalizeDocumentSnapshot(JSON.parse(JSON.stringify(existing.document.snapshot))) : createTextDocumentSnapshot("");
   snapshot.content = snapshot.content && typeof snapshot.content === "object" ? snapshot.content : { main: [] };
   snapshot.content.main = Array.isArray(snapshot.content.main) ? snapshot.content.main : [];
@@ -3363,7 +3504,20 @@ async function appendNodeDocument(runtime, args) {
     snapshot.content.main.push(createTemplateElement("\n", "spacer"));
   }
   snapshot.content.main.push(...buildDocumentTemplateElements(args.text || ""));
-  return writeNodeDocumentSnapshot(runtime, target, normalizeText(args.title, existing.document?.title || "节点文档"), snapshot);
+  const currentSnapshotId = existing.document?.currentSnapshotId || null;
+  if (Object.prototype.hasOwnProperty.call(args, "expectedSnapshotId")) {
+    const requestedSnapshotId = normalizeText(args.expectedSnapshotId, "") || null;
+    if (requestedSnapshotId !== currentSnapshotId) {
+      throw new Error(`DOCUMENT_VERSION_CONFLICT: expected snapshot ${requestedSnapshotId || "<none>"} but current snapshot is ${currentSnapshotId || "<none>"}.`);
+    }
+  }
+  return writeNodeDocumentSnapshot(
+    runtime,
+    target,
+    normalizeText(args.title, existing.document?.title || "节点文档"),
+    snapshot,
+    currentSnapshotId
+  );
 }
 
 async function formatNodeDocument(runtime, args) {
@@ -3380,7 +3534,14 @@ async function formatNodeDocument(runtime, args) {
   if (!rows[0]?.payloadJson) throw new Error("Node document snapshot is missing.");
   const rawSnapshot = JSON.parse(rows[0].payloadJson);
   const snapshot = formatDocumentSnapshotPreservingText(rawSnapshot);
-  return writeNodeDocumentSnapshotPreserved(runtime, target, doc.id, normalizeText(args.title, doc.title), snapshot);
+  return writeNodeDocumentSnapshotPreserved(
+    runtime,
+    target,
+    doc.id,
+    normalizeText(args.title, doc.title),
+    snapshot,
+    normalizeText(args.expectedSnapshotId, "")
+  );
 }
 
 function applyDocumentStyle(value, style) {
@@ -3397,7 +3558,7 @@ function applyDocumentStyle(value, style) {
 async function updateNodeDocumentStyle(runtime, args) {
   assertEditEnabled();
   const target = await resolveDocumentTarget(runtime, args);
-  const existing = await readNodeDocument(runtime, args);
+  const existing = await readNodeDocument(runtime, { ...args, mode: "snapshot" });
   if (!existing.document?.snapshot) throw new Error("Node document is missing.");
   const style = {};
   const fontSize = Number(args.fontSize);
@@ -3409,7 +3570,13 @@ async function updateNodeDocumentStyle(runtime, args) {
   if (typeof args.underline === "boolean") style.underline = args.underline;
   const snapshot = normalizeDocumentSnapshot(JSON.parse(JSON.stringify(existing.document.snapshot)));
   snapshot.content = applyDocumentStyle(snapshot.content, style);
-  return writeNodeDocumentSnapshot(runtime, target, existing.document.title, snapshot);
+  return writeNodeDocumentSnapshot(
+    runtime,
+    target,
+    existing.document.title,
+    snapshot,
+    normalizeText(args.expectedSnapshotId, "")
+  );
 }
 
 async function runHealthCheck(getRuntime) {
@@ -3446,8 +3613,10 @@ async function runHealthCheck(getRuntime) {
 }
 
 async function searchMindMapNodes(runtime, args = {}) {
+  assertExplicitCourseOrAllScope(args, "search_nodes");
   const { course } = await resolveCourse(runtime, args, false);
-  const query = normalizeText(args.query, "MCP") || "MCP";
+  const query = normalizeText(args.query, "");
+  if (!query) throw new Error("search_nodes requires a non-empty query.");
   if (!course) {
     const [rows] = await runtime.pool.execute(
       `SELECT n.course_id AS courseId, c.name AS courseName, n.mind_map_id AS mindMapId,
@@ -3546,10 +3715,33 @@ async function runMcpGetStarted(getRuntime) {
 }
 
 async function resolveMcpTarget(runtime, args = {}) {
+  if (args.ref) {
+    const target = await resolveMcpNodeRef(runtime, args);
+    return {
+      query: { ref: target.ref },
+      course: target.course,
+      courseCandidates: [target.course],
+      nodeSearch: {
+        scope: "course",
+        query: target.nodeId,
+        nodes: [{ courseId: target.course.id, courseName: target.course.name, mapId: target.mindMapId, nodeId: target.nodeId }]
+      },
+      documents: null,
+      confidence: "exact",
+      resolved: { courseId: target.course.id, mindMapId: target.mindMapId, nodeId: target.nodeId, ref: target.ref },
+      nextTools: [{ tool: "read_node_context", arguments: { ref: target.ref } }]
+    };
+  }
   const store = await readCourses(runtime);
   const courseId = normalizeText(args.courseId, "");
   const courseName = normalizeText(args.courseName, "");
   const nodeQuery = normalizeText(args.nodeQuery, "");
+  if (!courseId && !courseName && !nodeQuery) {
+    throw new Error("mcp_resolve_target requires ref, courseId, courseName, or nodeQuery. Empty target resolution is not allowed.");
+  }
+  if (courseId && !store.courses.some((course) => course.id === courseId)) {
+    throw new Error("MCP course id is invalid.");
+  }
   const matchedCourses = store.courses
     .map((course) => {
       let score = 0;
@@ -3559,12 +3751,15 @@ async function resolveMcpTarget(runtime, args = {}) {
       if (courseName && includesNormalized(course.description, courseName)) score += 15;
       return { course, score };
     })
-    .filter((item) => item.score > 0 || (!courseId && !courseName))
+    .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, courseId || courseName ? 8 : 20);
-  const primaryCourse = matchedCourses[0]?.course ?? null;
+    .slice(0, 8);
+  const highConfidenceCourses = matchedCourses.filter((item) => item.score >= 80);
+  const primaryCourse = highConfidenceCourses.length === 1 ? highConfidenceCourses[0].course : null;
   const nodeSearch = nodeQuery
-    ? await searchMindMapNodes(runtime, { courseId: primaryCourse?.id, query: nodeQuery }).catch((error) => ({ error: error instanceof Error ? error.message : "Search failed.", nodes: [] }))
+    ? await searchMindMapNodes(runtime, primaryCourse
+      ? { courseId: primaryCourse.id, query: nodeQuery }
+      : { scope: "all", query: nodeQuery }).catch((error) => ({ error: error instanceof Error ? error.message : "Search failed.", nodes: [] }))
     : null;
   const documents = args.includeDocuments === true && primaryCourse
     ? await listNodeDocuments(runtime, { courseId: primaryCourse.id }).catch((error) => ({ error: error instanceof Error ? error.message : "Document list failed.", documents: [] }))
@@ -3575,10 +3770,13 @@ async function resolveMcpTarget(runtime, args = {}) {
     courseCandidates: matchedCourses.map((item) => item.course),
     nodeSearch,
     documents,
-    confidence: primaryCourse ? (matchedCourses[0].score >= 80 ? "high" : "medium") : "low",
+    confidence: primaryCourse ? "high" : "unresolved",
     nextTools: [
       primaryCourse ? { tool: "read_current_mindmap", arguments: { courseId: primaryCourse.id } } : { tool: "read_courses", arguments: {} },
-      nodeQuery ? { tool: "search_nodes", arguments: { courseId: primaryCourse?.id, query: nodeQuery } } : null,
+      nodeQuery ? {
+        tool: "search_nodes",
+        arguments: primaryCourse ? { courseId: primaryCourse.id, query: nodeQuery } : { scope: "all", query: nodeQuery }
+      } : null,
       nodeQuery ? { tool: "read_node_context", arguments: { courseId: primaryCourse?.id || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" } } : null
     ].filter(Boolean)
   };
@@ -3602,6 +3800,7 @@ async function runTool(getRuntime, name, args = {}) {
   if (name === "move_course_section") return moveCourseSection(runtime, args);
   if (name === "delete_course_section") return deleteCourseSection(runtime, args);
   if (name === "read_current_mindmap") {
+    assertExplicitCourseOrAllScope(args, "read_current_mindmap");
     const { store, course } = await resolveCourse(runtime, args, false);
     if (course) {
       return { scope: "course", course, mindMap: await readMindMap(runtime, course.id) };
@@ -3691,12 +3890,13 @@ async function handleRequest(getRuntime, request) {
       if (tool.mode === "edit") assertEditEnabled();
       const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
       const data = await runTool(getRuntime, name, args);
-      await writeMcpDataChangeEvent(name, args, data);
+      scheduleMcpDataChangeEvent(name, args, data);
       return {
         jsonrpc: "2.0",
         id: request.id ?? null,
         result: {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(data) }],
+          structuredContent: data,
           isError: false
         }
       };
@@ -3757,7 +3957,9 @@ function startStdioServer() {
   });
   process.stdin.on("end", async () => {
     await pending;
+    await auditWriteQueue;
     await closeRuntime();
+    process.exit(0);
   });
 }
 

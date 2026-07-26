@@ -27,13 +27,14 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
    - HTTP/Tailscale: MCP URL, optional API URL, `Authorization: Bearer ...`.
    - Local stdio: server script path, data root, app root, and edit flag.
    - Important: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC on stdio: write one JSON object plus `\n`, then read one JSON object per line. Do not use `Content-Length` MCP framing for this local script.
-   - For ad-hoc local reads, prefer `node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120` instead of writing a temporary wrapper.
+   - For ad-hoc local reads, prefer `node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..."` instead of writing a temporary wrapper.
+   - For multiple local calls, use `--session` and send one `{ "tool", "arguments" }` JSON object per input line. This keeps one Node process and MySQL pool alive.
 2. Start read-only.
    - Call `mcp_get_started`.
    - Call `read_courses`.
    - Use `mcp_resolve_target` before reading or editing a specific knowledge base.
 3. Read before editing.
-   - If AIstudy copied a compact node ref such as `aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1`, call `read_node_context({ ref, documentMode: "text", maxDepth: 4, maxNodes: 120 })` directly.
+   - If AIstudy copied a compact node ref such as `aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1`, call `read_node_context({ ref })` for lightweight metadata, or add `documentMode: "text"` when body text is needed.
    - Use exact `courseId`.
    - For node documents, use exact `nodeId`.
    - After every edit, re-read the affected course, node, or document.
@@ -42,6 +43,9 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 
 - Do not invent `courseId`, `mindMapId`, `nodeId`, tokens, or local paths.
 - Do not infer the MCP target from the visible AIstudy UI selection.
+- `mcp_resolve_target` requires `ref`, `courseId`, `courseName`, or `nodeQuery`; empty resolution is an error.
+- `read_current_mindmap`, `search_nodes`, and `list_node_documents` require `courseId`. Pass `scope: "all"` only for an intentional cross-library operation.
+- Explicit `courseId`, `mindMapId`, and `nodeId` arguments are full IDs. Short prefixes are supported only inside a compact node ref and must resolve uniquely.
 - Keep remote endpoints read-only until the user explicitly allows edits and AIstudy settings expose the relevant permission group.
 - Prefer append/style-specific tools over whole-document replacement.
 - Use destructive tools only after explicit user confirmation.
@@ -51,6 +55,7 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 - Write structured text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, then concise body paragraphs.
 - Do not add blank lines merely for visual spacing; AIstudy applies compact spacing automatically.
 - Use `write_node_document` only for new content or explicit whole-document replacement with `replaceExisting: true`.
+- Read `currentSnapshotId` first and pass it as `expectedSnapshotId` for replacement, append, formatting, or style changes. A stale version fails with `DOCUMENT_VERSION_CONFLICT`.
 - Use `append_node_document` for additions.
 - Separate independent knowledge points with exactly one blank line.
 - Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map tools for actual mind map structure; if a diagram must appear in a document, convert it to headings, field labels, and stable numbered outlines instead of whitespace-dependent trees.

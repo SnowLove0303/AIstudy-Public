@@ -35,6 +35,8 @@
 
 其中 `chrome_port_open_page` 只负责让 AIstudy 主机打开指定平台的固定端口 Chrome 页面，不在网页内执行脚本。
 
+远程读取同样执行严格范围规则：`read_current_mindmap`、`search_nodes`、`list_node_documents` 缺少 `courseId` 时不会默认全库读取；调用方必须显式传 `scope: "all"`。节点文档默认使用轻量 `text` 模式，需要编辑器 JSON 时才请求 `snapshot` 模式。
+
 远程编辑由设置页权限组控制：
 
 - `远程编辑`：总开关，关闭时远程只读。
@@ -78,6 +80,8 @@
 - `update_node_document_style`
 
 远程文档写入同样遵循本地 MCP 规范：使用结构化文本，拆成标题、短步骤标题、字段标签、编号/项目列表和简洁正文；独立知识点之间空一行，不用额外空行制造视觉间距；不要把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 等规范表达，不把 `epsilon`、`infinity`、`->` 等退化文本写入最终文档。
+
+远程文档写入已有内容时必须传最近一次读取到的 `currentSnapshotId` 作为 `expectedSnapshotId`。版本冲突会拒绝写入，避免覆盖本机 UI 或其他客户端刚保存的内容。
 
 远程访问不开放定位文件生成和复制配置。
 

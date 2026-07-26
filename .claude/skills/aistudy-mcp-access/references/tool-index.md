@@ -6,18 +6,18 @@ Keep this file synchronized with `electron/mcp/controller.ts`, `electron/mcp/rem
 
 - `mcp_get_started`: first call; returns health, scope, safety rules, resources, prompts, and next steps.
 - `mcp_plan_task`: turns user intent into ordered MCP calls.
-- `mcp_resolve_target`: resolves course and optional node candidates.
+- `mcp_resolve_target`: resolves a compact ref, course, and optional node candidates. Empty targets fail; ambiguous names remain unresolved.
 - `health_check`: checks runtime, MySQL, and core tables.
 - `copy_config`: in-app helper for copying onboarding config.
 
 ## Read Tools
 
 - `read_courses`
-- `read_current_mindmap`
-- `search_nodes`
-- `list_node_documents`
-- `read_node_document`: accepts compact `ref` or `courseId + nodeId`; returns `text`/`textClean` for human-readable content, `textRaw` for audit, and `document.snapshot` as editor JSON for advanced tooling.
-- `read_node_context`: preferred node-level read. Given compact `ref` or `courseId + nodeId`, returns the target node, ancestor chain, bounded descendant subtree, and linked documents in one structured response. Use this before `read_current_mindmap` when the target node is known.
+- `read_current_mindmap`: requires `courseId`; cross-library summaries require explicit `scope: "all"`.
+- `search_nodes`: requires `courseId`; cross-library search requires explicit `scope: "all"` and a non-empty query.
+- `list_node_documents`: requires `courseId`; cross-library listing requires explicit `scope: "all"`.
+- `read_node_document`: accepts compact `ref` or full `courseId + nodeId`. Default `mode: "text"` returns one cleaned text copy; `mode: "snapshot"` returns editor JSON; `mode: "audit"` returns diagnostic text variants.
+- `read_node_context`: preferred node-level read. Default output includes the target, ancestors, and document metadata. Descendants and document body text are opt-in.
 
 ## Compact Node References
 
@@ -27,9 +27,9 @@ AIstudy document-copy actions may return a compact node reference such as:
 aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
 ```
 
-Pass it directly as `{"ref":"..."}` to `read_node_context` for fast structured reads, or to `read_node_document` only when the full editor snapshot is required. The MCP server expands short prefixes to full ids and refuses ambiguous matches instead of guessing.
+Pass it directly as `{"ref":"..."}` to `read_node_context` for fast structured reads, or to `read_node_document({ ref, mode: "snapshot" })` only when editor JSON is required. The MCP server expands short prefixes only inside compact refs and refuses ambiguous matches instead of guessing. Explicit ID fields require full IDs.
 
-For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs` to call compact refs through the local stdio server. That helper uses AIstudy's line-delimited JSON-RPC transport. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
+For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--session` for multiple calls so one process and MySQL pool are reused. Prefer direct flags such as `--course-name`, `--node-query`, `--scope`, and `--mode` on Windows. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
 
 ## Course And Section Edits
 
@@ -58,6 +58,8 @@ For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs` to call comp
 - `append_node_document`: append clean text or Markdown-style headings. Use field labels, lists, and stable numbered outlines for structured content. Keep exactly one blank line between independent knowledge points, do not write raw Mermaid or Markdown fenced blocks as document body, and avoid degraded math tokens such as `epsilon`, `infinity`, `->`, or `lim_{n->infinity}`.
 - `format_node_document`: style-only cleanup; must preserve every editor element `value` exactly.
 - `update_node_document_style`: simple full-document font size, color, bold, italic, or underline changes.
+
+All writes against an existing document use `expectedSnapshotId` from the latest read. A stale value fails with `DOCUMENT_VERSION_CONFLICT`. Successful writes return lightweight version, size, length, and hash metadata rather than a full document reread.
 
 ## Locator And Chrome Port Tools
 

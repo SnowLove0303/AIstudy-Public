@@ -6,7 +6,7 @@
 
 ## read_node_document text fields
 
-Use `text` or `textClean` as the readable node-document body. Use `textRaw` only when auditing extraction behavior. `document.snapshot` is editor JSON and may contain style or structure metadata such as `title`, `list`, `ol`, `separator`, or `rgb(...)`; do not treat it as prose.
+Use `read_node_document({ mode: "text" })` for one cleaned readable body. Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only when auditing extraction behavior.
 
 ## Compact MCP node ref
 
@@ -22,7 +22,7 @@ Use it directly with `read_node_context`:
 {"ref":"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1","documentMode":"text","maxDepth":4,"maxNodes":120}
 ```
 
-Use `read_node_document({ "ref": "..." })` only when the full editor snapshot is required. Use `resolve_course_locator` only when another agent explicitly needs a local boundary file.
+Use `read_node_document({ "ref": "...", "mode": "snapshot" })` only when the editor snapshot is required. Use `resolve_course_locator` only when another agent explicitly needs a local boundary file.
 
 ## Local stdio transport
 
@@ -200,9 +200,9 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 
 ### 思维导图读取和编辑
 
-- `read_current_mindmap`：不传 `courseId` 时读取全库导图摘要；传 `courseId` 时读取目标导图。
-- `search_nodes`：不传 `courseId` 时全库搜索；传 `courseId` 时只搜目标知识库。
-- `read_node_context`：已知 `courseId + nodeId` 时优先使用；一次返回目标节点、父级路径、受限子树和关联文档。
+- `read_current_mindmap`：传完整 `courseId` 读取目标导图；只有明确全库读取时才传 `scope: "all"`。
+- `search_nodes`：传 `courseId` 定向搜索；跨库搜索必须显式传 `scope: "all"` 和非空 `query`。
+- `read_node_context`：已知 `courseId + nodeId` 时优先使用；默认返回目标节点、父级路径和文档摘要，子树和正文按需开启。
 - `append_mindmap_node`：在指定知识库导图根节点追加节点。
 - `create_mindmap_node`：在指定父节点下新增节点。
 - `update_mindmap_node_text`：修改节点标题。
@@ -214,7 +214,7 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 ### 节点文档
 
 - `list_node_documents`：列出全库或指定知识库里已有节点文档。
-- `read_node_document`：读取指定节点绑定的完整文档快照。
+- `read_node_document`：默认 `mode: "text"` 只返回一份清理正文；`mode: "snapshot"` 返回编辑器快照；`mode: "audit"` 返回完整诊断字段。
 - `write_node_document`：创建节点文档或在明确授权时覆盖整篇。节点已有内容时，必须显式传 `replaceExisting: true` 才允许覆盖；不要把它当作“排版工具”使用。
 - `append_node_document`：在节点文档末尾追加干净文本或 Markdown 标题。
 - `format_node_document`：只做已有节点文档的样式清理。它必须逐字保留每一个编辑器元素的 `value`，不得改写文字、修剪空白、删除空行、插入空行、缩进、拆段或合段。
@@ -226,6 +226,8 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 - 不要在 `value` 中塞大量 `\n\n` 来制造间距。
 - 不要为了“改排版”调用 `write_node_document` 覆盖整篇文档。
 - 节点已有文档时，`write_node_document` 默认会拒绝覆盖；只有用户明确要求“整篇重写/覆盖”时才传 `replaceExisting: true`。
+- 已有文档的覆盖、追加、排版和样式写入必须携带最近一次读取返回的 `currentSnapshotId` 作为 `expectedSnapshotId`；版本不一致时返回 `DOCUMENT_VERSION_CONFLICT`。
+- 显式 `courseId`、`mindMapId`、`nodeId` 必须使用完整 ID；短前缀只允许放在紧凑引用中，并且必须唯一匹配。
 - 新内容写入用 `write_node_document`，补内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，简单全文样式用 `update_node_document_style`。
 - `write_node_document` 和 `append_node_document` 的 `text` 必须保持干净并结构化：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 字段标签、编号或项目列表、简洁正文；独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距；不要把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符。
 - 数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。不要把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入最终文档。

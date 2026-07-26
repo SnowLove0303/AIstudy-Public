@@ -1028,7 +1028,8 @@ export function TextbookWorkspace({
         mindMapId: scope.mindMapId,
         nodeId: bindingNodeId,
         title: bindingNodeTitle || "教材笔记",
-        snapshot
+        snapshot,
+        expectedSnapshotId: current?.currentSnapshotId ?? null
       });
       setSaveState("saved");
       setMessage("已载入文档。");

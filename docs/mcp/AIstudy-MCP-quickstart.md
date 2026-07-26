@@ -76,10 +76,10 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 1. 调用 `mcp_get_started`，读取健康状态、全库概览、安全规则和下一步建议。
 2. 调用 `read_courses`，确认能看到全库分区和知识库清单，并记住目标知识库的 `courseId`。
 3. 调用 `mcp_resolve_target`。按知识库名、`courseId` 或节点关键词解析真实目标，减少猜参数。
-4. 调用 `read_current_mindmap`。不传 `courseId` 时读取全库导图摘要，传 `courseId` 时读取指定知识库的完整导图。
-5. 调用 `search_nodes`。不传 `courseId` 时全库搜索，传 `courseId` 时只搜索目标知识库。
-6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`，一次读取父级路径、子树和关联文档。
-7. 需要单节点完整文档快照时，再用 `list_node_documents` 找已有文档，并用 `read_node_document` 按 `courseId + nodeId` 读取。
+4. 调用 `read_current_mindmap`。定向读取传完整 `courseId`；只有明确需要全库摘要时才传 `scope: "all"`。
+5. 调用 `search_nodes`。定向搜索传 `courseId`；跨库搜索必须显式传 `scope: "all"` 和非空 `query`。
+6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`。默认只读取目标、父级路径和文档摘要；子树及正文按需开启。
+7. 普通正文读取使用 `read_node_document({ mode: "text" })`；只有需要编辑器 JSON 时才用 `mode: "snapshot"`。
 7. 需要打开网页端口时，先用 `chrome_ports_status` 读取平台和端口，再用 `chrome_port_open_page` 打开页面。
 8. 需要编辑时，先调用 `mcp_plan_task` 规划工具顺序；写入必须传 `courseId`，节点文档写入还必须传 `nodeId`。
 
@@ -204,7 +204,7 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 
 ### 读取全库
 
-`mcp_get_started` -> `read_courses` -> `read_current_mindmap`
+`mcp_get_started` -> `read_courses` -> `read_current_mindmap({ scope: "all" })`
 
 ### 读取指定知识库
 
@@ -212,9 +212,9 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 
 ### 搜索节点并读文档
 
-`mcp_resolve_target({ courseName, nodeQuery })` -> `search_nodes` -> `read_node_context`
+`mcp_resolve_target({ courseName, nodeQuery })` -> `search_nodes({ courseId, query })` -> `read_node_context`
 
-`read_node_context` 是节点级读取的优先工具：已知 `courseId + nodeId` 时，它会一次返回目标节点、父级路径、受限子树和关联文档。只有需要单节点完整编辑器快照时，再调用 `read_node_document`。
+`read_node_context` 是节点级读取的优先工具：默认返回目标节点、父级路径和关联文档摘要。只有任务确实需要时才传 `includeDescendants: true` 或 `documentMode: "text"`。短 ID 只允许出现在紧凑引用中，显式 ID 参数必须传完整值。
 
 ### 编辑导图
 
@@ -222,7 +222,7 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 
 ### 编辑文档
 
-`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document` -> 按任务选择 `write_node_document` / `append_node_document` / `format_node_document` / `update_node_document_style` -> 重新读取文档确认结果
+`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document({ mode: "snapshot" })` -> 携带 `currentSnapshotId` 作为 `expectedSnapshotId` 调用写入工具 -> 需要正文时再用 `read_node_document({ mode: "text" })` 核对
 
 ### 打开网页端口
 
@@ -258,7 +258,7 @@ AISTUDY_MCP_ALLOW_EDIT=1
 
 ## read_node_document text fields
 
-Use `text` or `textClean` as the readable node-document body. Use `textRaw` only when auditing extraction behavior. `document.snapshot` is editor JSON and may contain style or structure metadata such as `title`, `list`, `ol`, `separator`, or `rgb(...)`; do not treat it as prose.
+Use `read_node_document({ mode: "text" })` for one cleaned readable body. Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only when auditing extraction behavior.
 
 ## Compact MCP node ref
 
@@ -274,4 +274,4 @@ Use it directly for the fast default read:
 {"ref":"aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1","documentMode":"text","maxDepth":4,"maxNodes":120}
 ```
 
-Preferred tool: `read_node_context`. Use `read_node_document({ "ref": "..." })` only when the full editor snapshot is required. Use `resolve_course_locator` only when another agent explicitly needs a local boundary file.
+Preferred tool: `read_node_context`. Use `read_node_document({ "ref": "...", "mode": "snapshot" })` only when the editor snapshot is required. Use `resolve_course_locator` only when another agent explicitly needs a local boundary file.

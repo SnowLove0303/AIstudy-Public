@@ -61,6 +61,7 @@ import {
 } from "./knowledgeAssetService.js";
 import { createMcpController } from "./mcp/controller.js";
 import { createMcpRemoteAccessController } from "./mcp/remoteAccess.js";
+import { SnapshotCache } from "./mcp/snapshotCache.js";
 import { RuntimeMaintenanceCoordinator } from "./runtimeMaintenanceCoordinator.js";
 import { createVocabularyCaptureService } from "./vocabularyCaptureService.js";
 import { createVocabularyCaptureCompanionLauncher } from "./vocabularyCaptureCompanionLauncher.js";
@@ -313,6 +314,7 @@ type KnowledgeDocument = {
   mindMapId: string;
   nodeId: string;
   documentId: string;
+  currentSnapshotId: string | null;
   title: string;
   snapshot: KnowledgeDocumentSnapshot | null;
   updatedAt: string | null;
@@ -345,7 +347,10 @@ type KnowledgeDocumentStatusRequest = {
 type KnowledgeDocumentSaveRequest = KnowledgeDocumentNodeRequest & {
   title?: string;
   snapshot: unknown;
+  expectedSnapshotId?: string | null;
 };
+
+const knowledgeDocumentSnapshotCache = new SnapshotCache<KnowledgeDocumentSnapshot>(64);
 
 type DatabaseProvider = "mysql" | "tidb";
 
@@ -9089,7 +9094,10 @@ function normalizeKnowledgeDocumentSaveRequest(
   return {
     ...request,
     title: getNonEmptyString(record.title).slice(0, 255) || undefined,
-    snapshot: normalizeKnowledgeDocumentSnapshot(record.snapshot)
+    snapshot: normalizeKnowledgeDocumentSnapshot(record.snapshot),
+    expectedSnapshotId: Object.prototype.hasOwnProperty.call(record, "expectedSnapshotId")
+      ? getNonEmptyString(record.expectedSnapshotId).slice(0, 120) || null
+      : undefined
   };
 }
 
@@ -9172,15 +9180,19 @@ async function readKnowledgeDocument(input: unknown): Promise<KnowledgeDocument 
 
   let snapshot: KnowledgeDocumentSnapshot | null = null;
   if (document.currentSnapshotId) {
-    const [rows] = await pool.execute<KnowledgeDocumentSnapshotRow[]>(
-      `SELECT payload_json AS payloadJson, byte_size AS byteSize
-       FROM ${knowledgeDocumentSnapshotTable}
-       WHERE id = ? AND document_id = ?
-       LIMIT 1`,
-      [document.currentSnapshotId, document.id]
-    );
-    if (rows[0]?.payloadJson) {
-      snapshot = normalizeKnowledgeDocumentSnapshot(parseJsonText(rows[0].payloadJson));
+    snapshot = knowledgeDocumentSnapshotCache.get(document.currentSnapshotId) ?? null;
+    if (!snapshot) {
+      const [rows] = await pool.execute<KnowledgeDocumentSnapshotRow[]>(
+        `SELECT payload_json AS payloadJson, byte_size AS byteSize
+         FROM ${knowledgeDocumentSnapshotTable}
+         WHERE id = ? AND document_id = ?
+         LIMIT 1`,
+        [document.currentSnapshotId, document.id]
+      );
+      if (rows[0]?.payloadJson) {
+        snapshot = normalizeKnowledgeDocumentSnapshot(parseJsonText(rows[0].payloadJson));
+        knowledgeDocumentSnapshotCache.set(document.currentSnapshotId, snapshot);
+      }
     }
   }
 
@@ -9189,6 +9201,7 @@ async function readKnowledgeDocument(input: unknown): Promise<KnowledgeDocument 
     mindMapId: request.mindMapId,
     nodeId: request.nodeId,
     documentId: document.id,
+    currentSnapshotId: document.currentSnapshotId || null,
     title: document.title,
     snapshot,
     updatedAt: toIsoTimestamp(document.updatedAt),
@@ -9209,6 +9222,20 @@ async function writeKnowledgeDocument(input: unknown): Promise<KnowledgeDocument
     await assertMindMapNodeExists(connection, mindMapNodeTable, request);
 
     const existing = await findKnowledgeDocumentByNode(connection, knowledgeDocumentTable, request, true, true);
+    const currentSnapshotId = existing?.currentSnapshotId || null;
+    if (request.expectedSnapshotId !== undefined && request.expectedSnapshotId !== currentSnapshotId) {
+      throw createAppError(
+        "DOCUMENT_VERSION_CONFLICT",
+        `Knowledge document version conflict: expected ${request.expectedSnapshotId || "<none>"}, current ${currentSnapshotId || "<none>"}.`,
+        {
+          courseId: request.courseId,
+          mindMapId: request.mindMapId,
+          nodeId: request.nodeId,
+          expectedSnapshotId: request.expectedSnapshotId,
+          currentSnapshotId
+        }
+      );
+    }
     const documentId = existing?.id ?? createEntityId("kdoc");
     const title = (request.title || existing?.title || "未命名文档").slice(0, 255);
     const payloadJson = createSnapshotPayloadJson(request.snapshot, updatedAt);
@@ -9291,12 +9318,14 @@ async function writeKnowledgeDocument(input: unknown): Promise<KnowledgeDocument
     }, now);
 
     await connection.commit();
+    knowledgeDocumentSnapshotCache.set(snapshotId, parseJsonText(payloadJson) as KnowledgeDocumentSnapshot);
 
     return {
       courseId: request.courseId,
       mindMapId: request.mindMapId,
       nodeId: request.nodeId,
       documentId,
+      currentSnapshotId: snapshotId,
       title,
       snapshot: parseJsonText(payloadJson) as KnowledgeDocumentSnapshot,
       updatedAt,
@@ -10358,6 +10387,14 @@ async function resolveMcpDocumentTarget(args: Record<string, unknown>) {
 }
 
 async function listMcpNodeDocuments(args: Record<string, unknown>) {
+  const courseId = normalizeMcpText(args.courseId, "");
+  const scope = normalizeMcpText(args.scope, "");
+  if (!courseId && scope !== "all") {
+    throw createAppError("APP_INVALID_ARGUMENT", "list_node_documents requires courseId or explicit scope='all'.");
+  }
+  if (courseId && scope) {
+    throw createAppError("APP_INVALID_ARGUMENT", "list_node_documents accepts either courseId or scope='all', not both.");
+  }
   const { store, course } = await resolveCourseForMcp(args.courseId, false);
   const runtime = await getMysqlRuntime();
   const courseIds = course ? [course.id] : store.courses.map((item) => item.id);
@@ -10395,12 +10432,26 @@ async function readMcpNodeDocument(args: Record<string, unknown>) {
     mindMapId: target.mindMapId,
     nodeId: target.nodeId
   });
+  const mode = ["text", "snapshot", "audit"].includes(String(args.mode || "")) ? String(args.mode) : "text";
+  const maxChars = normalizeMcpContextInteger(args.maxChars, 12000, 200, 200000);
+  const metadata = document ? { ...document, snapshot: undefined } : null;
+  if (mode === "snapshot") {
+    return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, mode, document };
+  }
+  const textFields = createMcpDocumentTextFields(document?.snapshot?.content ?? "");
+  if (mode === "audit") {
+    return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, mode, document: metadata, ...textFields };
+  }
+  const text = textFields.textClean.slice(0, maxChars);
   return {
     course: target.course,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
-    document,
-    ...createMcpDocumentTextFields(document?.snapshot?.content ?? "")
+    mode,
+    document: metadata,
+    text,
+    textLength: textFields.textClean.length,
+    textTruncated: text.length < textFields.textClean.length
   };
 }
 
@@ -10412,8 +10463,8 @@ function normalizeMcpContextInteger(value: unknown, fallback: number, min: numbe
 
 function normalizeMcpContextDocumentMode(args: Record<string, unknown>) {
   if (args.includeDocuments === false) return "none";
-  const mode = normalizeMcpText(args.documentMode, "text");
-  return mode === "none" || mode === "summary" || mode === "text" ? mode : "text";
+  const mode = normalizeMcpText(args.documentMode, "summary");
+  return mode === "none" || mode === "summary" || mode === "text" ? mode : "summary";
 }
 
 function buildMcpContextNodeSummary(
@@ -10522,7 +10573,7 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
   }
 
   const includeAncestors = args.includeAncestors !== false;
-  const includeDescendants = args.includeDescendants !== false;
+  const includeDescendants = args.includeDescendants === true;
   const maxDepth = normalizeMcpContextInteger(args.maxDepth, 4, 0, 32);
   const maxNodes = normalizeMcpContextInteger(args.maxNodes, 120, 1, 500);
   const maxDocumentChars = normalizeMcpContextInteger(args.maxDocumentChars, 4000, 200, 20000);
@@ -10621,6 +10672,9 @@ async function writeMcpNodeDocument(args: Record<string, unknown>) {
       "Node document already has content. Use append_node_document for additions, format_node_document for style-only cleanup, or pass replaceExisting=true only when the user explicitly wants to overwrite the whole document."
     );
   }
+  if (existing?.hasContent && typeof args.expectedSnapshotId !== "string") {
+    throw createAppError("APP_INVALID_ARGUMENT", "Replacing an existing document requires expectedSnapshotId from the latest read_node_document result.");
+  }
   const snapshot = isRecord(args.snapshot)
     ? normalizeKnowledgeDocumentSnapshot(args.snapshot)
     : createMcpTextDocumentSnapshot(typeof args.text === "string" ? args.text : "");
@@ -10629,9 +10683,29 @@ async function writeMcpNodeDocument(args: Record<string, unknown>) {
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
     title,
-    snapshot
+    snapshot,
+    expectedSnapshotId: Object.prototype.hasOwnProperty.call(args, "expectedSnapshotId")
+      ? normalizeMcpText(args.expectedSnapshotId, "") || null
+      : undefined
   });
-  return { course: target.course, document, ...createMcpDocumentTextFields(document.snapshot?.content ?? "") };
+  return createMcpDocumentMutationResult(target.course, document);
+}
+
+function createMcpDocumentMutationResult(course: CourseRecord, document: KnowledgeDocument) {
+  const text = createMcpDocumentTextFields(document.snapshot?.content ?? "").textClean;
+  return {
+    course,
+    mindMapId: document.mindMapId,
+    nodeId: document.nodeId,
+    documentId: document.documentId,
+    title: document.title,
+    currentSnapshotId: document.currentSnapshotId,
+    updatedAt: document.updatedAt,
+    byteSize: document.byteSize,
+    hasContent: document.hasContent,
+    textLength: text.length,
+    contentHash: document.snapshot ? createSnapshotContentHash(document.snapshot) : null
+  };
 }
 
 async function appendMcpNodeDocument(args: Record<string, unknown>) {
@@ -10642,6 +10716,13 @@ async function appendMcpNodeDocument(args: Record<string, unknown>) {
     nodeId: target.nodeId
   });
   const text = typeof args.text === "string" ? args.text : "";
+  const currentSnapshotId = existing?.currentSnapshotId ?? null;
+  if (Object.prototype.hasOwnProperty.call(args, "expectedSnapshotId")) {
+    const expectedSnapshotId = normalizeMcpText(args.expectedSnapshotId, "") || null;
+    if (expectedSnapshotId !== currentSnapshotId) {
+      throw createAppError("DOCUMENT_VERSION_CONFLICT", "Node document changed after it was read.");
+    }
+  }
   const snapshot = existing?.snapshot
     ? appendMcpDocumentText(existing.snapshot, text)
     : createMcpTextDocumentSnapshot(text);
@@ -10650,9 +10731,10 @@ async function appendMcpNodeDocument(args: Record<string, unknown>) {
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
     title: normalizeMcpText(args.title, "") || existing?.title || "节点文档",
-    snapshot
+    snapshot,
+    expectedSnapshotId: currentSnapshotId
   });
-  return { course: target.course, document, ...createMcpDocumentTextFields(document.snapshot?.content ?? "") };
+  return createMcpDocumentMutationResult(target.course, document);
 }
 
 async function formatMcpNodeDocument(args: Record<string, unknown>) {
@@ -10669,9 +10751,10 @@ async function formatMcpNodeDocument(args: Record<string, unknown>) {
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
     title: normalizeMcpText(args.title, "") || existing.title,
-    snapshot
+    snapshot,
+    expectedSnapshotId: normalizeMcpText(args.expectedSnapshotId, "")
   });
-  return { course: target.course, document, preservedText: true };
+  return { ...createMcpDocumentMutationResult(target.course, document), preservedText: true };
 }
 
 async function updateMcpNodeDocumentStyle(args: Record<string, unknown>) {
@@ -10700,9 +10783,10 @@ async function updateMcpNodeDocumentStyle(args: Record<string, unknown>) {
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
     title: existing.title,
-    snapshot
+    snapshot,
+    expectedSnapshotId: normalizeMcpText(args.expectedSnapshotId, "")
   });
-  return { course: target.course, document, style };
+  return { ...createMcpDocumentMutationResult(target.course, document), style };
 }
 
 function toMcpChromePortInfo(status: ChromePortStatus) {

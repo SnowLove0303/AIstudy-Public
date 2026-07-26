@@ -615,6 +615,7 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
 
   function createToolCallResult(request: JsonRpcRequest, response: { result?: { ok?: boolean; data?: unknown; summary?: string } }) {
     const result = response.result ?? { ok: false, summary: "MCP call failed.", data: null };
+    const data = result.data ?? result.summary ?? null;
     return {
       jsonrpc: "2.0",
       id: request.id ?? null,
@@ -622,9 +623,10 @@ export function createMcpRemoteAccessController(dependencies: McpRemoteAccessDep
         content: [
           {
             type: "text",
-            text: JSON.stringify(result.data ?? result.summary ?? null, null, 2)
+            text: JSON.stringify(data)
           }
         ],
+        structuredContent: data,
         isError: result.ok === false
       }
     };

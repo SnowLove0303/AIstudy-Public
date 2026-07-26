@@ -103,7 +103,11 @@ Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited J
 - `format_node_document`
 - `update_node_document_style`
 
+读取边界：`read_current_mindmap`、`search_nodes`、`list_node_documents` 不允许因参数缺失自动扩大到全库；全库操作必须显式传 `scope: "all"`。`read_node_context` 默认不展开后代且只返回文档摘要，正文和子树按需开启。`read_node_document` 以 `text`、`snapshot`、`audit` 三种模式隔离普通读取、编辑器快照和完整诊断。
+
 节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；内容应拆成一级标题、短步骤标题、字段标签、编号/项目列表和简洁正文；独立知识点之间必须空一行但不得用额外空行制造视觉间距；不得把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符；数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`，不得把 `epsilon`、`infinity`、`->` 这类退化文本作为最终内容。
+
+并发边界：文档服务在事务内使用行锁读取当前快照，并校验调用方的 `expectedSnapshotId`。MCP、用户文档页、教材载入和信息采集均复用该服务；冲突时拒绝旧版本写入。写入结果只返回版本、大小、长度和哈希等轻量元数据。
 
 定位与交接：
 
@@ -116,8 +120,9 @@ Chrome 端口：
 
 ## 验证顺序
 
-1. `npm run build`
-2. 运行 `scripts/mcp/aistudy-mcp-server.mjs` 的 `initialize`、`tools/list`、`resources/list`、`prompts/list`、`mcp_get_started`。
+1. `npm run qa:mcp-runtime-safety`
+2. `npm run build`
+3. 运行 `scripts/mcp/aistudy-mcp-server.mjs` 的 `initialize`、`tools/list`、`resources/list`、`prompts/list`、`mcp_get_started`。
 3. 调用 `chrome_ports_status`，确认端口工具能返回平台和端口。
 4. 在客户端界面里点击 MCP 控制台的工具卡片，确认状态灯有调用反馈。
 5. 编辑类工具默认应被权限拦截。
