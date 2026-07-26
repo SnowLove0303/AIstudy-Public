@@ -35,6 +35,7 @@ function printUsageAndExit() {
   console.error(`Usage:
   node scripts/mcp/call-aistudy-mcp.mjs --tool read_node_context --args-json "{\\"ref\\":\\"aistudy://node/...\\",\\"documentMode\\":\\"text\\"}"
   node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120
+  node scripts/mcp/call-aistudy-mcp.mjs --tool search_nodes --course-id "..." --query "keyword"
   node scripts/mcp/call-aistudy-mcp.mjs --session
 
 Session input (one JSON object per line):
@@ -108,6 +109,11 @@ function parseArgs(argv) {
     }
     if (arg === "--node-query") {
       parsed.arguments.nodeQuery = takeValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--query") {
+      parsed.arguments.query = takeValue(argv, index, arg);
       index += 1;
       continue;
     }

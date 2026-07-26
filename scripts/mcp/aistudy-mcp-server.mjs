@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import mysql from "mysql2/promise";
+import { SnapshotCache } from "./snapshot-cache.mjs";
 
 const SCHEMA_VERSION = 1;
 const MINDMAP_EDITOR = "simple-mind-map";
@@ -19,7 +20,8 @@ const MIND_MAP_SUMMARY_SNAPSHOT_KEY = "aistudySummarySnapshot";
 const DOCUMENT_EDITOR = "aistudy-word";
 const DOCUMENT_EDITOR_VERSION = "mcp-text";
 const DOCUMENT_READ_DEFAULT_MAX_CHARS = 12000;
-const SNAPSHOT_CACHE_MAX_ENTRIES = 64;
+const DOCUMENT_SNAPSHOT_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+const MIND_MAP_SNAPSHOT_CACHE_MAX_BYTES = 6 * 1024 * 1024;
 const PUBLIC_MYSQL_DATABASE = "aistudy_public";
 const PUBLIC_MYSQL_TABLES = {
   courses: "course_management_courses",
@@ -52,16 +54,12 @@ const chromePortDefinitions = [
   { id: "xiaohongshu", name: "小红书", port: 9235, loginUrl: "https://www.xiaohongshu.com/explore", hostKeyword: "xiaohongshu.com" }
 ];
 
-const documentSnapshotCache = new Map();
-const mindMapSnapshotCache = new Map();
+const documentSnapshotCache = new SnapshotCache({ maxEntries: 4, maxBytes: DOCUMENT_SNAPSHOT_CACHE_MAX_BYTES });
+const mindMapSnapshotCache = new SnapshotCache({ maxEntries: 1, maxBytes: MIND_MAP_SNAPSHOT_CACHE_MAX_BYTES });
 let auditWriteQueue = Promise.resolve();
 
 function readCachedSnapshot(cache, snapshotId) {
-  const cached = cache.get(snapshotId);
-  if (!cached) return null;
-  cache.delete(snapshotId);
-  cache.set(snapshotId, cached);
-  return cached;
+  return cache.get(snapshotId);
 }
 
 function getCachedSnapshot(cache, snapshotId, payloadJson, normalize) {
@@ -70,19 +68,12 @@ function getCachedSnapshot(cache, snapshotId, payloadJson, normalize) {
     return cached;
   }
   const snapshot = normalize(JSON.parse(payloadJson));
-  cache.set(snapshotId, snapshot);
-  if (cache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
-    cache.delete(cache.keys().next().value);
-  }
+  cache.set(snapshotId, snapshot, Buffer.byteLength(payloadJson, "utf8"));
   return snapshot;
 }
 
-function putCachedSnapshot(cache, snapshotId, snapshot) {
-  cache.delete(snapshotId);
-  cache.set(snapshotId, snapshot);
-  while (cache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
-    cache.delete(cache.keys().next().value);
-  }
+function putCachedSnapshot(cache, snapshotId, snapshot, sizeBytes) {
+  cache.set(snapshotId, snapshot, sizeBytes);
 }
 
 function scheduleMcpDataChangeEvent(tool, args, data) {
@@ -301,7 +292,7 @@ const toolDefinitions = [
   {
     name: "read_node_context",
     mode: "read",
-    description: "Fast default node read. Accepts compact ref or courseId/nodeId and returns target node, ancestors, bounded descendant subtree, and linked documents.",
+    description: "Fast node read. Default queries only the target-to-root path and document summaries; descendant subtree and document text are opt-in.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
@@ -1264,16 +1255,20 @@ async function findMindMapById(runtime, courseId, mindMapId) {
 async function readMindMap(runtime, courseId) {
   const map = await findMindMapByCourse(runtime, courseId);
   if (!map) return null;
-  let snapshot = null;
+  let snapshot = map.currentSnapshotId ? readCachedSnapshot(mindMapSnapshotCache, map.currentSnapshotId) : null;
   if (map.currentSnapshotId) {
-    const [rows] = await runtime.pool.execute(
-      `SELECT payload_json AS payloadJson
-       FROM ${escapeIdentifier(runtime.config.mindMapSnapshotTable, "snapshot table")}
-       WHERE id = ? AND mind_map_id = ?
-       LIMIT 1`,
-      [map.currentSnapshotId, map.id]
-    );
-    if (rows[0]?.payloadJson) snapshot = normalizeMindMapSnapshot(JSON.parse(rows[0].payloadJson));
+    if (!snapshot) {
+      const [rows] = await runtime.pool.execute(
+        `SELECT payload_json AS payloadJson
+         FROM ${escapeIdentifier(runtime.config.mindMapSnapshotTable, "snapshot table")}
+         WHERE id = ? AND mind_map_id = ?
+         LIMIT 1`,
+        [map.currentSnapshotId, map.id]
+      );
+      if (rows[0]?.payloadJson) {
+        snapshot = getCachedSnapshot(mindMapSnapshotCache, map.currentSnapshotId, rows[0].payloadJson, normalizeMindMapSnapshot);
+      }
+    }
   }
   return {
     mapId: map.id,
@@ -3094,13 +3089,12 @@ function normalizeContextDocumentMode(args) {
   return ["none", "summary", "text"].includes(mode) ? mode : "summary";
 }
 
-function buildContextNodeSummary(row, childCount, document, snapshotNode = null) {
-  const summarySnapshot = getMindMapSummarySnapshot(snapshotNode);
+function buildContextNodeSummary(row, childCount, document) {
   return {
     nodeId: row.nodeId,
     parentNodeId: row.parentNodeId || null,
     title: row.title || "",
-    nodeKind: isMindMapSummaryNode(snapshotNode) ? "summary" : "topic",
+    nodeKind: null,
     depth: Number(row.depth) || 0,
     positionIndex: Number(row.positionIndex) || 0,
     pathText: row.pathText || row.title || "",
@@ -3108,16 +3102,53 @@ function buildContextNodeSummary(row, childCount, document, snapshotNode = null)
     childCount,
     hasDocument: Boolean(document?.hasContent),
     document: document || null,
-    summary: summarySnapshot ? {
-      anchorNodeId: typeof snapshotNode?.data?.[MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY] === "string"
-        ? snapshotNode.data[MIND_MAP_SUMMARY_ANCHOR_NODE_ID_KEY]
-        : null,
-      rootNodeId: readMindMapNodeId(summarySnapshot.root),
-      rootTitle: getNodeTitle(summarySnapshot.root, ""),
-      subtree: flattenSummarySnapshot(summarySnapshot.root, 4, 80)
-    } : null,
+    summary: null,
     updatedAt: toIsoTimestamp(row.updatedAt)
   };
+}
+
+async function readContextNodeRows(runtime, courseId, mindMapId, nodeId, includeDescendants) {
+  const nodeTable = escapeIdentifier(runtime.config.mindMapNodeTable, "node table");
+  if (includeDescendants) {
+    const [rows] = await runtime.pool.execute(
+      `SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
+              depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt
+       FROM ${nodeTable}
+       WHERE course_id = ? AND mind_map_id = ? AND deleted_at IS NULL
+       ORDER BY depth ASC, position_index ASC`,
+      [courseId, mindMapId]
+    );
+    return rows;
+  }
+  const [rows] = await runtime.pool.execute(
+    `WITH RECURSIVE node_path AS (
+       SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
+              depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt,
+              0 AS relativeLevel
+       FROM ${nodeTable}
+       WHERE course_id = ? AND mind_map_id = ? AND node_id = ? AND deleted_at IS NULL
+       UNION ALL
+       SELECT parent.node_id, parent.parent_node_id, parent.title, parent.path_text,
+              parent.depth, parent.position_index, parent.is_collapsed, parent.updated_at,
+              node_path.relativeLevel + 1
+       FROM ${nodeTable} parent
+       INNER JOIN node_path ON parent.node_id = node_path.parentNodeId
+       WHERE parent.course_id = ? AND parent.mind_map_id = ? AND parent.deleted_at IS NULL
+         AND node_path.relativeLevel < 64
+     )
+     SELECT node_path.nodeId, node_path.parentNodeId, node_path.title, node_path.pathText,
+            node_path.depth, node_path.positionIndex, node_path.isCollapsed, node_path.updatedAt,
+            (
+              SELECT COUNT(*)
+              FROM ${nodeTable} child
+              WHERE child.course_id = ? AND child.mind_map_id = ?
+                AND child.parent_node_id = node_path.nodeId AND child.deleted_at IS NULL
+            ) AS childCount
+     FROM node_path
+     ORDER BY node_path.depth ASC, node_path.positionIndex ASC`,
+    [courseId, mindMapId, nodeId, courseId, mindMapId, courseId, mindMapId]
+  );
+  return rows;
 }
 
 async function readContextDocuments(runtime, courseId, mindMapId, nodeIds, documentMode, maxDocumentChars) {
@@ -3178,41 +3209,14 @@ async function readNodeContext(runtime, args) {
     : await findMindMapByCourse(runtime, course.id);
   if (!map) throw new Error("Mind map is missing.");
 
-  let snapshotNodeById = new Map();
-  if (map.currentSnapshotId) {
-    try {
-      let currentSnapshot = readCachedSnapshot(mindMapSnapshotCache, map.currentSnapshotId);
-      if (!currentSnapshot) {
-        const [snapshotRows] = await runtime.pool.execute(
-          `SELECT payload_json AS payloadJson
-           FROM ${escapeIdentifier(runtime.config.mindMapSnapshotTable, "snapshot table")}
-           WHERE id = ? AND mind_map_id = ?
-           LIMIT 1`,
-          [map.currentSnapshotId, map.id]
-        );
-        if (snapshotRows[0]?.payloadJson) {
-          currentSnapshot = getCachedSnapshot(
-            mindMapSnapshotCache,
-            map.currentSnapshotId,
-            snapshotRows[0].payloadJson,
-            normalizeMindMapSnapshot
-          );
-        }
-      }
-      if (currentSnapshot) snapshotNodeById = indexMindMapSnapshotNodes(currentSnapshot.root);
-    } catch {
-      snapshotNodeById = new Map();
-    }
-  }
+  const includeAncestors = args.includeAncestors !== false;
+  const includeDescendants = args.includeDescendants === true;
+  const maxDepth = normalizeContextInteger(args.maxDepth, 4, 0, 32);
+  const maxNodes = normalizeContextInteger(args.maxNodes, 120, 1, 500);
+  const maxDocumentChars = normalizeContextInteger(args.maxDocumentChars, 4000, 200, 20000);
+  const documentMode = normalizeContextDocumentMode(args);
 
-  const [rows] = await runtime.pool.execute(
-    `SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
-            depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt
-     FROM ${escapeIdentifier(runtime.config.mindMapNodeTable, "node table")}
-     WHERE course_id = ? AND mind_map_id = ? AND deleted_at IS NULL
-     ORDER BY depth ASC, position_index ASC`,
-    [course.id, map.id]
-  );
+  const rows = await readContextNodeRows(runtime, course.id, map.id, nodeId, includeDescendants);
   const nodeById = new Map(rows.map((row) => [row.nodeId, row]));
   const targetRow = nodeById.get(nodeId);
   if (!targetRow) throw new Error("MCP node id is invalid.");
@@ -3224,13 +3228,6 @@ async function readNodeContext(runtime, args) {
     list.push(row);
     childrenByParent.set(parentId, list);
   }
-
-  const includeAncestors = args.includeAncestors !== false;
-  const includeDescendants = args.includeDescendants === true;
-  const maxDepth = normalizeContextInteger(args.maxDepth, 4, 0, 32);
-  const maxNodes = normalizeContextInteger(args.maxNodes, 120, 1, 500);
-  const maxDocumentChars = normalizeContextInteger(args.maxDocumentChars, 4000, 200, 20000);
-  const documentMode = normalizeContextDocumentMode(args);
 
   const ancestors = [];
   if (includeAncestors) {
@@ -3264,8 +3261,10 @@ async function readNodeContext(runtime, args) {
   for (const row of subtreeRows) returnedRows.set(row.nodeId, row);
   const documents = await readContextDocuments(runtime, course.id, map.id, [...returnedRows.keys()], documentMode, maxDocumentChars);
 
-  const childCount = (row) => (childrenByParent.get(row.nodeId) || []).length;
-  const toSummary = (row) => buildContextNodeSummary(row, childCount(row), documents.get(row.nodeId), snapshotNodeById.get(row.nodeId));
+  const childCount = (row) => Object.prototype.hasOwnProperty.call(row, "childCount")
+    ? Number(row.childCount) || 0
+    : (childrenByParent.get(row.nodeId) || []).length;
+  const toSummary = (row) => buildContextNodeSummary(row, childCount(row), documents.get(row.nodeId));
   const buildTree = (row, relativeDepth) => {
     const summary = toSummary(row);
     const children = childrenByParent.get(row.nodeId) || [];
@@ -3285,7 +3284,7 @@ async function readNodeContext(runtime, args) {
       collectDescendants(child);
     }
   };
-  collectDescendants(targetRow);
+  if (includeDescendants) collectDescendants(targetRow);
 
   return {
     scope: "node",
@@ -3374,7 +3373,7 @@ async function writeNodeDocumentSnapshot(runtime, target, title, snapshot, expec
       [snapshotId, documentId, sequenceNo, SCHEMA_VERSION, DOCUMENT_EDITOR, normalizedSnapshot.editorVersion, payloadJson, payloadHash, byteSize, now]
     );
     await connection.commit();
-    putCachedSnapshot(documentSnapshotCache, snapshotId, normalizedSnapshot);
+    putCachedSnapshot(documentSnapshotCache, snapshotId, normalizedSnapshot, byteSize);
     return {
       course: target.course,
       mindMapId: target.mindMapId,
@@ -3434,7 +3433,7 @@ async function writeNodeDocumentSnapshotPreserved(runtime, target, documentId, t
       [snapshotId, documentId, sequenceNo, SCHEMA_VERSION, DOCUMENT_EDITOR, snapshot.editorVersion, payloadJson, payloadHash, byteSize, now]
     );
     await connection.commit();
-    putCachedSnapshot(documentSnapshotCache, snapshotId, snapshot);
+    putCachedSnapshot(documentSnapshotCache, snapshotId, snapshot, byteSize);
     return {
       course: target.course,
       mindMapId: target.mindMapId,

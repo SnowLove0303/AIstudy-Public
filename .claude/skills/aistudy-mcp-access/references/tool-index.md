@@ -17,7 +17,7 @@ Keep this file synchronized with `electron/mcp/controller.ts`, `electron/mcp/rem
 - `search_nodes`: requires `courseId`; cross-library search requires explicit `scope: "all"` and a non-empty query.
 - `list_node_documents`: requires `courseId`; cross-library listing requires explicit `scope: "all"`.
 - `read_node_document`: accepts compact `ref` or full `courseId + nodeId`. Default `mode: "text"` returns one cleaned text copy; `mode: "snapshot"` returns editor JSON; `mode: "audit"` returns diagnostic text variants.
-- `read_node_context`: preferred node-level read. Default output includes the target, ancestors, and document metadata. Descendants and document body text are opt-in.
+- `read_node_context`: preferred node-level read. Default output uses a targeted target-to-root query and includes the target, ancestors, and document metadata without parsing the full mind-map snapshot. Descendants and document body text are opt-in.
 
 ## Compact Node References
 
@@ -29,7 +29,7 @@ aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
 
 Pass it directly as `{"ref":"..."}` to `read_node_context` for fast structured reads, or to `read_node_document({ ref, mode: "snapshot" })` only when editor JSON is required. The MCP server expands short prefixes only inside compact refs and refuses ambiguous matches instead of guessing. Explicit ID fields require full IDs.
 
-For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--session` for multiple calls so one process and MySQL pool are reused. Prefer direct flags such as `--course-name`, `--node-query`, `--scope`, and `--mode` on Windows. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
+For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--session` for multiple calls so one process and MySQL pool are reused. Prefer direct flags such as `--course-name`, `--node-query`, `--query`, `--scope`, and `--mode` on Windows. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
 
 ## Course And Section Edits
 

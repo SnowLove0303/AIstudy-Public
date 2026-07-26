@@ -30,7 +30,7 @@ If AIstudy copied a compact node ref, skip locator files and call:
 read_node_context({ ref })
 ```
 
-The default context read returns ancestors, the target, document metadata, and no descendant subtree. Request `includeDescendants: true` and bounded limits only when needed. Request `documentMode: "text"` only when body text is needed.
+The default context read performs a targeted target-to-root database query and returns ancestors, the target, document metadata, and no descendant subtree. It does not parse the full mind-map snapshot. Request `includeDescendants: true` and bounded limits only when needed. Request `documentMode: "text"` only when body text is needed.
 
 ```text
 mcp_resolve_target({ courseName, nodeQuery })

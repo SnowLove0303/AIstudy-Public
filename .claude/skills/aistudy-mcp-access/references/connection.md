@@ -76,6 +76,12 @@ Prefer direct flags on Windows instead of shell-escaped `--args-json`:
 node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool mcp_resolve_target --course-name "Pynes" --node-query "目标节点"
 ```
 
+For node searches, pass the search term without JSON shell escaping:
+
+```powershell
+node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool search_nodes --course-id "<full-course-id>" --query "目标节点"
+```
+
 For multiple calls, keep one server process and MySQL pool alive:
 
 ```powershell

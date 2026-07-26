@@ -350,7 +350,10 @@ type KnowledgeDocumentSaveRequest = KnowledgeDocumentNodeRequest & {
   expectedSnapshotId?: string | null;
 };
 
-const knowledgeDocumentSnapshotCache = new SnapshotCache<KnowledgeDocumentSnapshot>(64);
+const knowledgeDocumentSnapshotCache = new SnapshotCache<KnowledgeDocumentSnapshot>({
+  maxEntries: 4,
+  maxBytes: 2 * 1024 * 1024
+});
 
 type DatabaseProvider = "mysql" | "tidb";
 
@@ -609,6 +612,7 @@ type McpNodeContextRow = RowDataPacket & {
   positionIndex: number | string;
   isCollapsed: number | string | boolean;
   updatedAt: Date | string;
+  childCount?: number | string;
 };
 
 type McpNodeRefRow = RowDataPacket & {
@@ -619,6 +623,7 @@ type McpNodeContextDocumentRow = RowDataPacket & {
   id: string;
   nodeId: string;
   title: string;
+  currentSnapshotId?: string | null;
   byteSize: number | string;
   hasContent: number | string | boolean;
   updatedAt: Date | string;
@@ -9191,7 +9196,7 @@ async function readKnowledgeDocument(input: unknown): Promise<KnowledgeDocument 
       );
       if (rows[0]?.payloadJson) {
         snapshot = normalizeKnowledgeDocumentSnapshot(parseJsonText(rows[0].payloadJson));
-        knowledgeDocumentSnapshotCache.set(document.currentSnapshotId, snapshot);
+        knowledgeDocumentSnapshotCache.set(document.currentSnapshotId, snapshot, Number(rows[0].byteSize) || Buffer.byteLength(rows[0].payloadJson, "utf8"));
       }
     }
   }
@@ -9318,7 +9323,7 @@ async function writeKnowledgeDocument(input: unknown): Promise<KnowledgeDocument
     }, now);
 
     await connection.commit();
-    knowledgeDocumentSnapshotCache.set(snapshotId, parseJsonText(payloadJson) as KnowledgeDocumentSnapshot);
+    knowledgeDocumentSnapshotCache.set(snapshotId, parseJsonText(payloadJson) as KnowledgeDocumentSnapshot, byteSize);
 
     return {
       courseId: request.courseId,
@@ -10502,7 +10507,7 @@ async function readMcpContextDocuments(
          ON s.id = d.current_snapshot_id AND s.document_id = d.id`
     : "";
   const [rows] = await runtime.pool.execute<McpNodeContextDocumentRow[]>(
-    `SELECT d.id, d.node_id AS nodeId, d.title, d.current_byte_size AS byteSize,
+    `SELECT d.id, d.node_id AS nodeId, d.title, d.current_snapshot_id AS currentSnapshotId, d.current_byte_size AS byteSize,
             d.has_content AS hasContent, d.updated_at AS updatedAt
             ${documentMode === "text" ? ", s.payload_json AS payloadJson" : ""}
      FROM ${runtime.knowledgeDocumentTable} d
@@ -10517,7 +10522,12 @@ async function readMcpContextDocuments(
     let textTruncated = false;
     if (documentMode === "text" && row.payloadJson) {
       try {
-        const snapshot = normalizeKnowledgeDocumentSnapshot(parseJsonText(row.payloadJson));
+        const snapshotId = row.currentSnapshotId || `${row.id}:${String(row.updatedAt ?? "")}`;
+        let snapshot = knowledgeDocumentSnapshotCache.get(snapshotId);
+        if (!snapshot) {
+          snapshot = normalizeKnowledgeDocumentSnapshot(parseJsonText(row.payloadJson));
+          knowledgeDocumentSnapshotCache.set(snapshotId, snapshot, Number(row.byteSize) || Buffer.byteLength(row.payloadJson, "utf8"));
+        }
         text = createMcpDocumentTextFields(snapshot.content).textClean;
         textLength = text.length;
         if (text.length > maxDocumentChars) {
@@ -10540,6 +10550,55 @@ async function readMcpContextDocuments(
   return documents;
 }
 
+async function readMcpContextNodeRows(
+  courseId: string,
+  mindMapId: string,
+  nodeId: string,
+  includeDescendants: boolean
+) {
+  const runtime = await getMysqlRuntime();
+  if (includeDescendants) {
+    const [rows] = await runtime.pool.execute<McpNodeContextRow[]>(
+      `SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
+              depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt
+       FROM ${runtime.mindMapNodeTable}
+       WHERE course_id = ? AND mind_map_id = ? AND deleted_at IS NULL
+       ORDER BY depth ASC, position_index ASC`,
+      [courseId, mindMapId]
+    );
+    return rows;
+  }
+  const [rows] = await runtime.pool.execute<McpNodeContextRow[]>(
+    `WITH RECURSIVE node_path AS (
+       SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
+              depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt,
+              0 AS relativeLevel
+       FROM ${runtime.mindMapNodeTable}
+       WHERE course_id = ? AND mind_map_id = ? AND node_id = ? AND deleted_at IS NULL
+       UNION ALL
+       SELECT parent.node_id, parent.parent_node_id, parent.title, parent.path_text,
+              parent.depth, parent.position_index, parent.is_collapsed, parent.updated_at,
+              node_path.relativeLevel + 1
+       FROM ${runtime.mindMapNodeTable} parent
+       INNER JOIN node_path ON parent.node_id = node_path.parentNodeId
+       WHERE parent.course_id = ? AND parent.mind_map_id = ? AND parent.deleted_at IS NULL
+         AND node_path.relativeLevel < 64
+     )
+     SELECT node_path.nodeId, node_path.parentNodeId, node_path.title, node_path.pathText,
+            node_path.depth, node_path.positionIndex, node_path.isCollapsed, node_path.updatedAt,
+            (
+              SELECT COUNT(*)
+              FROM ${runtime.mindMapNodeTable} child
+              WHERE child.course_id = ? AND child.mind_map_id = ?
+                AND child.parent_node_id = node_path.nodeId AND child.deleted_at IS NULL
+            ) AS childCount
+     FROM node_path
+     ORDER BY node_path.depth ASC, node_path.positionIndex ASC`,
+    [courseId, mindMapId, nodeId, courseId, mindMapId, courseId, mindMapId]
+  );
+  return rows;
+}
+
 async function readMcpNodeContext(args: Record<string, unknown>) {
   const refTarget = await resolveMcpNodeRef(args);
   const course = refTarget?.course ?? (await getRequiredCourseForMcp(args.courseId));
@@ -10552,14 +10611,14 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
     : await findMindMapByCourse(runtime.pool, runtime.mindMapTable, course.id);
   if (!map) throw createAppError("APP_INVALID_ARGUMENT", "Mind map is missing.");
 
-  const [rows] = await runtime.pool.execute<McpNodeContextRow[]>(
-    `SELECT node_id AS nodeId, parent_node_id AS parentNodeId, title, path_text AS pathText,
-            depth, position_index AS positionIndex, is_collapsed AS isCollapsed, updated_at AS updatedAt
-     FROM ${runtime.mindMapNodeTable}
-     WHERE course_id = ? AND mind_map_id = ? AND deleted_at IS NULL
-     ORDER BY depth ASC, position_index ASC`,
-    [course.id, map.id]
-  );
+  const includeAncestors = args.includeAncestors !== false;
+  const includeDescendants = args.includeDescendants === true;
+  const maxDepth = normalizeMcpContextInteger(args.maxDepth, 4, 0, 32);
+  const maxNodes = normalizeMcpContextInteger(args.maxNodes, 120, 1, 500);
+  const maxDocumentChars = normalizeMcpContextInteger(args.maxDocumentChars, 4000, 200, 20000);
+  const documentMode = normalizeMcpContextDocumentMode(args);
+
+  const rows = await readMcpContextNodeRows(course.id, map.id, nodeId, includeDescendants);
   const nodeById = new Map(rows.map((row) => [row.nodeId, row]));
   const targetRow = nodeById.get(nodeId);
   if (!targetRow) throw createAppError("APP_INVALID_ARGUMENT", "MCP node id is invalid.");
@@ -10571,13 +10630,6 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
     list.push(row);
     childrenByParent.set(parentId, list);
   }
-
-  const includeAncestors = args.includeAncestors !== false;
-  const includeDescendants = args.includeDescendants === true;
-  const maxDepth = normalizeMcpContextInteger(args.maxDepth, 4, 0, 32);
-  const maxNodes = normalizeMcpContextInteger(args.maxNodes, 120, 1, 500);
-  const maxDocumentChars = normalizeMcpContextInteger(args.maxDocumentChars, 4000, 200, 20000);
-  const documentMode = normalizeMcpContextDocumentMode(args);
 
   const ancestors: McpNodeContextRow[] = [];
   if (includeAncestors) {
@@ -10611,7 +10663,9 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
   for (const row of subtreeRows) returnedRows.set(row.nodeId, row);
   const documents = await readMcpContextDocuments(course.id, map.id, [...returnedRows.keys()], documentMode, maxDocumentChars);
 
-  const childCount = (row: McpNodeContextRow) => (childrenByParent.get(row.nodeId) || []).length;
+  const childCount = (row: McpNodeContextRow) => row.childCount === undefined
+    ? (childrenByParent.get(row.nodeId) || []).length
+    : Number(row.childCount) || 0;
   const toSummary = (row: McpNodeContextRow) => buildMcpContextNodeSummary(row, childCount(row), documents.get(row.nodeId) || null);
   const buildTree = (row: McpNodeContextRow, relativeDepth: number): Record<string, unknown> => {
     const summary = toSummary(row);
@@ -10632,7 +10686,7 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
       collectDescendants(child);
     }
   };
-  collectDescendants(targetRow);
+  if (includeDescendants) collectDescendants(targetRow);
 
   return {
     scope: "node",

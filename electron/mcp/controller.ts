@@ -459,7 +459,7 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     id: "read_node_context",
     mode: "read",
     title: "Read node context",
-    description: "Read target node, ancestors, bounded descendant subtree, and linked documents in one structured call.",
+    description: "Fast node read. Default queries only the target-to-root path and document summaries; descendant subtree and document text are opt-in.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: nodeContextSchema
   },

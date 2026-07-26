@@ -78,7 +78,7 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 3. 调用 `mcp_resolve_target`。按知识库名、`courseId` 或节点关键词解析真实目标，减少猜参数。
 4. 调用 `read_current_mindmap`。定向读取传完整 `courseId`；只有明确需要全库摘要时才传 `scope: "all"`。
 5. 调用 `search_nodes`。定向搜索传 `courseId`；跨库搜索必须显式传 `scope: "all"` 和非空 `query`。
-6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`。默认只读取目标、父级路径和文档摘要；子树及正文按需开启。
+6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`。默认通过定向查询只读取目标、父级路径和文档摘要，不解析完整导图快照；子树及正文按需开启。
 7. 普通正文读取使用 `read_node_document({ mode: "text" })`；只有需要编辑器 JSON 时才用 `mode: "snapshot"`。
 7. 需要打开网页端口时，先用 `chrome_ports_status` 读取平台和端口，再用 `chrome_port_open_page` 打开页面。
 8. 需要编辑时，先调用 `mcp_plan_task` 规划工具顺序；写入必须传 `courseId`，节点文档写入还必须传 `nodeId`。
@@ -214,7 +214,7 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 
 `mcp_resolve_target({ courseName, nodeQuery })` -> `search_nodes({ courseId, query })` -> `read_node_context`
 
-`read_node_context` 是节点级读取的优先工具：默认返回目标节点、父级路径和关联文档摘要。只有任务确实需要时才传 `includeDescendants: true` 或 `documentMode: "text"`。短 ID 只允许出现在紧凑引用中，显式 ID 参数必须传完整值。
+`read_node_context` 是节点级读取的优先工具：默认通过递归路径查询返回目标节点、父级路径和关联文档摘要，不加载整张节点表或完整导图快照。只有任务确实需要时才传 `includeDescendants: true` 或 `documentMode: "text"`。短 ID 只允许出现在紧凑引用中，显式 ID 参数必须传完整值。
 
 ### 编辑导图
 

@@ -202,7 +202,7 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 
 - `read_current_mindmap`：传完整 `courseId` 读取目标导图；只有明确全库读取时才传 `scope: "all"`。
 - `search_nodes`：传 `courseId` 定向搜索；跨库搜索必须显式传 `scope: "all"` 和非空 `query`。
-- `read_node_context`：已知 `courseId + nodeId` 时优先使用；默认返回目标节点、父级路径和文档摘要，子树和正文按需开启。
+- `read_node_context`：已知 `courseId + nodeId` 时优先使用；默认以定向路径查询返回目标节点、父级路径和文档摘要，不解析完整导图快照，子树和正文按需开启。
 - `append_mindmap_node`：在指定知识库导图根节点追加节点。
 - `create_mindmap_node`：在指定父节点下新增节点。
 - `update_mindmap_node_text`：修改节点标题。

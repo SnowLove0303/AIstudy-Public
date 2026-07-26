@@ -16,7 +16,7 @@
 - `update/`：发布更新记录脚本。
 - `npm-stubs/`：项目本地 npm stub 包。
 
-MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并保持 stdio 会话。单次诊断可用 `mcp/call-aistudy-mcp.mjs`；连续调用应使用 `--session`，以复用同一个 Node 进程和 MySQL 连接池。Windows 下优先使用 `--ref`、`--course-name`、`--node-query`、`--scope`、`--mode` 等直接参数，避免 shell 对 JSON 参数转义造成丢失。
+MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并保持 stdio 会话。单次诊断可用 `mcp/call-aistudy-mcp.mjs`；连续调用应使用 `--session`，以复用同一个 Node 进程和 MySQL 连接池。Windows 下优先使用 `--ref`、`--course-name`、`--node-query`、`--query`、`--scope`、`--mode` 等直接参数，避免 shell 对 JSON 参数转义造成丢失。`read_node_context` 默认只定向查询目标与祖先路径；只有显式要求后代时才加载整张节点表。快照缓存同时受条目数和字节数限制。
 
 ## 使用边界
 

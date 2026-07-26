@@ -74,6 +74,8 @@ Chrome 端口：
 
 文档写入统一走 AIstudy 标准排版模板。`write_node_document` 和 `append_node_document` 传入 `text` 时，外部助手只需要给干净文本或 Markdown 标题；系统会自动按内置 Word 文档风格生成快照：章节标题橙色加粗，小节标题紫色加粗，条款标题蓝色加粗，正文深色常规文本。只有在先通过 `read_node_document` 读到现有 snapshot、且用户明确要求整篇替换时，才允许把 snapshot 传回 `write_node_document`；该高级路径会保留 canvas-editor 表格、带内部竖线的分栏块和单元格内容。外部助手不应该手工拼散乱样式块或空文本块。
 
+性能边界：`read_node_context` 默认只查询目标节点到根节点的路径和关联文档摘要，不读取整张节点表、不解析完整导图快照；只有显式请求 `includeDescendants` 时才进入完整子树路径。长期 MCP 会话中的文档及导图快照缓存同时受条目数和字节数约束，避免大快照累积造成内存持续增长。
+
 Chrome 端口只暴露两个工具：`chrome_ports_status` 和 `chrome_port_open_page`。前者返回平台、端口、默认地址、登录/连接状态和当前检测页面；后者按 `platformId` 和可选 `url` 启动或复用固定端口 Chrome。当前平台包含 `doubao`、`chatgpt`、`bilibili`、`zhihu`、`zhaopin`、`zhipin` 和 `xiaohongshu`。AIstudy 不在 MCP 里执行网页脚本。
 
 内网访问使用 Tailscale Serve，不使用 Funnel，不开放公网。远程 MCP 默认只读；需要外部设备编辑时，在设置页打开远程编辑总开关，并按知识库管理、导图编辑、文档写入、删除操作分别授权。完整流程见 `docs/mcp/AIstudy-MCP-tailscale-access.md`。
