@@ -1,3 +1,7 @@
+param(
+  [switch] $DirectoryOnly
+)
+
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -284,41 +288,47 @@ try {
   Remove-BuildArtifact (Join-Path $releaseRoot "win-unpacked")
   Remove-BuildArtifact (Join-Path $releaseRoot ("aistudy-{0}-x64.nsis.7z" -f $appVersion))
 
-  Write-Host "[AIstudy] Recording update index..."
-  & npm.cmd run update:record
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "[AIstudy] Update index failed with exit code $LASTEXITCODE."
+  if ($DirectoryOnly) {
+    Write-Host "[AIstudy] Building unpacked runtime with portable data preserved..."
+    & npm.cmd run pack:raw
     $exitCode = $LASTEXITCODE
   } else {
-    Write-Host "[AIstudy] Building installer..."
-    & npm.cmd run dist
-    $exitCode = $LASTEXITCODE
+    Write-Host "[AIstudy] Recording update index..."
+    & npm.cmd run update:record
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "[AIstudy] Update index failed with exit code $LASTEXITCODE."
+      $exitCode = $LASTEXITCODE
+    } else {
+      Write-Host "[AIstudy] Building installer..."
+      & npm.cmd run dist:raw
+      $exitCode = $LASTEXITCODE
 
-    if ($exitCode -ne 0) {
-      $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
-      $prepackagedExe = Join-Path $prepackagedDir "AIstudy.exe"
+      if ($exitCode -ne 0) {
+        $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
+        $prepackagedExe = Join-Path $prepackagedDir "AIstudy.exe"
 
-      if (Test-Path -LiteralPath $prepackagedExe) {
-        Write-Host "[AIstudy] Standard packaging failed after win-unpacked was created."
-        Write-Host "[AIstudy] Retrying installer build from prepackaged app..."
+        if (Test-Path -LiteralPath $prepackagedExe) {
+          Write-Host "[AIstudy] Standard packaging failed after win-unpacked was created."
+          Write-Host "[AIstudy] Retrying installer build from prepackaged app..."
+          & npx.cmd electron-builder --win nsis --prepackaged $prepackagedDir
+          $exitCode = $LASTEXITCODE
+        }
+      }
+
+      if ($exitCode -eq 0) {
+        $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
+        $prepackagedExe = Join-Path $prepackagedDir "AIstudy.exe"
+
+        if (-not (Test-Path -LiteralPath $prepackagedExe)) {
+          throw "Cannot rebuild clean installer because prepackaged app is missing: $prepackagedExe"
+        }
+
+        Remove-PortableRuntimeDataFromAppOutDir
+        Assert-CleanInstallerSource $prepackagedDir
+        Write-Host "[AIstudy] Rebuilding installer from cleaned app directory..."
         & npx.cmd electron-builder --win nsis --prepackaged $prepackagedDir
         $exitCode = $LASTEXITCODE
       }
-    }
-
-    if ($exitCode -eq 0) {
-      $prepackagedDir = Join-Path $releaseRoot "win-unpacked"
-      $prepackagedExe = Join-Path $prepackagedDir "AIstudy.exe"
-
-      if (-not (Test-Path -LiteralPath $prepackagedExe)) {
-        throw "Cannot rebuild clean installer because prepackaged app is missing: $prepackagedExe"
-      }
-
-      Remove-PortableRuntimeDataFromAppOutDir
-      Assert-CleanInstallerSource $prepackagedDir
-      Write-Host "[AIstudy] Rebuilding installer from cleaned app directory..."
-      & npx.cmd electron-builder --win nsis --prepackaged $prepackagedDir
-      $exitCode = $LASTEXITCODE
     }
   }
 } finally {
@@ -346,4 +356,8 @@ if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }
 
-Write-Host ("[AIstudy] Done: release\AIstudy-Setup-{0}.exe" -f $appVersion)
+if ($DirectoryOnly) {
+  Write-Host "[AIstudy] Done: release\win-unpacked\AIstudy.exe"
+} else {
+  Write-Host ("[AIstudy] Done: release\AIstudy-Setup-{0}.exe" -f $appVersion)
+}

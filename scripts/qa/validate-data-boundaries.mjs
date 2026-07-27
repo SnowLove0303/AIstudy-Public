@@ -73,10 +73,16 @@ for (const forbidden of forbiddenPackageEntries) {
   }
 }
 
-for (const scriptName of ["pack", "dist"]) {
+for (const scriptName of ["pack:raw", "dist:raw"]) {
   const script = packageJson.scripts?.[scriptName] ?? "";
   if (!script.includes("scripts/package/clean-runtime-data.mjs")) {
     fail(`package.json ${scriptName} script must clean runtime data before packaging`);
+  }
+}
+for (const scriptName of ["pack", "dist"]) {
+  const script = packageJson.scripts?.[scriptName] ?? "";
+  if (!script.includes("scripts/package/close-and-dist.ps1")) {
+    fail(`package.json ${scriptName} script must preserve portable runtime data through the packaging wrapper`);
   }
 }
 
@@ -85,6 +91,15 @@ for (const forbidden of forbiddenPackageEntries) {
   if (!closeAndDist.includes(forbidden)) {
     fail(`dist:oneclick clean source guard is missing ${forbidden}`);
   }
+}
+if (
+  !closeAndDist.includes("Save-PortableRuntimeData")
+  || !closeAndDist.includes("Restore-PortableRuntimeData")
+  || !closeAndDist.includes("[switch] $DirectoryOnly")
+  || !closeAndDist.includes("npm.cmd run pack:raw")
+  || !closeAndDist.includes("npm.cmd run dist:raw")
+) {
+  fail("pack and dist wrappers must preserve portable runtime data and call only their raw inner builds");
 }
 
 const storageBoundary = read("electron/storageBoundary.ts");

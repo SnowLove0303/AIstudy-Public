@@ -23,7 +23,9 @@ MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并�
 - 需要安装依赖时使用 `npm run setup:install`。
 - 新机器或打包前使用 `npm run setup:doctor`。
 - 日常开发使用 `npm run dev:app`。
+- 目录版验证使用 `npm run pack`；脚本会关闭旧实例、暂存便携运行数据、重建后恢复数据并刷新快捷方式。
 - 发布前使用 `npm run dist:oneclick`。
+- `pack:raw` 与 `dist:raw` 仅供打包保护脚本内部调用，禁止直接执行，避免清理 `release/win-unpacked` 时丢失便携运行数据。
 - 同步 GitHub 前使用 `npm run github:sync:doctor`。
 - 批量导入先 dry-run，再通过审计脚本确认后提交。
 - 构建缓存必须放在项目本地忽略目录，不能写入系统盘缓存。
