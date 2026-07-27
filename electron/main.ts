@@ -65,6 +65,7 @@ import { SnapshotCache } from "./mcp/snapshotCache.js";
 import { RuntimeMaintenanceCoordinator } from "./runtimeMaintenanceCoordinator.js";
 import { createVocabularyCaptureService } from "./vocabularyCaptureService.js";
 import { createVocabularyCaptureCompanionLauncher } from "./vocabularyCaptureCompanionLauncher.js";
+import { holdWindowUntilRendererReady } from "./windowStartup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -11080,9 +11081,7 @@ function createMainWindow() {
     });
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
+  holdWindowUntilRendererReady(mainWindow);
 
   mainWindow.on("closed", () => {
     mainWindow = null;

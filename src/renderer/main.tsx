@@ -72,6 +72,7 @@ import "./styles.css";
 declare global {
   interface Window {
     aistudyLifecycle?: {
+      signalRendererReady: () => void;
       onBeforeClose: (callback: () => Promise<unknown> | unknown) => () => void;
     };
     aistudyClipboard?: {
@@ -1215,6 +1216,8 @@ function App() {
   const catalogCollapseNonceRef = React.useRef(0);
   const catalogBoundaryNonceRef = React.useRef(0);
   const workspaceModePersistRef = React.useRef("");
+  const rendererReadySentRef = React.useRef(false);
+  const coldStartCourseIdRef = React.useRef<string | null>(null);
 
   const openDocumentFormatPane = React.useCallback(() => {
     setDetailPaneMode("format");
@@ -1237,11 +1240,11 @@ function App() {
     }
   }, [detailPaneMode, workspaceEditorMode]);
 
-  function applyCourseStore(store: CourseStore) {
+  function applyCourseStore(store: CourseStore, initialMode?: WorkspaceEditorMode) {
     setCourseSections(store.sections ?? []);
     setCourses(store.courses);
     setActiveCourseId(store.activeCourseId);
-    setWorkspaceEditorMode(getCourseWorkspaceMode(store));
+    setWorkspaceEditorMode(initialMode ?? getCourseWorkspaceMode(store));
     setHasLoadedCourseStore(true);
   }
 
@@ -1310,7 +1313,8 @@ function App() {
     courseApi.load()
       .then((store) => {
         if (isCancelled) return;
-        applyCourseStore(store);
+        coldStartCourseIdRef.current = store.activeCourseId;
+        applyCourseStore(store, "mindmap");
         void refreshCourseSyncStatus();
       })
       .catch(() => {
@@ -1388,6 +1392,22 @@ function App() {
   }, [activeCourseId, courses]);
 
   React.useEffect(() => {
+    if (!isHydrated || !hasLoadedCourseStore || rendererReadySentRef.current) return undefined;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        if (rendererReadySentRef.current) return;
+        rendererReadySentRef.current = true;
+        window.aistudyLifecycle?.signalRendererReady();
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [hasLoadedCourseStore, isHydrated]);
+
+  React.useEffect(() => {
     if (!dialogMode) return undefined;
     const frame = window.requestAnimationFrame(() => {
       courseNameInputRef.current?.focus({ preventScroll: true });
@@ -1405,7 +1425,9 @@ function App() {
     setMindMapOutline([]);
     setActiveMindMapId(null);
     setSelectedMindMapNode({ id: null, title: "" });
-    setWorkspaceEditorMode(normalizeWorkspaceEditorMode(activeCourse?.lastWorkspaceMode));
+    const isColdStartCourse = coldStartCourseIdRef.current === activeCourseId;
+    if (isColdStartCourse) coldStartCourseIdRef.current = null;
+    setWorkspaceEditorMode(isColdStartCourse ? "mindmap" : normalizeWorkspaceEditorMode(activeCourse?.lastWorkspaceMode));
     setModeChangeRequest(null);
     setNodeSelectionRequest(null);
     setNodeDeletionRequest(null);

@@ -163,6 +163,9 @@ contextBridge.exposeInMainWorld("aistudyAssistant", {
 });
 
 contextBridge.exposeInMainWorld("aistudyLifecycle", {
+  signalRendererReady: () => {
+    ipcRenderer.send("app:renderer-ready");
+  },
   onBeforeClose: (callback: () => Promise<unknown> | unknown) => {
     const listener = async (_event: IpcRendererEvent, token: string) => {
       try {
