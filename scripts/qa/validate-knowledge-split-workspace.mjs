@@ -79,16 +79,18 @@ assert(
   "directory controls must remain in a persistent interaction layer above drawers and the canvas"
 );
 assert(
-  viewportScrollbars.includes('type="range"')
-    && viewportScrollbars.includes("viewport-scrollbar-input")
-    && viewportScrollbars.includes("onInput=")
+  viewportScrollbars.includes('role="scrollbar"')
     && viewportScrollbars.includes('aria-label={label}')
-    && !viewportScrollbars.includes("setPointerCapture")
-    && !viewportScrollbars.includes('addEventListener("pointermove"')
-    && styles.includes(".viewport-scrollbar-input")
-    && styles.includes("width: 22px")
-    && styles.includes("height: 22px"),
-  "viewport scrollbars must use native range input lifecycles with accessible labels and a forgiving hit area"
+    && viewportScrollbars.includes("isPointerOnVisibleThumb")
+    && viewportScrollbars.includes('document.addEventListener("pointermove"')
+    && viewportScrollbars.includes("AbortController")
+    && viewportScrollbars.includes("requestAnimationFrame")
+    && viewportScrollbars.includes("releasePointerCapture")
+    && !viewportScrollbars.includes('type="range"')
+    && styles.includes("width: 26px")
+    && styles.includes("height: 26px")
+    && styles.includes(".viewport-scrollbar.is-dragging"),
+  "viewport scrollbars must make the full visible thumb draggable, frame-batch updates, and clean temporary document listeners"
 );
 assert(
   mindMapWorkspace.includes('modeChangeRequest?.mode === "word" || modeChangeRequest?.mode === "textbook"'),

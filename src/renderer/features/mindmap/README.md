@@ -46,4 +46,4 @@ Current files:
 - New exports should use adapter commands and avoid scraping DOM state.
 - Resize handles belong to topic bubbles, not editor text boxes. Dragging the right edge should resize the bubble while the text layout moves with it.
 - Native summary rendering must restore the latest render-node instances to the active selection before subsequent insert, text-edit, or formatting commands.
-- Viewport scrollbar dragging must be owned by native range inputs with an enlarged interaction area; the custom rail and thumb are display-only, and temporary global pointer listeners are not allowed.
+- Viewport scrollbar dragging must use the full visible thumb as its hit model, keep a local drag position while the editor catches up, frame-batch editor updates, and abort temporary document listeners on release or interruption.
