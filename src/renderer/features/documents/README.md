@@ -30,7 +30,7 @@ Current files:
 
 ## User Flow
 
-1. User switches from the mind map to Word mode.
+1. User switches to split mode to keep the mind map visible, or to Word mode for a document-only workspace.
 2. Mind-map changes flush first so the selected node exists in `mind_map_nodes`.
 3. The document workspace loads the selected node document or creates an empty local snapshot.
 4. Editor changes queue a debounced save.
@@ -47,3 +47,4 @@ Current files:
 - Math paste behavior must stay shared with textbook notes through `features/mathInput`; do not add document-only symbol replacements in this adapter.
 - ChatGPT or webpage rich-text paste must not inherit external CSS spacing. Preserve semantic structure, then render with AIstudy document spacing and snapshot attributes.
 - Changes to document DB-first recovery must keep `npm run qa:knowledge-reliability` passing.
+- The map/document divider changes only renderer layout preference. It must not create a second document cache or bypass the existing document version/save chain.

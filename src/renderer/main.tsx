@@ -11,6 +11,7 @@ import {
   ChevronsDown,
   ChevronsRight,
   ClipboardList,
+  Columns2,
   Database,
   Download,
   ExternalLink,
@@ -271,7 +272,7 @@ const COURSE_DATABASE_RECOVERY_INITIAL_DELAY_MS = 2000;
 const COURSE_DATABASE_RECOVERY_RETRY_MS = 5000;
 
 function normalizeWorkspaceEditorMode(value: unknown): WorkspaceEditorMode {
-  return value === "word" || value === "textbook" ? value : "mindmap";
+  return value === "split" || value === "word" || value === "textbook" ? value : "mindmap";
 }
 
 function getCourseWorkspaceMode(store: CourseStore) {
@@ -1207,8 +1208,8 @@ function App() {
   const courseNameInputRef = React.useRef<HTMLInputElement | null>(null);
   const isCourseDialogComposingRef = React.useRef(false);
   const [activeSection, setActiveSection] = React.useState<AppSection>("knowledge");
-  const [isLibraryPaneCollapsed, setIsLibraryPaneCollapsed] = React.useState(false);
-  const [isCatalogPaneCollapsed, setIsCatalogPaneCollapsed] = React.useState(false);
+  const [isLibraryPaneCollapsed, setIsLibraryPaneCollapsed] = React.useState(true);
+  const [isCatalogPaneCollapsed, setIsCatalogPaneCollapsed] = React.useState(true);
   const [detailPaneMode, setDetailPaneMode] = React.useState<DetailPaneMode>("catalog");
   const [externalContentRevision, setExternalContentRevision] = React.useState(0);
   const catalogCollapseNonceRef = React.useRef(0);
@@ -1396,6 +1397,7 @@ function App() {
   }, [dialogMode]);
 
   const activeCourse = courses.find((course) => course.id === activeCourseId) ?? null;
+  const isDocumentWorkspaceVisible = workspaceEditorMode === "split" || workspaceEditorMode === "word";
   const sectionIds = React.useMemo(() => new Set(courseSections.map((section) => section.id)), [courseSections]);
   const sectionNameById = React.useMemo(() => new Map(courseSections.map((section) => [section.id, section.name])), [courseSections]);
 
@@ -1540,6 +1542,10 @@ function App() {
   function selectCatalogNode(item: MindMapOutlineItem) {
     if (!item.nodeId) return;
     setNodeSelectionRequest({ nodeId: item.nodeId, nonce: Date.now() });
+    setIsCatalogPaneCollapsed(true);
+    if (workspaceEditorMode === "mindmap") {
+      setModeChangeRequest({ mode: "split", nonce: Date.now() + 1 });
+    }
   }
 
   function deleteCatalogNode(item: MindMapOutlineItem) {
@@ -1676,12 +1682,28 @@ function App() {
 
       {activeSection === "knowledge" ? (
       <main className={`study-layout${isLibraryPaneCollapsed ? " library-collapsed" : ""}${isCatalogPaneCollapsed ? " catalog-collapsed" : ""}`}>
+        {!isLibraryPaneCollapsed || !isCatalogPaneCollapsed ? (
+          <button
+            className="workspace-drawer-scrim"
+            type="button"
+            aria-label="关闭目录"
+            onClick={() => {
+              setIsLibraryPaneCollapsed(true);
+              setIsCatalogPaneCollapsed(true);
+            }}
+          />
+        ) : null}
         <button
           className="pane-collapse-button library-toggle"
           title={isLibraryPaneCollapsed ? "展开知识库" : "收起知识库"}
           aria-label={isLibraryPaneCollapsed ? "展开知识库" : "收起知识库"}
           type="button"
-          onClick={() => setIsLibraryPaneCollapsed((value) => !value)}
+          onClick={() => {
+            setIsLibraryPaneCollapsed((value) => {
+              if (value) setIsCatalogPaneCollapsed(true);
+              return !value;
+            });
+          }}
         >
           {isLibraryPaneCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
         </button>
@@ -1690,7 +1712,12 @@ function App() {
           title={isCatalogPaneCollapsed ? "展开目录" : "收起目录"}
           aria-label={isCatalogPaneCollapsed ? "展开目录" : "收起目录"}
           type="button"
-          onClick={() => setIsCatalogPaneCollapsed((value) => !value)}
+          onClick={() => {
+            setIsCatalogPaneCollapsed((value) => {
+              if (value) setIsLibraryPaneCollapsed(true);
+              return !value;
+            });
+          }}
         >
           {isCatalogPaneCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
         </button>
@@ -1701,7 +1728,10 @@ function App() {
           isHydrated={isHydrated}
           syncStatus={courseSyncStatus}
           onRetrySync={() => void retryCourseSync()}
-          onSelectCourse={selectCourse}
+          onSelectCourse={(courseId) => {
+            setIsLibraryPaneCollapsed(true);
+            selectCourse(courseId);
+          }}
           onCreateCourse={openCreateDialog}
           onEditCourse={openEditDialog}
           onDeleteCourse={deleteCourse}
@@ -1729,6 +1759,15 @@ function App() {
               >
                 <GitBranch size={15} />
                 <span>导图</span>
+              </button>
+              <button
+                type="button"
+                className={workspaceEditorMode === "split" ? "active" : ""}
+                onClick={() => requestWorkspaceMode("split")}
+                disabled={!activeCourse}
+              >
+                <Columns2 size={15} />
+                <span>并排</span>
               </button>
               <button
                 type="button"
@@ -1765,7 +1804,6 @@ function App() {
               onOutlineChanged={setMindMapOutline}
               onMindMapIdChanged={setActiveMindMapId}
               onNodeSelectedChanged={setSelectedMindMapNode}
-              isCatalogPaneCollapsed={isCatalogPaneCollapsed}
               documentDetailPaneMode={detailPaneMode}
               onOpenDocumentFormatPane={openDocumentFormatPane}
               onCloseDocumentFormatPane={closeDocumentFormatPane}
@@ -1773,12 +1811,12 @@ function App() {
           </div>
         </section>
 
-        <aside className="detail-pane" aria-label={workspaceEditorMode === "word" && detailPaneMode === "format" ? "排版" : "目录"}>
+        <aside className="detail-pane" aria-label={isDocumentWorkspaceVisible && detailPaneMode === "format" ? "排版" : "目录"}>
           <div className="detail-heading">
             <div>
-              <h2>{workspaceEditorMode === "word" && detailPaneMode === "format" ? "排版" : "目录"}</h2>
+              <h2>{isDocumentWorkspaceVisible && detailPaneMode === "format" ? "排版" : "目录"}</h2>
             </div>
-            {!(workspaceEditorMode === "word" && detailPaneMode === "format") && mindMapOutline.length > 0 ? (
+            {!(isDocumentWorkspaceVisible && detailPaneMode === "format") && mindMapOutline.length > 0 ? (
               <div className="catalog-tree-toolbar" aria-label="目录视图">
                 <button
                   type="button"
@@ -1798,7 +1836,7 @@ function App() {
                 </button>
               </div>
             ) : null}
-            {workspaceEditorMode === "word" ? (
+            {isDocumentWorkspaceVisible ? (
               <div className="detail-mode-switch" aria-label="右侧面板切换">
                 <button
                   type="button"
@@ -1820,7 +1858,7 @@ function App() {
             ) : null}
           </div>
 
-          {workspaceEditorMode === "word" && detailPaneMode === "format" ? (
+          {isDocumentWorkspaceVisible && detailPaneMode === "format" ? (
             <div id="document-format-panel-slot" className="document-format-panel-slot" />
           ) : activeCourse && mindMapOutline.length > 0 ? (
             <nav className="catalog-panel" aria-label="导图目录">

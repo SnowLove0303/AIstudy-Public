@@ -7,6 +7,7 @@ Mind map owns the `simple-mind-map` editor, mind-map snapshot normalization, rig
 Current files:
 
 - `MindMapWorkspace.tsx`: workspace state, load/save flow, editor-mode switching, and document workspace handoff.
+- `../knowledge/KnowledgeSplitWorkspace.tsx`: presentation-only split container shared by the mind map and node document.
 - `MindMapCanvas.tsx`: React mount boundary for the editor adapter.
 - `simpleMindMapAdapter.ts`: the only place that touches the third-party editor instance, including topic bubble right-edge resizing.
 - `mindMapSnapshot.ts`: snapshot protocol, tree normalization, stable node ids, and catalog generation.
@@ -30,9 +31,10 @@ Current files:
 2. If MySQL is unavailable, the workspace opens the local IndexedDB fallback.
 3. Editor changes queue a debounced save.
 4. Saving writes a full snapshot and lets the main process project nodes into `mind_map_nodes`.
-5. Switching to Word mode flushes pending mind-map changes first.
+5. Switching to split, document, or textbook mode flushes pending mind-map changes first.
 6. Right-side catalog deletion removes the selected branch, its descendants, the matching master mind-map branch, and bound local node-document snapshots.
 7. The right-side catalog toolbar supports expand all, collapse all, and a right-click expand mode that shows only branch headings while keeping leaf items hidden.
+8. Split mode keeps the real mind-map editor mounted beside the selected node's real document; selecting another node rebinds the document by stable node id.
 
 ## Extension Rules
 

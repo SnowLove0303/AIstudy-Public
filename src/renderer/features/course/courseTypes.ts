@@ -3,7 +3,7 @@ export type Course = {
   name: string;
   description: string;
   sectionId: string | null;
-  lastWorkspaceMode: "mindmap" | "word" | "textbook";
+  lastWorkspaceMode: "mindmap" | "split" | "word" | "textbook";
   sortOrder: number;
   createdAt: string;
   updatedAt: string;

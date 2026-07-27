@@ -133,7 +133,7 @@ type CourseRecord = {
   name: string;
   description: string;
   sectionId: string | null;
-  lastWorkspaceMode: "mindmap" | "word" | "textbook";
+  lastWorkspaceMode: "mindmap" | "split" | "word" | "textbook";
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -4473,7 +4473,7 @@ function isCourseStoreCompatibleWithRuntime(store: CourseStore, runtime: MysqlRu
 }
 
 function normalizeWorkspaceEditorMode(value: unknown): CourseRecord["lastWorkspaceMode"] {
-  return value === "word" || value === "textbook" ? value : "mindmap";
+  return value === "split" || value === "word" || value === "textbook" ? value : "mindmap";
 }
 
 function validateMysqlIdentifier(value: string, label: string) {

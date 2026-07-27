@@ -22,6 +22,7 @@ import {
 import { MindMapCanvas, type MindMapCanvasHandle } from "./MindMapCanvas";
 import { MindMapTextFormatToolbar } from "./MindMapTextFormatToolbar";
 import { KnowledgeDocumentWorkspace } from "../documents/KnowledgeDocumentWorkspace";
+import { KnowledgeSplitWorkspace } from "../knowledge/KnowledgeSplitWorkspace";
 import { TextbookWorkspace } from "../textbook/TextbookWorkspace";
 import { drainBeforeCloseSaves, registerBeforeCloseSave } from "../../lib/saveDrain";
 import { deleteLocalSnapshot, readLocalSnapshot, writeLocalSnapshot } from "../../lib/localSnapshotStore";
@@ -61,7 +62,7 @@ import type {
   MindMapTextFormatPatch
 } from "./mindMapTypes";
 
-export type WorkspaceEditorMode = "mindmap" | "word" | "textbook";
+export type WorkspaceEditorMode = "mindmap" | "split" | "word" | "textbook";
 
 export type WorkspaceModeChangeRequest = {
   mode: WorkspaceEditorMode;
@@ -97,7 +98,6 @@ type MindMapWorkspaceProps = {
   onOutlineChanged?: (outline: MindMapOutlineItem[]) => void;
   onMindMapIdChanged?: (mapId: string | null) => void;
   onNodeSelectedChanged?: (node: MindMapSelectedNode) => void;
-  isCatalogPaneCollapsed?: boolean;
   documentDetailPaneMode?: "catalog" | "format";
   onOpenDocumentFormatPane?: () => void;
   onCloseDocumentFormatPane?: () => void;
@@ -674,7 +674,6 @@ export function MindMapWorkspace({
   onOutlineChanged,
   onMindMapIdChanged,
   onNodeSelectedChanged,
-  isCatalogPaneCollapsed,
   documentDetailPaneMode = "catalog",
   onOpenDocumentFormatPane,
   onCloseDocumentFormatPane
@@ -709,6 +708,7 @@ export function MindMapWorkspace({
   const [textFormatMenu, setTextFormatMenu] = React.useState<TextFormatMenuPosition | null>(null);
   const [shortcutSettings, setShortcutSettings] = React.useState<MindMapShortcutSettings>(() => readMindMapShortcutSettings());
   const [isFormatPanelOpen, setIsFormatPanelOpen] = React.useState(false);
+  const [isSplitCompact, setIsSplitCompact] = React.useState(false);
   const canUseEditor = isReady && !isLoading;
   const selectedNodeRef = React.useRef(selectedNode);
   const canUseEditorRef = React.useRef(canUseEditor);
@@ -1117,12 +1117,6 @@ export function MindMapWorkspace({
   }, [onOutlineChanged, outline]);
 
   React.useEffect(() => {
-    if (editorMode === "mindmap" && isCatalogPaneCollapsed) {
-      setIsFormatPanelOpen(true);
-    }
-  }, [editorMode, isCatalogPaneCollapsed]);
-
-  React.useEffect(() => {
     if (!snapshot || !focusedNodeId) return;
     if (!findNodeInTree(snapshot.root, focusedNodeId)) {
       setFocusedNodeId(null);
@@ -1142,7 +1136,7 @@ export function MindMapWorkspace({
     let isCancelled = false;
 
     async function changeMode() {
-      if (modeChangeRequest?.mode !== "mindmap") {
+      if (modeChangeRequest?.mode === "word" || modeChangeRequest?.mode === "textbook") {
         await saveNow();
       }
       if (!isCancelled && modeChangeRequest) {
@@ -1216,7 +1210,7 @@ export function MindMapWorkspace({
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isImeComposingEvent(event)) return;
-      if (event.defaultPrevented || editorModeRef.current !== "mindmap" || !canUseEditorRef.current) return;
+      if (event.defaultPrevented || (editorModeRef.current !== "mindmap" && editorModeRef.current !== "split") || !canUseEditorRef.current) return;
       if (isInteractiveKeyboardTarget(event.target)) return;
 
       const settings = shortcutSettingsRef.current;
@@ -1334,7 +1328,13 @@ export function MindMapWorkspace({
 
   return (
     <div ref={workspaceRef} className="mindmap-workspace" data-editor-mode={editorMode}>
-      {editorMode === "mindmap" ? (
+      {editorMode !== "textbook" ? (
+      <KnowledgeSplitWorkspace
+        courseId={courseId}
+        mode={editorMode}
+        onCompactChange={setIsSplitCompact}
+      >
+      {editorMode === "mindmap" || editorMode === "split" ? (
       <div className="mindmap-local-toolbar" aria-label="导图编辑工具栏">
         <button
           className={topicElements.note ? "active" : ""}
@@ -1475,7 +1475,7 @@ export function MindMapWorkspace({
       </div>
       ) : null}
 
-      {editorMode === "mindmap" && topicPanel ? (
+      {(editorMode === "mindmap" || editorMode === "split") && topicPanel ? (
         <TopicElementPopover
           panel={topicPanel}
           value={topicElements}
@@ -1485,7 +1485,7 @@ export function MindMapWorkspace({
         />
       ) : null}
 
-      {editorMode === "mindmap" && textFormatMenu ? (
+      {(editorMode === "mindmap" || editorMode === "split") && textFormatMenu ? (
         <div
           className="mindmap-text-context-menu"
           style={{ left: textFormatMenu.x, top: textFormatMenu.y }}
@@ -1499,7 +1499,7 @@ export function MindMapWorkspace({
         </div>
       ) : null}
 
-      {editorMode === "mindmap" && isFormatPanelOpen ? (
+      {(editorMode === "mindmap" || editorMode === "split") && isFormatPanelOpen ? (
         <MindMapFormatPanel
           selectedNode={selectedNode}
           disabled={!canUseEditor}
@@ -1514,7 +1514,8 @@ export function MindMapWorkspace({
         />
       ) : null}
 
-      <div className="mindmap-canvas-retained" aria-hidden={editorMode !== "mindmap" ? "true" : undefined}>
+      <div className="mindmap-canvas-retained" aria-hidden={editorMode === "word" ? "true" : undefined}>
+        {editorMode === "mindmap" || (editorMode === "split" && !isSplitCompact) ? (
         <MindMapCanvas
           key={canvasKey}
           ref={canvasRef}
@@ -1526,9 +1527,10 @@ export function MindMapWorkspace({
           onError={setError}
           onContextMenu={openTextFormatMenu}
         />
+        ) : null}
       </div>
 
-      {editorMode === "word" ? (
+      {editorMode === "word" || editorMode === "split" ? (
         <KnowledgeDocumentWorkspace
           courseId={courseId}
           mindMapId={mapId}
@@ -1540,16 +1542,7 @@ export function MindMapWorkspace({
           onOpenFormatPane={onOpenDocumentFormatPane}
           onCloseFormatPane={onCloseDocumentFormatPane}
         />
-      ) : editorMode === "textbook" ? (
-        <TextbookWorkspace
-          courseId={courseId}
-          mindMapId={mapId}
-          selectedNode={selectedNode}
-          nodeSelectionRequest={nodeSelectionRequest}
-          outline={outline}
-          onNodeSelect={selectDocumentNode}
-        />
-      ) : (
+      ) : null}
       <div className="mindmap-status-strip">
         <span>{canUseEditor ? "就绪" : "载入中"}</span>
         <span>{nodeCount} 个主题</span>
@@ -1559,6 +1552,16 @@ export function MindMapWorkspace({
         {savedAt ? <span>已保存 {savedAt}</span> : null}
         {error ? <span className="mindmap-error">{error}</span> : null}
       </div>
+      </KnowledgeSplitWorkspace>
+      ) : (
+        <TextbookWorkspace
+          courseId={courseId}
+          mindMapId={mapId}
+          selectedNode={selectedNode}
+          nodeSelectionRequest={nodeSelectionRequest}
+          outline={outline}
+          onNodeSelect={selectDocumentNode}
+        />
       )}
     </div>
   );

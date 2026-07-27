@@ -1297,8 +1297,11 @@ export async function createSimpleMindMapEditor(
   };
 
   const setScrollbarWrapSize = (width: number, height: number) => {
-    viewportControlSize.width = Math.max(1, width);
-    viewportControlSize.height = Math.max(1, height);
+    const nextWidth = Math.max(1, width);
+    const nextHeight = Math.max(1, height);
+    if (viewportControlSize.width === nextWidth && viewportControlSize.height === nextHeight) return;
+    viewportControlSize.width = nextWidth;
+    viewportControlSize.height = nextHeight;
     editor.scrollbar?.setScrollBarWrapSize?.(viewportControlSize.width, viewportControlSize.height);
     editor.scrollbar?.updateScrollbar?.();
     scheduleViewportSync();
@@ -1720,7 +1723,6 @@ export async function createSimpleMindMapEditor(
       editor.resize();
       renderRightBracketGeneralizations(editor);
       setScrollbarWrapSize(el.clientWidth, el.clientHeight);
-      editor.scrollbar?.updateScrollbar?.();
     },
     setViewportControlSize: (width, height) => {
       if (destroyed) return;

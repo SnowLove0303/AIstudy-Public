@@ -22,6 +22,7 @@ const requiredStorageModuleIds = [
 const allowedLocalStorageFiles = new Set([
   "src/renderer/features/assistant/AiAssistantPanel.tsx",
   "src/renderer/features/documents/KnowledgeDocumentWorkspace.tsx",
+  "src/renderer/features/knowledge/KnowledgeSplitWorkspace.tsx",
   "src/renderer/features/mindmap/MindMapWorkspace.tsx",
   "src/renderer/features/mindmap/mindMapShortcutSettings.ts"
 ]);

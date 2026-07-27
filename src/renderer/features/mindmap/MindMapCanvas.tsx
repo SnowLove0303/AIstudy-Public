@@ -103,8 +103,11 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
     let isDisposed = false;
     let isCreating = false;
     let frameId: number | null = null;
+    let resizeFrameId: number | null = null;
     let retryTimer: number | null = null;
     let creationAttempts = 0;
+    let lastWidth = 0;
+    let lastHeight = 0;
     eventsRef.current.onReadyChange(false);
 
     const hasStableSize = () => {
@@ -189,12 +192,23 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
     };
 
     mount.replaceChildren();
+    const syncEditorSize = () => {
+      resizeFrameId = null;
+      if (isDisposed || !hasStableSize()) return;
+      const width = Math.round(mount.clientWidth);
+      const height = Math.round(mount.clientHeight);
+      if (width === lastWidth && height === lastHeight) return;
+      lastWidth = width;
+      lastHeight = height;
+      editorRef.current?.resize();
+    };
+    const scheduleEditorSizeSync = () => {
+      if (resizeFrameId !== null) return;
+      resizeFrameId = window.requestAnimationFrame(syncEditorSize);
+    };
     const resizeObserver = new ResizeObserver(() => {
       createEditor();
-      if (hasStableSize()) {
-        editorRef.current?.resize();
-        editorRef.current?.setViewportControlSize(mount.clientWidth, mount.clientHeight);
-      }
+      scheduleEditorSizeSync();
     });
     resizeObserver.observe(mount);
     createEditor();
@@ -204,6 +218,10 @@ export const MindMapCanvas = React.forwardRef<MindMapCanvasHandle, MindMapCanvas
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
         frameId = null;
+      }
+      if (resizeFrameId !== null) {
+        window.cancelAnimationFrame(resizeFrameId);
+        resizeFrameId = null;
       }
       if (retryTimer !== null) {
         window.clearTimeout(retryTimer);
