@@ -72,7 +72,7 @@ Chrome 端口：
 
 外部 MCP 客户端使用 `scripts/mcp/aistudy-mcp-server.mjs`。复制配置会默认写入 `AISTUDY_MCP_ALLOW_EDIT=0`，因此外部调用默认只读；需要开放编辑时必须显式改成 `1`，并传入明确的 courseId。MCP 不依赖客户端当前选中的知识库。支持 MCP resources/prompts 的客户端还能读取 `aistudy://guide/start`、`aistudy://guide/workflows`、`aistudy://guide/safety` 和 `aistudy://schema/tools`。
 
-文档写入统一走 AIstudy 标准排版模板。`write_node_document` 和 `append_node_document` 传入 `text` 时，外部助手只需要给干净文本或 Markdown 标题；系统会自动按内置 Word 文档风格生成快照：章节标题橙色加粗，小节标题紫色加粗，条款标题蓝色加粗，正文深色常规文本。只有在先通过 `read_node_document` 读到现有 snapshot、且用户明确要求整篇替换时，才允许把 snapshot 传回 `write_node_document`；该高级路径会保留 canvas-editor 表格、带内部竖线的分栏块和单元格内容。外部助手不应该手工拼散乱样式块或空文本块。
+文档写入统一走中国文章排版模板。节点名称已由文档页作为抬头展示，正文默认不重复；只有独立文章标题才写 `# 标题`。`write_node_document` 和 `append_node_document` 的 `text` 使用 `一、`、`（一）`、`1.`、`（1）` 四级标题、`> ` 引用、字段标签、列表和逐段正文。系统自动生成黑体层级、宋体正文、两字符首行缩进、两端对齐和合适行距，并规范中文附近的半角标点与中英文间距；URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进保持原样。输入空行只表示段落边界，不生成大面积空白行。只有在先通过 `read_node_document` 读到现有 snapshot、且用户明确要求整篇替换时，才允许把 snapshot 传回 `write_node_document`；该高级路径会保留 canvas-editor 表格、带内部竖线的分栏块和单元格内容。`format_node_document` 只应用同一套样式并逐字保留原文，因此不会补写首行缩进字符。
 
 性能边界：`read_node_context` 默认只查询目标节点到根节点的路径和关联文档摘要，不读取整张节点表、不解析完整导图快照；只有显式请求 `includeDescendants` 时才进入完整子树路径。长期 MCP 会话中的文档及导图快照缓存同时受条目数和字节数约束，避免大快照累积造成内存持续增长。
 

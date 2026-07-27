@@ -134,9 +134,9 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 - 不改内容的样式清理：`format_node_document`
 - 简单全文样式：`update_node_document_style`
 
-`write_node_document` 和 `append_node_document` 的 `text` 应保持干净并结构化：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。不要把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符。数学内容使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`，不要把 `epsilon`、`infinity`、`->`、`lim_{n->infinity}` 原样写入。
+`write_node_document` 和 `append_node_document` 的 `text` 应保持干净并结构化。节点名称已作为文档抬头，正文默认不重复；只有独立文章标题才写 `# 标题`。使用 `一、`、`（一）`、`1.`、`（1）` 四级标题、`> ` 引用、`目标：`/`数据来源：` 等字段标签、列表和逐段正文。每行是一段自然正文，输入空行只标记段落边界，系统通过行距而不是可见空白行分隔段落。新写入和追加正文自动应用宋体、两字符首行缩进、两端对齐和中文标点，中英文相邻处安全留白；URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进不改写。真实导图结构优先使用导图工具；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 等规范表达。
 
-不要为了排版调用 `write_node_document` 重写整篇文档；节点已有内容时，`write_node_document` 默认拒绝覆盖，只有用户明确要求整篇覆盖时才传 `replaceExisting: true`。不要手写编辑器内部元素或用大量空行制造间距。`format_node_document` 只允许改样式，必须保证元素数量一致、所有 `value` 逐字不变；它不能清理空行、缩进正文、拆段或合段。
+不要为了排版调用 `write_node_document` 重写整篇文档；节点已有内容时，`write_node_document` 默认拒绝覆盖，只有用户明确要求整篇覆盖时才传 `replaceExisting: true`。不要手写编辑器内部元素或用大量空行制造间距。`format_node_document` 只应用中国文章字体、标题层级、对齐和行距，必须保证元素数量一致、所有 `value` 逐字不变；因此它不能清理空行、补写首行缩进字符、拆段或合段。
 
 ### 本地定位
 

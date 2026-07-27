@@ -105,7 +105,7 @@ Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited J
 
 读取边界：`read_current_mindmap`、`search_nodes`、`list_node_documents` 不允许因参数缺失自动扩大到全库；全库操作必须显式传 `scope: "all"`。`read_node_context` 默认只定向查询目标与祖先路径，不展开后代、不解析完整导图快照且只返回文档摘要；正文和子树按需开启。`read_node_document` 以 `text`、`snapshot`、`audit` 三种模式隔离普通读取、编辑器快照和完整诊断。文档及导图快照缓存同时设置条目数与字节上限，避免长期 MCP 会话随大快照累积而无界占用内存。
 
-节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；内容应拆成一级标题、短步骤标题、字段标签、编号/项目列表和简洁正文；独立知识点之间必须空一行但不得用额外空行制造视觉间距；不得把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符；数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`，不得把 `epsilon`、`infinity`、`->` 这类退化文本作为最终内容。
+节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；节点名称由文档页单独显示，正文默认不重复。文本按可选 `#` 独立文章标题、`一、`/`（一）`/`1.`/`（1）` 四级标题、引用、字段标签、列表和逐段正文组织。新正文自动生成宋体、两字符首行缩进、两端对齐和比例行距；空输入行只表示段落边界，不生成大空白行。中文附近标点和中英文间距可以安全规范化，但 URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进必须保护。`format_node_document` 只改样式并逐字保留 `value`，不得借排版之名改写正文或补写缩进字符。
 
 并发边界：文档服务在事务内使用行锁读取当前快照，并校验调用方的 `expectedSnapshotId`。MCP、用户文档页、教材载入和信息采集均复用该服务；冲突时拒绝旧版本写入。写入结果只返回版本、大小、长度和哈希等轻量元数据。
 

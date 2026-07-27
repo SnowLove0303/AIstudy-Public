@@ -315,21 +315,21 @@ const toolDefinitions = [
   {
     name: "write_node_document",
     mode: "edit",
-    description: "Create a node document from clean plain text or Markdown headings. If the node already has content, this refuses to overwrite unless replaceExisting=true is explicitly passed. Do not use this for formatting-only changes. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
+    description: "Create a node document from structured plain text or Markdown headings using AIstudy Chinese-article typography. # is an optional article title; 一、/（一）/1./（1） map to four heading levels; body paragraphs receive Chinese font, justified line spacing, and two-character first-line indent. If the node already has content, this refuses to overwrite unless replaceExisting=true is explicitly passed. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, text: { type: "string", maxLength: 20000 }, replaceExisting: { type: "boolean", description: "Required as true to overwrite an existing non-empty document." }, expectedSnapshotId: { type: ["string", "null"], maxLength: 120, description: "Required for replacing existing content. Use currentSnapshotId returned by the latest read." }, snapshot: { type: "object", description: "Advanced: only pass a snapshot previously returned by read_node_document mode=snapshot. Arbitrary handcrafted editor fragments are normalized." } } }
   },
   {
     name: "append_node_document",
     mode: "edit",
-    description: "Append clean plain text or Markdown headings to a node document using the standard AIstudy document template. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
+    description: "Append structured text with the same Chinese-article heading, paragraph, quotation, list, label, code, path, and URL rules used by write_node_document. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId", "text"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, text: { type: "string", maxLength: 20000 }, expectedSnapshotId: { type: ["string", "null"], maxLength: 120 } } }
   },
   {
     name: "format_node_document",
     mode: "edit",
-    description: "Style-only format an existing node document while preserving every editor element value exactly. It never rewrites text, trims whitespace, deletes blank elements, inserts blank lines, or indents paragraphs. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
+    description: "Apply Chinese-article fonts, heading levels, alignment, and line spacing to an existing node document while preserving every editor element value exactly. It never rewrites text, trims whitespace, deletes blank elements, inserts blank lines, or adds first-line indent characters. Requires AISTUDY_MCP_ALLOW_EDIT=1.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: { type: "object", additionalProperties: false, required: ["courseId", "nodeId", "expectedSnapshotId"], properties: { courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, title: { type: "string", maxLength: 255 }, expectedSnapshotId: { type: "string", maxLength: 120 } } }
   },
@@ -389,7 +389,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: if AIstudy copied a compact aistudy://node/... ref, pass it directly to read_node_context. Otherwise use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
-    "For document writes: pass structured plain text or Markdown-style headings to write_node_document or append_node_document. Use section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line; do not add blank lines only for visual spacing. Do not write raw Mermaid or Markdown fenced blocks as document body; use mind map tools for mind maps, or convert diagrams into headings and lists. If fenced blocks are included, AIstudy normalizes them and converts Mermaid mindmap blocks into stable numbered outlines instead of showing source code or whitespace-dependent trees. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. write_node_document refuses to overwrite an existing non-empty document unless replaceExisting=true is explicitly passed. Use format_node_document only for style cleanup that must preserve every existing editor value exactly. Use update_node_document_style only for simple whole-document style changes. Do not hand-build scattered editor fragments.",
+    "For document writes: pass structured plain text or Markdown-style headings to write_node_document or append_node_document. The node name is already shown above the document, so do not repeat it unless the content needs a distinct article title; use # only for that explicit title. Use 一、/（一）/1./（1） for four Chinese article heading levels, > for quotations, field labels such as 目标：/数据来源：, numbered or bullet lists, and one concise paragraph per line. Blank input lines mark paragraph boundaries but AIstudy uses paragraph spacing instead of visible blank rows. New body paragraphs receive two-character first-line indent; Chinese-English spacing and nearby Chinese punctuation are normalized while URLs, Windows paths, email, inline code, formulas, lists, and fenced code are protected. Do not write raw Mermaid as document body; use mind map tools or stable numbered outlines. write_node_document refuses to overwrite existing non-empty content unless replaceExisting=true is explicitly passed. format_node_document applies Chinese article styles but preserves every editor value exactly, so it does not add missing indent characters.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "For node-document handoff, prefer the compact aistudy://node/... ref. When a user explicitly asks for a local boundary file, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -439,7 +439,7 @@ function createMcpResourceText(uri) {
       "4. 读取任务优先走 `read_node_context`；全库摘要用 `read_current_mindmap`，定位用 `search_nodes`，单文档完整快照用 `read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
-      "7. 写入文档时传干净文本或 Markdown 标题即可，AIstudy 会自动套用统一排版模板。独立知识点之间必须空一行；不要把 Mermaid/Markdown fenced block 原样作为正文，导图结构优先用导图工具，文档里需要呈现时改写成标题和稳定编号大纲；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
+      "7. 节点名称已作为文档抬头，正文默认不重复；独立文章标题才用 `#`。正文按 `一、`/`（一）`/`1.`/`（1）` 四级标题、引用、字段标签、列表和逐段正文组织，AIstudy 自动应用中国文章字体、首行缩进、两端对齐和行距，并保护 URL、路径、代码与公式。",
       "8. 只做不改内容的样式清理时调用 `format_node_document`；只改全文字号/颜色/粗斜体时调用 `update_node_document_style`；不要为了排版调用 `write_node_document` 重写整篇文档。",
       "",
       "不要把 UI 面包屑当成本地路径。需要给其他 Codex/Claude Code 定位时，调用 `resolve_course_locator`。"
@@ -464,13 +464,13 @@ function createMcpResourceText(uri) {
       "## 编辑文档",
       "`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document` -> 按目标选择工具：写新内容用 `write_node_document`，追加内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，只改全文样式用 `update_node_document_style`。",
       "",
-      "传入 `text` 时使用干净文本或 Markdown 标题；系统会自动生成统一排版：章节标题蓝色加粗，条款标题蓝色加粗，正文为深色常规文本。",
+      "传入 `text` 时使用中国文章结构；系统自动生成黑体标题层级、宋体正文、两字符首行缩进、两端对齐和比例行距。",
       "",
-      "文档 text 使用结构化纯文本：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 这类字段标签、编号或项目列表、简洁正文。独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。不要把 Mermaid/Markdown fenced block 当正文；导图结构应写入导图工具，文档内只保留结构化标题和稳定编号大纲。",
+      "节点名称已作为文档抬头；独立文章标题才写 `#`。文档 text 使用 `一、`/`（一）`/`1.`/`（1）` 四级标题、`> ` 引用、字段标签、列表和逐段正文。空输入行只标记段落边界，不生成大空白行；URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进保持原样。",
       "",
       "数学表达优先使用规范符号和可读公式文本：例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。避免把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入；AIstudy 会尽量自动规范化，但调用方仍应输出干净内容。",
       "",
-      "`format_node_document` 是安全样式工具：只允许改字体、颜色、粗体、下划线等样式字段，不允许删空行、插空行、缩进、拆段、合段或改写 `value`。",
+      "`format_node_document` 是安全样式工具：只应用中国文章字体、标题层级、对齐和行距，不允许删空行、插空行、补写缩进字符、拆段、合段或改写 `value`。",
       "",
       "禁止手写 canvas-editor 内部元素来实现排版。需要调整正文结构时，应读取全文后让用户确认，再用 `write_node_document` 重建整篇；不要把格式清理伪装成内容重写。",
       "",
@@ -515,7 +515,7 @@ function createMcpPrompt(name, args = {}) {
     aistudy_start: "你已经接入 AIstudy MCP。请先调用 mcp_get_started，再按返回的 nextSteps 做只读探测，不要进行编辑。",
     aistudy_read_knowledge: `请用 AIstudy MCP 读取知识库内容。目标：${target || "由用户当前问题决定"}。先 mcp_get_started，再 mcp_resolve_target，不要猜 courseId 或 nodeId。`,
     aistudy_edit_mindmap: `请用 AIstudy MCP 编辑思维导图。需求：${intent || "未提供"}。先 mcp_plan_task，再 mcp_resolve_target，确认 AISTUDY_MCP_ALLOW_EDIT=1 后只调用必要的编辑工具。`,
-    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId，读出现有文档。写内容用 write_node_document/append_node_document；text 按“标题、短步骤标题、目标/数据来源/推荐 Action 字段标签、编号或项目列表、简洁正文”组织，独立知识点之间空一行，不要用额外空行制造间距；不要把 Mermaid/Markdown fenced block 原样写进文档，导图结构优先用导图工具，文档里只保留结构化标题和稳定编号大纲；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本。整理排版用 format_node_document；简单全文样式用 update_node_document_style。`
+    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId 并读取最新快照。节点名称已作为文档抬头展示，正文无需重复；只有独立文章标题才写 # 标题。正文按“一、/（一）/1./（1）四级标题、> 引用、字段标签、列表、逐段正文”组织，空行只表示段落边界，不用空行制造视觉间距。write_node_document/append_node_document 会自动应用宋体正文、黑体层级、两字符首行缩进、两端对齐和中文标点；URL、Windows 路径、邮箱、代码和公式保持原样。已有文档只整理样式时用 format_node_document，它逐字保留正文且不会补缩进字符。`
   };
   const text = textByName[name];
   if (!text) throw new Error("Unknown MCP prompt.");
@@ -1997,16 +1997,21 @@ async function updateMindMapLayout(runtime, args) {
 }
 
 const DOCUMENT_TEMPLATE_STYLE = {
-  section: { size: 22, color: "#2563eb", bold: true },
-  subsection: { size: 20, color: "#1f2937", bold: true },
-  article: { size: 20, color: "#2563eb", bold: true },
-  label: { size: 20, color: "#1f2937", bold: true },
-  treeParent: { size: 20, color: "#2563eb", bold: true },
-  treeItem: { size: 19, color: "#334155", bold: false },
-  list: { size: 20, color: "#1f2937", bold: false },
-  body: { size: 20, color: "#1f2937", bold: false },
-  code: { size: 18, color: "#334155", bold: false, font: "Consolas", highlight: "#f1f5f9" },
-  spacer: { size: 8, color: "#1f2937", bold: false }
+  title: { font: "SimHei", size: 30, color: "#111827", bold: true, rowFlex: "center", rowMargin: 1.5, level: "first" },
+  subtitle: { font: "KaiTi", size: 22, color: "#475569", bold: false, rowFlex: "center", rowMargin: 1.4 },
+  section: { font: "SimHei", size: 24, color: "#111827", bold: true, rowFlex: "left", rowMargin: 1.45, level: "second" },
+  subsection: { font: "SimHei", size: 22, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.4, level: "third" },
+  third: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.35, level: "fourth" },
+  fourth: { font: "SimSun", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.3, level: "fifth" },
+  article: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.35, level: "fourth" },
+  label: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.55 },
+  quote: { font: "KaiTi", size: 20, color: "#475569", bold: false, rowFlex: "alignment", rowMargin: 1.6 },
+  treeParent: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.45 },
+  treeItem: { font: "SimSun", size: 19, color: "#334155", bold: false, rowFlex: "left", rowMargin: 1.45 },
+  list: { font: "SimSun", size: 20, color: "#1f2937", bold: false, rowFlex: "left", rowMargin: 1.55 },
+  body: { font: "SimSun", size: 20, color: "#1f2937", bold: false, rowFlex: "alignment", rowMargin: 1.65 },
+  code: { font: "Consolas", size: 18, color: "#334155", bold: false, highlight: "#f1f5f9", rowFlex: "left", rowMargin: 1.3 },
+  spacer: { font: "SimSun", size: 8, color: "#1f2937", bold: false, rowMargin: 1 }
 };
 const DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
@@ -2076,6 +2081,7 @@ const DOCUMENT_TEMPLATE_STYLE_KEYS = new Set([
   "color",
   "highlight",
   "rowFlex",
+  "rowMargin",
   "listType",
   "listStyle",
   "listId",
@@ -2168,6 +2174,7 @@ const DOCUMENT_TEXT_SKIP_KEYS = new Set([
   "color",
   "highlight",
   "rowFlex",
+  "rowMargin",
   "listType",
   "listStyle",
   "listId",
@@ -2226,6 +2233,10 @@ function stripMarkdownHeading(line) {
   return String(line || "").replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
 }
 
+function getMarkdownHeadingDepth(line) {
+  return String(line || "").match(/^(#{1,6})\s+\S/)?.[1]?.length || 0;
+}
+
 function isDocumentTemplateNumberHeadingText(value) {
   return /^\d+[.．、]\s*\S.{0,60}$/.test(String(value || "").trim());
 }
@@ -2233,9 +2244,14 @@ function isDocumentTemplateNumberHeadingText(value) {
 function classifyDocumentTemplateLine(line) {
   const plain = stripMarkdownHeading(line);
   if (!plain) return null;
-  if (/^#{1,2}\s+/.test(line) || /^[一二三四五六七八九十]+[、.．]/.test(plain)) return "section";
-  if (/^#{3,6}\s+/.test(line) || /^[（(][一二三四五六七八九十\d]+[）)]、?/.test(plain) || isDocumentTemplateNumberHeadingText(plain)) return "subsection";
+  const markdownDepth = getMarkdownHeadingDepth(line);
+  if (markdownDepth === 1) return "title";
+  if (markdownDepth === 2 || /^[一二三四五六七八九十]+[、.．]/.test(plain)) return "section";
+  if (markdownDepth === 3 || /^[（(][一二三四五六七八九十]+[）)]、?/.test(plain)) return "subsection";
+  if (markdownDepth === 4 || isDocumentTemplateNumberHeadingText(plain)) return "third";
+  if (markdownDepth >= 5 || /^[（(]\d+[）)]、?/.test(plain)) return "fourth";
   if (/^第[一二三四五六七八九十百千万\d]+条/.test(plain)) return "article";
+  if (/^(?:副标题[:：]\s*|——)\S/.test(plain)) return "subtitle";
   return "body";
 }
 
@@ -2244,7 +2260,8 @@ function splitDocumentTemplateHeadingLine(line) {
   const patterns = [
     { kind: "section", regex: /^([一二三四五六七八九十]+[、.．][^：:\n]{1,80}[：:])\s*(.+)$/ },
     { kind: "subsection", regex: /^([（(][一二三四五六七八九十\d]+[）)]、?[^：:\n]{1,80}[：:])\s*(.+)$/ },
-    { kind: "subsection", regex: /^(\d+[.．、]\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "third", regex: /^(\d+[.．、]\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "fourth", regex: /^([（(]\d+[）)]、?\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
     { kind: "article", regex: /^(第[一二三四五六七八九十百千万\d]+条[^：:\n]{0,80}[：:]?)\s*(.+)$/ }
   ];
   for (const { kind, regex } of patterns) {
@@ -2269,7 +2286,7 @@ function isStructuredDocumentNumberHeading(value) {
 function isStructuredDocumentLabelLine(value) {
   const text = String(value || "").trim();
   if (!text || text.length > 80) return false;
-  if (/^https?:\/\//i.test(text)) return false;
+  if (/https?:\/\//i.test(text)) return false;
   return /^[^:：\n]{2,24}[:：]\s*\S{0,80}$/.test(text);
 }
 
@@ -2283,12 +2300,19 @@ function splitStructuredDocumentLabelLine(value) {
 function classifyStructuredDocumentLine(line, previousKind = "") {
   const plain = stripMarkdownHeading(line);
   if (!plain) return null;
-  if (/^#{1,2}\s+/.test(line) || /^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(plain)) return "section";
-  if (/^#{3,6}\s+/.test(line)) return "subsection";
+  const markdownDepth = getMarkdownHeadingDepth(line);
+  if (markdownDepth === 1) return "title";
+  if (markdownDepth === 2 || /^[一二三四五六七八九十]+[、.．]\s*\S/.test(plain)) return "section";
+  if (markdownDepth === 3 || /^[（(][一二三四五六七八九十]+[）)]、?\s*\S/.test(plain)) return "subsection";
+  if (markdownDepth === 4) return "third";
+  if (markdownDepth >= 5 || /^[（(]\d+[）)]、?\s*\S/.test(plain)) return "fourth";
+  if (/^第[一二三四五六七八九十百千万\d]+条/.test(plain)) return "article";
+  if (/^(?:副标题[:：]\s*|——)\S/.test(plain)) return "subtitle";
+  if (/^>\s*\S/.test(String(line || "").trim())) return "quote";
   if (/^[-*+]\s+\S/.test(plain)) return "list";
   if (/^\d+[.)．、]\s+\S/.test(plain)) {
     if (previousKind === "label") return "list";
-    return isStructuredDocumentNumberHeading(plain) ? "subsection" : "list";
+    return isStructuredDocumentNumberHeading(plain) ? "third" : "list";
   }
   if (isStructuredDocumentLabelLine(plain)) return "label";
   return "body";
@@ -2320,7 +2344,7 @@ function normalizeDocumentNestedScriptText(value) {
 }
 
 const DOCUMENT_FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
-const DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDY_PATH_";
+const DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDYPATH";
 const DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
 
 function protectDocumentFilePathText(value) {
@@ -2338,6 +2362,54 @@ function restoreDocumentFilePathText(value, paths) {
     new RegExp(`${DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
     (_match, index) => paths[Number(index)] ?? ""
   );
+}
+
+const DOCUMENT_INLINE_PROTECTED_PATTERN = /`[^`\n]+`|https?:\/\/[^\s]+|www\.[^\s]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
+const DOCUMENT_INLINE_PLACEHOLDER_PREFIX = "\uE002AISTUDY_INLINE_";
+const DOCUMENT_INLINE_PLACEHOLDER_SUFFIX = "\uE003";
+const DOCUMENT_CHINESE_PUNCTUATION = new Map([
+  [",", "，"],
+  [";", "；"],
+  [":", "："],
+  ["?", "？"],
+  ["!", "！"]
+]);
+const DOCUMENT_CHINESE_TYPOGRAPHY_KINDS = new Set([
+  "title",
+  "subtitle",
+  "section",
+  "subsection",
+  "third",
+  "fourth",
+  "article",
+  "label",
+  "quote",
+  "body"
+]);
+
+function normalizeChineseArticleTypography(value) {
+  const protectedValues = [];
+  let text = String(value ?? "").replace(DOCUMENT_INLINE_PROTECTED_PATTERN, (match) => {
+    const index = protectedValues.push(match) - 1;
+    return `${DOCUMENT_INLINE_PLACEHOLDER_PREFIX}${index}${DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`;
+  });
+  text = text
+    .replace(/[ \t]+([，。；：！？、])/g, "$1")
+    .replace(/([\p{Script=Han}])([A-Za-z])/gu, "$1 $2")
+    .replace(/([A-Za-z])([\p{Script=Han}])/gu, "$1 $2")
+    .replace(/([\p{Script=Han}])([,;:?!])/gu, (_match, chinese, punctuation) => `${chinese}${DOCUMENT_CHINESE_PUNCTUATION.get(punctuation)}`)
+    .replace(/([,;:?!])(?=[\p{Script=Han}])/gu, (punctuation) => DOCUMENT_CHINESE_PUNCTUATION.get(punctuation))
+    .replace(/ {2,}/g, " ");
+  return text.replace(
+    new RegExp(`${DOCUMENT_INLINE_PLACEHOLDER_PREFIX}(\\d+)${DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => protectedValues[Number(index)] ?? ""
+  );
+}
+
+function ensureChineseBodyParagraphIndent(value) {
+  const text = String(value ?? "");
+  if (!text.trim() || /^[\s\u3000]/.test(text) || /^(?:https?:\/\/|www\.|[A-Za-z]:\\|\\\\)/i.test(text)) return text;
+  return `　　${text}`;
 }
 
 function normalizeDocumentMathText(value) {
@@ -2414,7 +2486,12 @@ function normalizeDocumentMathText(value) {
 }
 
 function createTemplateElement(value, kind) {
-  return { value: normalizeDocumentMathText(value), ...DOCUMENT_TEMPLATE_STYLE[kind] };
+  const mathNormalized = normalizeDocumentMathText(value);
+  const proseNormalized = DOCUMENT_CHINESE_TYPOGRAPHY_KINDS.has(kind)
+    ? normalizeChineseArticleTypography(mathNormalized)
+    : mathNormalized;
+  const formattedValue = kind === "body" ? ensureChineseBodyParagraphIndent(proseNormalized) : proseNormalized;
+  return { value: formattedValue, ...DOCUMENT_TEMPLATE_STYLE[kind] };
 }
 
 function createRawTemplateElement(value, kind) {
@@ -2570,18 +2647,20 @@ function buildDocumentTemplateElements(text) {
   let fenceMarker = "";
   let fenceLines = [];
   const flushBody = () => {
-    const body = normalizeDocumentTemplateValue(bodyLines.join("\n"));
+    const paragraphs = bodyLines
+      .map((line) => normalizeDocumentTemplateValue(line))
+      .filter(Boolean);
     bodyLines = [];
-    if (body) {
-      elements.push(...createTemplateElements(`${body}\n`, "body"));
-      appendDocumentTemplateSpacer(elements);
+    if (paragraphs.length > 0) {
+      for (const paragraph of paragraphs) {
+        elements.push(...createTemplateElements(`${paragraph}\n`, "body"));
+      }
       previousKind = "body";
     }
   };
   const flushTree = () => {
     if (treeLines.length <= 0) return;
     elements.push(...createAsciiTreeElements(treeLines));
-    appendDocumentTemplateSpacer(elements);
     treeLines = [];
     previousKind = "list";
   };
@@ -2592,7 +2671,6 @@ function buildDocumentTemplateElements(text) {
     fenceLines = [];
     if (fencedElements.length > 0) {
       elements.push(...fencedElements);
-      appendDocumentTemplateSpacer(elements);
       previousKind = "body";
     }
   };
@@ -2621,7 +2699,7 @@ function buildDocumentTemplateElements(text) {
       flushBody();
       continue;
     }
-    if (parseAsciiTreeLine(rawLine)) {
+    if (parseAsciiTreeLine(rawLine) && !/^[-*+]\s+\S/.test(line)) {
       flushBody();
       treeLines.push(String(rawLine || ""));
       continue;
@@ -2630,7 +2708,6 @@ function buildDocumentTemplateElements(text) {
     const splitHeading = splitDocumentTemplateHeadingLine(rawLine);
     if (splitHeading) {
       flushBody();
-      if (previousKind && previousKind !== "section") appendDocumentTemplateSpacer(elements);
       elements.push(createTemplateElement(`${splitHeading.heading}\n`, splitHeading.kind));
       bodyLines.push(splitHeading.rest);
       previousKind = splitHeading.kind;
@@ -2653,9 +2730,14 @@ function buildDocumentTemplateElements(text) {
       previousKind = "list";
       continue;
     }
+    if (kind === "quote") {
+      flushBody();
+      elements.push(...createTemplateElements(`${String(rawLine || "").trim().replace(/^>\s*/, "")}\n`, "quote"));
+      previousKind = "quote";
+      continue;
+    }
     if (kind && kind !== "body") {
       flushBody();
-      if (previousKind && previousKind !== "section") appendDocumentTemplateSpacer(elements);
       elements.push(createTemplateElement(`${stripMarkdownHeading(rawLine)}\n`, kind));
       previousKind = kind;
       continue;
@@ -2673,7 +2755,7 @@ function sanitizeDocumentElementValue(value) {
   return String(value ?? "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
-    .replace(/\u3000{2,}/g, "\u3000")
+    .replace(/\u3000{3,}/g, "\u3000\u3000")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n");
 }
@@ -2859,9 +2941,6 @@ function createDocumentTextIntegrity(rawText, normalizedText) {
   return { rawTextLength, normalizedTextLength, lostTextLength, warning };
 }
 
-const DOCUMENT_FORMAT_TEXT_COLOR = "#1f2937";
-const DOCUMENT_FORMAT_PRIMARY_COLOR = "#2563eb";
-
 function documentElementText(value) {
   return (Array.isArray(value) ? value : []).map((item) => String(item?.value ?? "")).join("");
 }
@@ -2876,14 +2955,25 @@ function getDocumentElementCoreText(value) {
 
 function isDocumentMainHeadingText(value) {
   const text = getDocumentElementCoreText(value);
-  if (/^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(text)) return true;
-  return /^[一二三四五六七八九十]+[、.．]/.test(getDocumentElementCoreText(value));
+  return /^[一二三四五六七八九十]+[、.．]\s*\S/.test(text);
+}
+
+function isDocumentSecondHeadingText(value) {
+  return /^[（(][一二三四五六七八九十]+[）)]、?\s*\S/.test(getDocumentElementCoreText(value));
 }
 
 function isDocumentNumberHeadingText(value) {
   const text = getDocumentElementCoreText(value);
   if (/^\d+[.)．、]\s+\S/.test(text)) return isStructuredDocumentNumberHeading(text);
   return /^\d+[.．]\s*\S/.test(getDocumentElementCoreText(value));
+}
+
+function isDocumentFourthHeadingText(value) {
+  return /^[（(]\d+[）)]、?\s*\S/.test(getDocumentElementCoreText(value));
+}
+
+function isDocumentArticleHeadingText(value) {
+  return /^第[一二三四五六七八九十百千万\d]+条/.test(getDocumentElementCoreText(value));
 }
 
 function isDocumentLabelText(value) {
@@ -2896,57 +2986,48 @@ function isDocumentUrlText(value) {
   return /^https?:\/\//i.test(getDocumentElementCoreText(value));
 }
 
-function isDocumentBodyElement(element) {
-  const text = getDocumentElementCoreText(element?.value);
-  return Boolean(text) && !isDocumentMainHeadingText(text) && !isDocumentNumberHeadingText(text) && !isDocumentLabelText(text) && !isDocumentUrlText(text);
+function isDocumentListText(value) {
+  return /^(?:[-*+]\s+|\d+[.)．、]\s+)/.test(getDocumentElementCoreText(value));
+}
+
+function isDocumentQuoteText(value) {
+  return /^>\s*\S/.test(getDocumentElementCoreText(value));
+}
+
+function isDocumentCodeElement(element) {
+  return element?.font === "Consolas" || typeof element?.highlight === "string" && element.highlight.length > 0;
+}
+
+function classifyDocumentElementForFormatting(element) {
+  const value = element?.value;
+  const text = getDocumentElementCoreText(value);
+  if (!text) return "spacer";
+  if (isDocumentCodeElement(element)) return "code";
+  if (element?.level === "first" || element?.rowFlex === "center" && Number(element?.size) >= 26) return "title";
+  if (/^(?:副标题[:：]\s*|——)\S/.test(text)) return "subtitle";
+  if (isDocumentMainHeadingText(value)) return "section";
+  if (isDocumentSecondHeadingText(value)) return "subsection";
+  if (isDocumentFourthHeadingText(value)) return "fourth";
+  if (isDocumentArticleHeadingText(value)) return "article";
+  if (isDocumentNumberHeadingText(value)) return "third";
+  if (isDocumentQuoteText(value)) return "quote";
+  if (element?.listType || isDocumentListText(value)) return "list";
+  if (isDocumentLabelText(value)) return "label";
+  if (isDocumentUrlText(value)) return "url";
+  return "body";
 }
 
 function stylePreservedDocumentElement(element) {
   const next = { ...(element || {}) };
-  delete next.rowFlex;
-  const value = typeof next.value === "string" ? next.value : "";
-  const text = getDocumentElementCoreText(value);
-  if (!text) {
-    if (typeof next.value === "string") {
-      next.size = 8;
-      next.bold = false;
-      next.color = DOCUMENT_FORMAT_TEXT_COLOR;
-      delete next.underline;
-    }
+  if (typeof next.value !== "string") return next;
+  if (typeof next.type === "string" && !["text", "hyperlink"].includes(next.type)) return next;
+  const kind = classifyDocumentElementForFormatting(next);
+  if (kind === "url") {
+    Object.assign(next, DOCUMENT_TEMPLATE_STYLE.body, { color: "#2563eb", underline: true, rowFlex: "left" });
     return next;
   }
-  if (isDocumentMainHeadingText(value)) {
-    next.size = 28;
-    next.bold = true;
-    next.color = DOCUMENT_FORMAT_PRIMARY_COLOR;
-    next.underline = true;
-    return next;
-  }
-  if (isDocumentNumberHeadingText(value)) {
-    next.size = 22;
-    next.bold = true;
-    next.color = DOCUMENT_FORMAT_TEXT_COLOR;
-    delete next.underline;
-    return next;
-  }
-  if (isDocumentLabelText(value)) {
-    next.size = 20;
-    next.bold = true;
-    next.color = DOCUMENT_FORMAT_TEXT_COLOR;
-    delete next.underline;
-    return next;
-  }
-  if (isDocumentUrlText(value)) {
-    next.size = 20;
-    next.bold = false;
-    next.color = DOCUMENT_FORMAT_PRIMARY_COLOR;
-    next.underline = true;
-    return next;
-  }
-  next.size = 20;
-  next.bold = false;
-  next.color = DOCUMENT_FORMAT_TEXT_COLOR;
-  delete next.underline;
+  Object.assign(next, DOCUMENT_TEMPLATE_STYLE[kind]);
+  if (kind !== "url") delete next.underline;
   return next;
 }
 
@@ -3499,7 +3580,7 @@ async function appendNodeDocument(runtime, args) {
   snapshot.content.main = Array.isArray(snapshot.content.main) ? snapshot.content.main : [];
   const last = snapshot.content.main[snapshot.content.main.length - 1];
   const lastValue = last && typeof last === "object" && typeof last.value === "string" ? last.value : "";
-  if (snapshot.content.main.length > 0 && !lastValue.endsWith("\n\n")) {
+  if (snapshot.content.main.length > 0 && lastValue && !lastValue.endsWith("\n")) {
     snapshot.content.main.push(createTemplateElement("\n", "spacer"));
   }
   snapshot.content.main.push(...buildDocumentTemplateElements(args.text || ""));
@@ -3975,6 +4056,8 @@ export {
   cleanExtractedDocumentText,
   createDocumentTextIntegrity,
   extractDocumentText,
+  formatDocumentSnapshotPreservingText,
+  normalizeChineseArticleTypography,
   normalizeDocumentMathText,
   normalizeDocumentSnapshot,
   startStdioServer

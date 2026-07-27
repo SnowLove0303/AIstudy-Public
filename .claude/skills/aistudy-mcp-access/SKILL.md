@@ -52,15 +52,16 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 
 ## Document Editing Rules
 
-- Write structured text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, then concise body paragraphs.
-- Do not add blank lines merely for visual spacing; AIstudy applies compact spacing automatically.
+- The node name is already rendered as the document heading. Do not repeat it in the body unless the content has a distinct article title; use `# 标题` only for that explicit article title.
+- Use Chinese article hierarchy in text input: `一、` for the first level, `（一）` for the second, `1.` for the third, and `（1）` for the fourth. Use `> ` for quotations, `字段：内容` for labels, and normal bullet or numbered lists where appropriate.
+- Put one natural body paragraph on each line. Blank input lines may mark paragraph boundaries, but AIstudy renders paragraph spacing instead of visible blank rows.
+- New text written or appended through MCP receives Chinese heading/body fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent. Safe Chinese-English spacing and Chinese punctuation are normalized while URLs, Windows paths, email addresses, inline/fenced code, formulas, tree indentation, and list markers are protected.
 - Use `write_node_document` only for new content or explicit whole-document replacement with `replaceExisting: true`.
 - Read `currentSnapshotId` first and pass it as `expectedSnapshotId` for replacement, append, formatting, or style changes. A stale version fails with `DOCUMENT_VERSION_CONFLICT`.
 - Use `append_node_document` for additions.
-- Separate independent knowledge points with exactly one blank line.
 - Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map tools for actual mind map structure; if a diagram must appear in a document, convert it to headings, field labels, and stable numbered outlines instead of whitespace-dependent trees.
 - For math content, use standard symbols or readable formula text such as `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, and `|x_n-a| < ε`; do not leave degraded tokens such as `epsilon`, `infinity`, `->`, or `lim_{n->infinity}` in the final document text.
-- Use `format_node_document` only for style cleanup that preserves every editor element `value` exactly.
+- Use `format_node_document` only for Chinese-article style cleanup that preserves every editor element `value` exactly. Because it is text-preserving, it does not insert missing first-line indent characters.
 - Use `update_node_document_style` only for simple full-document style changes.
 - Do not call `write_node_document` merely to fix formatting.
 

@@ -217,7 +217,7 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 - `read_node_document`：默认 `mode: "text"` 只返回一份清理正文；`mode: "snapshot"` 返回编辑器快照；`mode: "audit"` 返回完整诊断字段。
 - `write_node_document`：创建节点文档或在明确授权时覆盖整篇。节点已有内容时，必须显式传 `replaceExisting: true` 才允许覆盖；不要把它当作“排版工具”使用。
 - `append_node_document`：在节点文档末尾追加干净文本或 Markdown 标题。
-- `format_node_document`：只做已有节点文档的样式清理。它必须逐字保留每一个编辑器元素的 `value`，不得改写文字、修剪空白、删除空行、插入空行、缩进、拆段或合段。
+- `format_node_document`：只应用中国文章字体、标题层级、对齐和行距。它必须逐字保留每一个编辑器元素的 `value`，不得改写文字、修剪空白、删除空行、插入空行、补写首行缩进字符、拆段或合段。
 - `update_node_document_style`：只做全文字号、颜色、粗体、斜体、下划线等简单样式调整；不得拆段、加空行或重写内容。
 
 文档写入规则：
@@ -229,10 +229,10 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 - 已有文档的覆盖、追加、排版和样式写入必须携带最近一次读取返回的 `currentSnapshotId` 作为 `expectedSnapshotId`；版本不一致时返回 `DOCUMENT_VERSION_CONFLICT`。
 - 显式 `courseId`、`mindMapId`、`nodeId` 必须使用完整 ID；短前缀只允许放在紧凑引用中，并且必须唯一匹配。
 - 新内容写入用 `write_node_document`，补内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，简单全文样式用 `update_node_document_style`。
-- `write_node_document` 和 `append_node_document` 的 `text` 必须保持干净并结构化：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 字段标签、编号或项目列表、简洁正文；独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距；不要把 Mermaid 或 Markdown fenced block 原样写入正文，真实导图结构优先使用导图工具，文档内需要说明时改写成标题和稳定编号大纲，不依赖普通空格缩进或树形线条字符。
+- `write_node_document` 和 `append_node_document` 的 `text` 必须保持干净并结构化。节点名称已经作为文档抬头，正文默认不重复；只有独立文章标题才写 `# 标题`。使用 `一、`、`（一）`、`1.`、`（1）` 四级标题、`> ` 引用、`目标：`/`数据来源：` 字段标签、列表和逐段正文。每行是一段自然正文，空输入行只标记段落边界，系统通过比例行距而不是可见空白行分段。新正文自动应用宋体、两字符首行缩进、两端对齐和中文标点；中英文相邻间距会安全规范化，同时保护 URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进。
 - 数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。不要把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入最终文档。
 - `format_node_document` 写入前必须校验元素数量一致、所有 `value` 逐字一致；校验失败必须中断，不得写入。
-- MCP 不再把“清理空行、缩进正文、重排段落”当作安全排版。需要改变正文结构时，必须先读全文、让用户确认，再用 `write_node_document` 重建整篇。
+- MCP 不把“清理空行、补写缩进字符、重排段落”当作已有文档的安全排版。需要改变正文结构时，必须先读全文、让用户确认，再用 `write_node_document` 重建整篇。
 
 ### 本地定位和交接
 

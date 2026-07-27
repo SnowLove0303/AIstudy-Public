@@ -467,7 +467,7 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     id: "write_node_document",
     mode: "edit",
     title: "写入节点文档",
-    description: "写入或覆盖指定导图节点的文档，可传纯文本或完整文档快照。",
+    description: "按中国文章规范写入节点文档：支持标题层级、正文首行缩进、两端对齐、引用、列表、标签和代码保护。",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: documentSchema
   },
@@ -475,7 +475,7 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     id: "append_node_document",
     mode: "edit",
     title: "追加节点文档",
-    description: "在指定节点文档末尾追加文本。",
+    description: "按与新文档一致的中国文章排版规则追加文本，并使用快照版本防止并发覆盖。",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: documentSchema
   },
@@ -483,7 +483,7 @@ const mcpToolDefinitions: McpToolDefinition[] = [
     id: "format_node_document",
     mode: "edit",
     title: "整理文档样式",
-    description: "只整理已有节点文档样式，必须逐字保留正文、空白和段落结构。",
+    description: "只应用中国文章字体、层级、对齐和行距，必须逐字保留正文、空白和段落结构。",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: documentSchema
   },
@@ -551,7 +551,7 @@ function createMcpInstructions() {
     "Never guess courseId, mapId, or nodeId. Use read_courses and mcp_resolve_target before reading or editing a specific item.",
     "For read work: if AIstudy copied a compact aistudy://node/... ref, pass it directly to read_node_context. Otherwise use read_courses, mcp_resolve_target, search_nodes, read_node_context, read_current_mindmap, list_node_documents, and read_node_document.",
     "For edit work: first resolve the exact target, then call mcp_plan_task with allowEdit=true, then use the specific edit tool. Edit tools require AISTUDY_MCP_ALLOW_EDIT=1.",
-    "For document writes: use write_node_document only for new content or explicit whole-document replacement with replaceExisting=true. Use append_node_document for additions. Pass structured plain text: section headings, short step headings, field labels such as 目标：/数据来源：, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line, and do not add blank lines only for visual spacing. For math, write standard symbols or readable formula text such as ε, δ, ∞, →, ≤, ≥, x_n, x^2, lim_{n→∞}; AIstudy normalizes common degraded tokens like epsilon/infinity/-> into document-safe math text. Use format_node_document for style cleanup that preserves every value, and update_node_document_style for simple whole-document style changes.",
+    "For document writes: the node name is already displayed as the document heading, so do not repeat it unless a distinct article title is required. Use # for that optional title, then 一、/（一）/1./（1） for four Chinese article heading levels, > for quotations, field labels, lists, and one body paragraph per line. AIstudy uses paragraph spacing instead of visible blank rows and gives new body paragraphs two-character first-line indent, justified alignment, Chinese fonts, and safe Chinese punctuation. URLs, Windows paths, email, code, formulas, and list markers are protected. Use format_node_document for style-only cleanup; it preserves every value and therefore does not insert missing indent characters.",
     "For browser port work: call chrome_ports_status first, then chrome_port_open_page with a platformId and optional URL.",
     "For node-document handoff, prefer the compact aistudy://node/... ref. When a user explicitly asks for a local boundary file, use resolve_course_locator instead of returning display breadcrumbs."
   ].join("\n");
@@ -601,7 +601,7 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "4. 读取任务优先走 `read_node_context`；全库摘要用 `read_current_mindmap`，定位用 `search_nodes`，单文档完整快照用 `read_node_document`。",
       "5. 端口任务先调用 `chrome_ports_status`，再 `chrome_port_open_page` 打开对应平台页面。",
       "6. 编辑任务先确认 `AISTUDY_MCP_ALLOW_EDIT=1`，再调用具体编辑工具。",
-      "7. 写入文档时独立知识点之间必须空一行；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 这类规范表达，不写 `epsilon`、`infinity`、`->` 这类退化文本。",
+      "7. 节点名称已作为文档抬头，正文默认不重复；独立文章标题才用 `#`。正文按 `一、`/`（一）`/`1.`/`（1）` 四级标题、引用、字段标签、列表和逐段正文组织，系统自动应用中国文章字体、首行缩进、两端对齐和行距。",
       "",
       "不要把 UI 面包屑当成本地路径。需要给其他 Codex/Claude Code 定位时，调用 `resolve_course_locator`。"
     ].join("\n");
@@ -625,7 +625,7 @@ function createMcpResourceText(uri: string, tools: ReturnType<typeof createStati
       "## 编辑文档",
       "`mcp_resolve_target({ courseName, nodeQuery })` -> `read_node_document` -> 按目标选择工具：写新内容用 `write_node_document`，追加内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，只改全文样式用 `update_node_document_style`。",
       "",
-      "传入 `text` 时使用结构化纯文本或 Markdown 标题：一级标题、短步骤标题、`目标：`/`数据来源：`/`推荐 Action:` 字段标签、编号或项目列表、简洁正文；独立知识点之间保留且只保留一个空行，不要用额外空行制造视觉间距。",
+      "节点名称已作为文档抬头；独立文章标题才写 `#`。文档 text 使用 `一、`/`（一）`/`1.`/`（1）` 四级标题、`> ` 引用、字段标签、列表和逐段正文。空输入行只标记段落边界；URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进保持原样。",
       "",
       "数学表达优先使用规范符号和可读公式文本：例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。避免把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入；AIstudy 会尽量自动规范化，但调用方仍应输出干净内容。",
       "",
@@ -694,7 +694,7 @@ function createMcpPrompt(name: string, args: Record<string, unknown>) {
     aistudy_start: "你已经接入 AIstudy MCP。请先调用 mcp_get_started，再按返回的 nextSteps 做只读探测，不要进行编辑。",
     aistudy_read_knowledge: `请用 AIstudy MCP 读取知识库内容。目标：${target || "由用户当前问题决定"}。先 mcp_get_started，再 mcp_resolve_target，不要猜 courseId 或 nodeId。`,
     aistudy_edit_mindmap: `请用 AIstudy MCP 编辑思维导图。需求：${intent || "未提供"}。先 mcp_plan_task，再 mcp_resolve_target，确认 AISTUDY_MCP_ALLOW_EDIT=1 后只调用必要的编辑工具。`,
-    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId 并读取现有文档。新增内容用 append_node_document；写入 text 按“标题、短步骤标题、目标/数据来源/推荐 Action 字段标签、编号或项目列表、简洁正文”组织，独立知识点之间空一行，不要用额外空行制造间距；数学内容用 ε、δ、∞、→、≤、≥、x_n、x^2、lim_{n→∞} 等规范表达，不写 epsilon/infinity/-> 退化文本；整理排版用 format_node_document，它只能改样式，不能改正文、空行或缩进；write_node_document 只用于新文档，覆盖已有全文必须由用户明确要求并传 replaceExisting=true。`
+    aistudy_edit_document: `请用 AIstudy MCP 编辑节点文档。需求：${intent || "未提供"}。先解析 courseId/nodeId 并读取最新快照。节点名称已作为文档抬头，正文默认不重复；独立文章标题才使用 #。正文使用“一、/（一）/1./（1）四级标题、> 引用、字段标签、列表、逐段正文”，系统自动应用宋体正文、黑体层级、两字符首行缩进、两端对齐和中文标点，同时保护 URL、Windows 路径、邮箱、代码与公式。追加用 append_node_document；已有文档仅整理样式用 format_node_document，它逐字保留内容；整篇覆盖必须由用户明确要求并传 replaceExisting=true。`
   };
   const text = textByName[name];
   if (!text) throw new Error("Unknown MCP prompt.");

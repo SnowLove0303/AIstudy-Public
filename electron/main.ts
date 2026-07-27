@@ -8995,6 +8995,7 @@ const MCP_DOCUMENT_TEXT_SKIP_KEYS = new Set([
   "color",
   "highlight",
   "rowFlex",
+  "rowMargin",
   "listType",
   "listStyle",
   "listId",
@@ -9804,15 +9805,21 @@ async function resolveCourseLocatorForMcp(courseIdValue: unknown) {
 }
 
 const MCP_DOCUMENT_STYLE = {
-  section: { size: 22, color: "#2563eb", bold: true },
-  subsection: { size: 20, color: "#1f2937", bold: true },
-  article: { size: 20, color: "#2563eb", bold: true },
-  label: { size: 20, color: "#1f2937", bold: true },
-  treeParent: { size: 20, color: "#2563eb", bold: true },
-  treeItem: { size: 19, color: "#334155", bold: false },
-  list: { size: 20, color: "#1f2937", bold: false },
-  body: { size: 20, color: "#1f2937", bold: false },
-  spacer: { size: 8, color: "#111827", bold: false }
+  title: { font: "SimHei", size: 30, color: "#111827", bold: true, rowFlex: "center", rowMargin: 1.5, level: "first" },
+  subtitle: { font: "KaiTi", size: 22, color: "#475569", bold: false, rowFlex: "center", rowMargin: 1.4 },
+  section: { font: "SimHei", size: 24, color: "#111827", bold: true, rowFlex: "left", rowMargin: 1.45, level: "second" },
+  subsection: { font: "SimHei", size: 22, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.4, level: "third" },
+  third: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.35, level: "fourth" },
+  fourth: { font: "SimSun", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.3, level: "fifth" },
+  article: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.35, level: "fourth" },
+  label: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.55 },
+  quote: { font: "KaiTi", size: 20, color: "#475569", bold: false, rowFlex: "alignment", rowMargin: 1.6 },
+  treeParent: { font: "SimHei", size: 20, color: "#1f2937", bold: true, rowFlex: "left", rowMargin: 1.45 },
+  treeItem: { font: "SimSun", size: 19, color: "#334155", bold: false, rowFlex: "left", rowMargin: 1.45 },
+  list: { font: "SimSun", size: 20, color: "#1f2937", bold: false, rowFlex: "left", rowMargin: 1.55 },
+  body: { font: "SimSun", size: 20, color: "#1f2937", bold: false, rowFlex: "alignment", rowMargin: 1.65 },
+  code: { font: "Consolas", size: 18, color: "#334155", bold: false, highlight: "#f1f5f9", rowFlex: "left", rowMargin: 1.3 },
+  spacer: { font: "SimSun", size: 8, color: "#1f2937", bold: false, rowMargin: 1 }
 } as const;
 const MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const MCP_DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
@@ -9874,6 +9881,10 @@ function stripMcpMarkdownHeading(line: string) {
   return line.replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
 }
 
+function getMcpMarkdownHeadingDepth(line: string) {
+  return line.match(/^(#{1,6})\s+\S/)?.[1]?.length || 0;
+}
+
 function isMcpDocumentTemplateNumberHeadingText(value: string) {
   return /^\d+[.．、]\s*\S.{0,60}$/.test(value.trim());
 }
@@ -9881,10 +9892,14 @@ function isMcpDocumentTemplateNumberHeadingText(value: string) {
 function classifyMcpDocumentLine(line: string) {
   const plain = stripMcpMarkdownHeading(line);
   if (!plain) return null;
-  if (/^#{1,2}\s+/.test(line) || /^[一二三四五六七八九十]+[、.．]/.test(plain)) return "section";
-  if (/^#{3,6}\s+/.test(line) || /^[（(][一二三四五六七八九十\d]+[）)]、?/.test(plain) || isMcpDocumentTemplateNumberHeadingText(plain)) return "subsection";
+  const markdownDepth = getMcpMarkdownHeadingDepth(line);
+  if (markdownDepth === 1) return "title";
+  if (markdownDepth === 2 || /^[一二三四五六七八九十]+[、.．]/.test(plain)) return "section";
+  if (markdownDepth === 3 || /^[（(][一二三四五六七八九十]+[）)]、?/.test(plain)) return "subsection";
+  if (markdownDepth === 4 || isMcpDocumentTemplateNumberHeadingText(plain)) return "third";
+  if (markdownDepth >= 5 || /^[（(]\d+[）)]、?/.test(plain)) return "fourth";
   if (/^第[一二三四五六七八九十百千万\d]+条/.test(plain)) return "article";
-  if (plain.length <= 28 && /[:：]$/.test(plain)) return "subsection";
+  if (/^(?:副标题[:：]\s*|——)\S/.test(plain)) return "subtitle";
   return "body";
 }
 
@@ -9893,7 +9908,8 @@ function splitMcpDocumentHeadingLine(line: string): { kind: keyof typeof MCP_DOC
   const patterns: Array<{ kind: keyof typeof MCP_DOCUMENT_STYLE; regex: RegExp }> = [
     { kind: "section", regex: /^([一二三四五六七八九十]+[、.．][^：:\n]{1,80}[：:])\s*(.+)$/ },
     { kind: "subsection", regex: /^([（(][一二三四五六七八九十\d]+[）)]、?[^：:\n]{1,80}[：:])\s*(.+)$/ },
-    { kind: "subsection", regex: /^(\d+[.．、]\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "third", regex: /^(\d+[.．、]\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
+    { kind: "fourth", regex: /^([（(]\d+[）)]、?\s*[^：:\n]{1,80}[：:])\s*(.+)$/ },
     { kind: "article", regex: /^(第[一二三四五六七八九十百千万\d]+条[^：:\n]{0,80}[：:]?)\s*(.+)$/ }
   ];
   for (const { kind, regex } of patterns) {
@@ -9918,7 +9934,7 @@ function isStructuredMcpDocumentNumberHeading(value: string) {
 function isStructuredMcpDocumentLabelLine(value: string) {
   const text = String(value || "").trim();
   if (!text || text.length > 80) return false;
-  if (/^https?:\/\//i.test(text)) return false;
+  if (/https?:\/\//i.test(text)) return false;
   return /^[^:：\n]{2,24}[:：]\s*\S{0,80}$/.test(text);
 }
 
@@ -9932,12 +9948,19 @@ function splitStructuredMcpDocumentLabelLine(value: string) {
 function classifyStructuredMcpDocumentLine(line: string, previousKind = ""): keyof typeof MCP_DOCUMENT_STYLE | null {
   const plain = stripMcpMarkdownHeading(line);
   if (!plain) return null;
-  if (/^#{1,2}\s+/.test(line) || /^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(plain)) return "section";
-  if (/^#{3,6}\s+/.test(line)) return "subsection";
+  const markdownDepth = getMcpMarkdownHeadingDepth(line);
+  if (markdownDepth === 1) return "title";
+  if (markdownDepth === 2 || /^[一二三四五六七八九十]+[、.．]\s*\S/.test(plain)) return "section";
+  if (markdownDepth === 3 || /^[（(][一二三四五六七八九十]+[）)]、?\s*\S/.test(plain)) return "subsection";
+  if (markdownDepth === 4) return "third";
+  if (markdownDepth >= 5 || /^[（(]\d+[）)]、?\s*\S/.test(plain)) return "fourth";
+  if (/^第[一二三四五六七八九十百千万\d]+条/.test(plain)) return "article";
+  if (/^(?:副标题[:：]\s*|——)\S/.test(plain)) return "subtitle";
+  if (/^>\s*\S/.test(line.trim())) return "quote";
   if (/^[-*+]\s+\S/.test(plain)) return "list";
   if (/^\d+[.)．、]\s+\S/.test(plain)) {
     if (previousKind === "label") return "list";
-    return isStructuredMcpDocumentNumberHeading(plain) ? "subsection" : "list";
+    return isStructuredMcpDocumentNumberHeading(plain) ? "third" : "list";
   }
   if (isStructuredMcpDocumentLabelLine(plain)) return "label";
   return "body";
@@ -9969,7 +9992,7 @@ function normalizeMcpDocumentNestedScriptText(value: string) {
 }
 
 const MCP_DOCUMENT_FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
-const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDY_PATH_";
+const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDYPATH";
 const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
 
 function protectMcpDocumentFilePathText(value: string) {
@@ -9987,6 +10010,53 @@ function restoreMcpDocumentFilePathText(value: string, paths: string[]) {
     new RegExp(`${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
     (_match, index) => paths[Number(index)] ?? ""
   );
+}
+
+const MCP_DOCUMENT_INLINE_PROTECTED_PATTERN = /`[^`\n]+`|https?:\/\/[^\s]+|www\.[^\s]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
+const MCP_DOCUMENT_INLINE_PLACEHOLDER_PREFIX = "\uE002AISTUDY_INLINE_";
+const MCP_DOCUMENT_INLINE_PLACEHOLDER_SUFFIX = "\uE003";
+const MCP_DOCUMENT_CHINESE_PUNCTUATION = new Map<string, string>([
+  [",", "，"],
+  [";", "；"],
+  [":", "："],
+  ["?", "？"],
+  ["!", "！"]
+]);
+const MCP_DOCUMENT_CHINESE_TYPOGRAPHY_KINDS = new Set<keyof typeof MCP_DOCUMENT_STYLE>([
+  "title",
+  "subtitle",
+  "section",
+  "subsection",
+  "third",
+  "fourth",
+  "article",
+  "label",
+  "quote",
+  "body"
+]);
+
+function normalizeMcpChineseArticleTypography(value: string) {
+  const protectedValues: string[] = [];
+  let text = value.replace(MCP_DOCUMENT_INLINE_PROTECTED_PATTERN, (match) => {
+    const index = protectedValues.push(match) - 1;
+    return `${MCP_DOCUMENT_INLINE_PLACEHOLDER_PREFIX}${index}${MCP_DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`;
+  });
+  text = text
+    .replace(/[ \t]+([，。；：！？、])/g, "$1")
+    .replace(/([\p{Script=Han}])([A-Za-z])/gu, "$1 $2")
+    .replace(/([A-Za-z])([\p{Script=Han}])/gu, "$1 $2")
+    .replace(/([\p{Script=Han}])([,;:?!])/gu, (_match, chinese: string, punctuation: string) => `${chinese}${MCP_DOCUMENT_CHINESE_PUNCTUATION.get(punctuation)}`)
+    .replace(/([,;:?!])(?=[\p{Script=Han}])/gu, (punctuation) => MCP_DOCUMENT_CHINESE_PUNCTUATION.get(punctuation) || punctuation)
+    .replace(/ {2,}/g, " ");
+  return text.replace(
+    new RegExp(`${MCP_DOCUMENT_INLINE_PLACEHOLDER_PREFIX}(\\d+)${MCP_DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => protectedValues[Number(index)] ?? ""
+  );
+}
+
+function ensureMcpChineseBodyParagraphIndent(value: string) {
+  if (!value.trim() || /^[\s\u3000]/.test(value) || /^(?:https?:\/\/|www\.|[A-Za-z]:\\|\\\\)/i.test(value)) return value;
+  return `　　${value}`;
 }
 
 function normalizeMcpDocumentMathText(value: string) {
@@ -10063,8 +10133,20 @@ function normalizeMcpDocumentMathText(value: string) {
 }
 
 function createMcpDocumentElement(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {
+  const mathNormalized = normalizeMcpDocumentMathText(value);
+  const proseNormalized = MCP_DOCUMENT_CHINESE_TYPOGRAPHY_KINDS.has(kind)
+    ? normalizeMcpChineseArticleTypography(mathNormalized)
+    : mathNormalized;
+  const formattedValue = kind === "body" ? ensureMcpChineseBodyParagraphIndent(proseNormalized) : proseNormalized;
   return {
-    value: normalizeMcpDocumentMathText(value),
+    value: formattedValue,
+    ...MCP_DOCUMENT_STYLE[kind]
+  } as Record<string, unknown>;
+}
+
+function createRawMcpDocumentElement(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {
+  return {
+    value,
     ...MCP_DOCUMENT_STYLE[kind]
   } as Record<string, unknown>;
 }
@@ -10094,6 +10176,12 @@ function createMcpDocumentElements(value: string, kind: keyof typeof MCP_DOCUMEN
   return splitMcpDocumentTextRunValue(value)
     .filter(Boolean)
     .map((part) => createMcpDocumentElement(part, kind));
+}
+
+function createRawMcpDocumentElements(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {
+  return splitMcpDocumentTextRunValue(value)
+    .filter(Boolean)
+    .map((part) => createRawMcpDocumentElement(part, kind));
 }
 
 function parseMcpAsciiTreeLine(value: string) {
@@ -10142,30 +10230,60 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
   let bodyLines: string[] = [];
   let treeLines: string[] = [];
   let previousKind = "";
+  let fenceLanguage: string | null = null;
+  let fenceMarker = "";
+  let fenceLines: string[] = [];
   const flushBody = () => {
-    const body = bodyLines.join("\n").trim();
+    const paragraphs = bodyLines.map((line) => line.trim()).filter(Boolean);
     bodyLines = [];
-    if (!body) return;
-    elements.push(...createMcpDocumentElements(`${body}\n`, "body"));
-    appendMcpDocumentSpacer(elements);
+    for (const paragraph of paragraphs) {
+      elements.push(...createMcpDocumentElements(`${paragraph}\n`, "body"));
+    }
+    if (paragraphs.length <= 0) return;
     previousKind = "body";
   };
   const flushTree = () => {
     if (treeLines.length <= 0) return;
     elements.push(...createMcpAsciiTreeElements(treeLines));
-    appendMcpDocumentSpacer(elements);
     treeLines = [];
     previousKind = "list";
   };
+  const flushFence = () => {
+    const codeText = fenceLines.join("\n").trim();
+    fenceLanguage = null;
+    fenceMarker = "";
+    fenceLines = [];
+    if (!codeText) return;
+    elements.push(...createRawMcpDocumentElements(`${codeText}\n`, "code"));
+    previousKind = "body";
+  };
 
   for (const rawLine of lines) {
+    const fenceMatch = rawLine.match(/^\s*(```|~~~)([A-Za-z0-9_-]*)\s*$/);
+    if (fenceMatch) {
+      if (fenceLanguage !== null && fenceMatch[1] === fenceMarker) {
+        flushFence();
+      } else if (fenceLanguage !== null) {
+        fenceLines.push(rawLine);
+      } else {
+        flushBody();
+        fenceMarker = fenceMatch[1];
+        fenceLanguage = fenceMatch[2] || "";
+        fenceLines = [];
+      }
+      continue;
+    }
+    if (fenceLanguage !== null) {
+      fenceLines.push(rawLine);
+      continue;
+    }
     const line = rawLine.trim();
     if (!line) {
       flushTree();
       flushBody();
       continue;
     }
-    if (parseMcpAsciiTreeLine(rawLine)) {
+    if (parseMcpAsciiTreeLine(rawLine) && !/^[-*+]\s+\S/.test(line)) {
       flushBody();
       treeLines.push(String(rawLine || ""));
       continue;
@@ -10174,7 +10292,6 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
     const splitHeading = splitMcpDocumentHeadingLine(rawLine);
     if (splitHeading) {
       flushBody();
-      if (previousKind && previousKind !== "section") appendMcpDocumentSpacer(elements);
       elements.push(createMcpDocumentElement(`${splitHeading.heading}\n`, splitHeading.kind));
       bodyLines.push(splitHeading.rest);
       previousKind = splitHeading.kind;
@@ -10197,9 +10314,14 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
       previousKind = "list";
       continue;
     }
+    if (kind === "quote") {
+      flushBody();
+      elements.push(...createMcpDocumentElements(`${rawLine.trim().replace(/^>\s*/, "")}\n`, "quote"));
+      previousKind = "quote";
+      continue;
+    }
     if (kind && kind !== "body") {
       flushBody();
-      if (previousKind && previousKind !== "section") appendMcpDocumentSpacer(elements);
       elements.push(createMcpDocumentElement(`${stripMcpMarkdownHeading(rawLine)}\n`, kind));
       previousKind = kind;
       continue;
@@ -10207,6 +10329,7 @@ function buildMcpDocumentElements(text: string): Record<string, unknown>[] {
     bodyLines.push(line);
     previousKind = "body";
   }
+  if (fenceLanguage !== null) flushFence();
   flushTree();
   flushBody();
   return elements.length > 0 ? elements : [createMcpDocumentElement("", "body")];
@@ -10255,7 +10378,7 @@ function appendMcpDocumentText(snapshot: KnowledgeDocumentSnapshot, text: string
   const appended = buildMcpDocumentElements(text);
   const last = main[main.length - 1];
   const lastValue = isRecord(last) && typeof last.value === "string" ? last.value : "";
-  if (main.length > 0 && !lastValue.endsWith("\n\n")) {
+  if (main.length > 0 && lastValue && !lastValue.endsWith("\n")) {
     main.push(createMcpDocumentElement("\n", "spacer"));
   }
   main.push(...appended);
@@ -10280,9 +10403,6 @@ function applyMcpDocumentStyle(value: unknown, style: Record<string, unknown>): 
   return next;
 }
 
-const MCP_DOCUMENT_FORMAT_TEXT_COLOR = "#1f2937";
-const MCP_DOCUMENT_FORMAT_PRIMARY_COLOR = "#2563eb";
-
 function mcpDocumentElementText(value: unknown) {
   return (Array.isArray(value) ? value : [])
     .map((item) => (isRecord(item) && typeof item.value === "string" ? item.value : ""))
@@ -10295,14 +10415,25 @@ function getMcpDocumentCoreText(value: unknown) {
 
 function isMcpDocumentMainHeadingText(value: unknown) {
   const text = getMcpDocumentCoreText(value);
-  if (/^[\p{Script=Han}]{1,4}[、.．]\s*\S/u.test(text)) return true;
-  return /^[一二三四五六七八九十]+[、.．]/.test(getMcpDocumentCoreText(value));
+  return /^[一二三四五六七八九十]+[、.．]\s*\S/.test(text);
+}
+
+function isMcpDocumentSecondHeadingText(value: unknown) {
+  return /^[（(][一二三四五六七八九十]+[）)]、?\s*\S/.test(getMcpDocumentCoreText(value));
 }
 
 function isMcpDocumentNumberHeadingText(value: unknown) {
   const text = getMcpDocumentCoreText(value);
   if (/^\d+[.)．、]\s+\S/.test(text)) return isStructuredMcpDocumentNumberHeading(text);
   return /^\d+[.．]\s*\S/.test(getMcpDocumentCoreText(value));
+}
+
+function isMcpDocumentFourthHeadingText(value: unknown) {
+  return /^[（(]\d+[）)]、?\s*\S/.test(getMcpDocumentCoreText(value));
+}
+
+function isMcpDocumentArticleHeadingText(value: unknown) {
+  return /^第[一二三四五六七八九十百千万\d]+条/.test(getMcpDocumentCoreText(value));
 }
 
 function isMcpDocumentLabelText(value: unknown) {
@@ -10315,53 +10446,48 @@ function isMcpDocumentUrlText(value: unknown) {
   return /^https?:\/\//i.test(getMcpDocumentCoreText(value));
 }
 
+function isMcpDocumentListText(value: unknown) {
+  return /^(?:[-*+]\s+|\d+[.)．、]\s+)/.test(getMcpDocumentCoreText(value));
+}
+
+function isMcpDocumentQuoteText(value: unknown) {
+  return /^>\s*\S/.test(getMcpDocumentCoreText(value));
+}
+
+function isMcpDocumentCodeElement(element: Record<string, unknown>) {
+  return element.font === "Consolas" || typeof element.highlight === "string" && element.highlight.length > 0;
+}
+
+function classifyMcpDocumentElementForFormatting(element: Record<string, unknown>): keyof typeof MCP_DOCUMENT_STYLE | "url" {
+  const value = element.value;
+  const text = getMcpDocumentCoreText(value);
+  if (!text) return "spacer";
+  if (isMcpDocumentCodeElement(element)) return "code";
+  if (element.level === "first" || element.rowFlex === "center" && Number(element.size) >= 26) return "title";
+  if (/^(?:副标题[:：]\s*|——)\S/.test(text)) return "subtitle";
+  if (isMcpDocumentMainHeadingText(value)) return "section";
+  if (isMcpDocumentSecondHeadingText(value)) return "subsection";
+  if (isMcpDocumentFourthHeadingText(value)) return "fourth";
+  if (isMcpDocumentArticleHeadingText(value)) return "article";
+  if (isMcpDocumentNumberHeadingText(value)) return "third";
+  if (isMcpDocumentQuoteText(value)) return "quote";
+  if (element.listType || isMcpDocumentListText(value)) return "list";
+  if (isMcpDocumentLabelText(value)) return "label";
+  if (isMcpDocumentUrlText(value)) return "url";
+  return "body";
+}
+
 function formatMcpDocumentElementPreservingValue(element: unknown): unknown {
   if (!isRecord(element)) return element;
   const next: Record<string, unknown> = { ...element };
-  delete next.rowFlex;
   if (typeof next.value !== "string") return next;
-
-  const value = next.value;
-  const text = getMcpDocumentCoreText(value);
-  if (!text) {
-    next.size = 8;
-    next.bold = false;
-    next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
-    delete next.underline;
+  if (typeof next.type === "string" && !["text", "hyperlink"].includes(next.type)) return next;
+  const kind = classifyMcpDocumentElementForFormatting(next);
+  if (kind === "url") {
+    Object.assign(next, MCP_DOCUMENT_STYLE.body, { color: "#2563eb", underline: true, rowFlex: "left" });
     return next;
   }
-  if (isMcpDocumentMainHeadingText(value)) {
-    next.size = 28;
-    next.bold = true;
-    next.color = MCP_DOCUMENT_FORMAT_PRIMARY_COLOR;
-    next.underline = true;
-    return next;
-  }
-  if (isMcpDocumentNumberHeadingText(value)) {
-    next.size = 22;
-    next.bold = true;
-    next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
-    delete next.underline;
-    return next;
-  }
-  if (isMcpDocumentLabelText(value)) {
-    next.size = 20;
-    next.bold = true;
-    next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
-    delete next.underline;
-    return next;
-  }
-  if (isMcpDocumentUrlText(value)) {
-    next.size = 20;
-    next.bold = false;
-    next.color = MCP_DOCUMENT_FORMAT_PRIMARY_COLOR;
-    next.underline = true;
-    return next;
-  }
-
-  next.size = 20;
-  next.bold = false;
-  next.color = MCP_DOCUMENT_FORMAT_TEXT_COLOR;
+  Object.assign(next, MCP_DOCUMENT_STYLE[kind]);
   delete next.underline;
   return next;
 }

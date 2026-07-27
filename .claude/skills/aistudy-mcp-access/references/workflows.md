@@ -68,7 +68,9 @@ mcp_resolve_target({ courseName, nodeQuery })
 Use `write_node_document` for replacement only when the user explicitly asks for whole-document overwrite and `replaceExisting: true` is passed.
 Pass the last read `currentSnapshotId` as `expectedSnapshotId`. Stale writes fail instead of overwriting concurrent changes. Write tools return lightweight metadata; re-read only when the caller actually needs the new body.
 
-For `write_node_document` and `append_node_document` text, use structured plain text: section heading, short step heading, field labels such as `目标：` or `数据来源：`, numbered or bullet lists, and concise body paragraphs. Separate independent knowledge points with exactly one blank line, but do not add extra blank lines merely for visual spacing.
+For `write_node_document` and `append_node_document`, do not repeat the node name because AIstudy already renders it as the document heading. Use `# 标题` only when the body has a distinct article title. Use `一、` / `（一）` / `1.` / `（1）` for the four Chinese article heading levels, `> ` for quotations, `字段：内容` for labels, and one natural body paragraph per line. Blank input lines are paragraph boundaries rather than visible spacer rows.
+
+New text receives Chinese heading/body fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent. AIstudy safely normalizes nearby Chinese punctuation and Chinese-English spacing while protecting URLs, Windows paths, email addresses, code, formulas, list markers, and tree indentation. `format_node_document` applies the same style system to existing content but preserves every `value` exactly, so it cannot add missing indent characters.
 
 Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map edit tools for actual mind map structure. When a document needs to describe a diagram, convert it into headings, field labels, and stable numbered outlines so the AIstudy document renderer shows structured content instead of source code or whitespace-dependent trees.
 
