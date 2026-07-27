@@ -608,6 +608,8 @@ type McpNodeContextRow = RowDataPacket & {
   nodeId: string;
   parentNodeId: string | null;
   title: string;
+  nodeTitle?: string;
+  currentSnapshotId?: string | null;
   pathText: string | null;
   depth: number | string;
   positionIndex: number | string;
@@ -624,6 +626,7 @@ type McpNodeContextDocumentRow = RowDataPacket & {
   id: string;
   nodeId: string;
   title: string;
+  nodeTitle?: string;
   currentSnapshotId?: string | null;
   byteSize: number | string;
   hasContent: number | string | boolean;
@@ -9823,6 +9826,7 @@ const MCP_DOCUMENT_STYLE = {
 } as const;
 const MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH = 360;
 const MCP_DOCUMENT_FORCE_TEXT_RUN_SPLIT_LENGTH = MCP_DOCUMENT_MAX_TEXT_RUN_LENGTH * 2;
+const MCP_DOCUMENT_CONTEXT_FULL_MAX_CHARS = 1000000;
 const MCP_DOCUMENT_UNICODE_SUPERSCRIPT: Record<string, string> = {
   "0": "⁰",
   "1": "¹",
@@ -9991,24 +9995,24 @@ function normalizeMcpDocumentNestedScriptText(value: string) {
   });
 }
 
-const MCP_DOCUMENT_FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
-const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDYPATH";
-const MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
+const MCP_DOCUMENT_LITERAL_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)|(?:aistudy:\/\/[^\s]+)|(?:\{(?=[^\r\n]{0,4000}"[^"]+"\s*:)[^\r\n]+\})|(?:--[A-Za-z0-9][A-Za-z0-9-]*)|(?:\b[A-Za-z][A-Za-z0-9]{1,}(?:_[A-Za-z0-9]+)+\b)|(?:\b[A-Za-z][A-Za-z0-9._-]*\.(?:mjs|cjs|js|ts|tsx|json|jsonl|md|ps1|cmd|exe)\b)/g;
+const MCP_DOCUMENT_LITERAL_PLACEHOLDER_PREFIX = "\uE000AISTUDYLITERAL";
+const MCP_DOCUMENT_LITERAL_PLACEHOLDER_SUFFIX = "\uE001";
 
-function protectMcpDocumentFilePathText(value: string) {
-  const paths: string[] = [];
-  const text = value.replace(MCP_DOCUMENT_FILE_PATH_TEXT_PATTERN, (match) => {
-    const index = paths.push(match) - 1;
-    return `${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}${index}${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`;
+function protectMcpDocumentLiteralText(value: string) {
+  const literals: string[] = [];
+  const text = value.replace(MCP_DOCUMENT_LITERAL_TEXT_PATTERN, (match) => {
+    const index = literals.push(match) - 1;
+    return `${MCP_DOCUMENT_LITERAL_PLACEHOLDER_PREFIX}${index}${MCP_DOCUMENT_LITERAL_PLACEHOLDER_SUFFIX}`;
   });
-  return { text, paths };
+  return { text, literals };
 }
 
-function restoreMcpDocumentFilePathText(value: string, paths: string[]) {
-  if (paths.length === 0) return value;
+function restoreMcpDocumentLiteralText(value: string, literals: string[]) {
+  if (literals.length === 0) return value;
   return value.replace(
-    new RegExp(`${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${MCP_DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
-    (_match, index) => paths[Number(index)] ?? ""
+    new RegExp(`${MCP_DOCUMENT_LITERAL_PLACEHOLDER_PREFIX}(\\d+)${MCP_DOCUMENT_LITERAL_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => literals[Number(index)] ?? ""
   );
 }
 
@@ -10036,8 +10040,9 @@ const MCP_DOCUMENT_CHINESE_TYPOGRAPHY_KINDS = new Set<keyof typeof MCP_DOCUMENT_
 ]);
 
 function normalizeMcpChineseArticleTypography(value: string) {
+  const literalText = protectMcpDocumentLiteralText(value);
   const protectedValues: string[] = [];
-  let text = value.replace(MCP_DOCUMENT_INLINE_PROTECTED_PATTERN, (match) => {
+  let text = literalText.text.replace(MCP_DOCUMENT_INLINE_PROTECTED_PATTERN, (match) => {
     const index = protectedValues.push(match) - 1;
     return `${MCP_DOCUMENT_INLINE_PLACEHOLDER_PREFIX}${index}${MCP_DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`;
   });
@@ -10048,10 +10053,11 @@ function normalizeMcpChineseArticleTypography(value: string) {
     .replace(/([\p{Script=Han}])([,;:?!])/gu, (_match, chinese: string, punctuation: string) => `${chinese}${MCP_DOCUMENT_CHINESE_PUNCTUATION.get(punctuation)}`)
     .replace(/([,;:?!])(?=[\p{Script=Han}])/gu, (punctuation) => MCP_DOCUMENT_CHINESE_PUNCTUATION.get(punctuation) || punctuation)
     .replace(/ {2,}/g, " ");
-  return text.replace(
+  const restoredInline = text.replace(
     new RegExp(`${MCP_DOCUMENT_INLINE_PLACEHOLDER_PREFIX}(\\d+)${MCP_DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`, "g"),
     (_match, index) => protectedValues[Number(index)] ?? ""
   );
+  return restoreMcpDocumentLiteralText(restoredInline, literalText.literals);
 }
 
 function ensureMcpChineseBodyParagraphIndent(value: string) {
@@ -10060,7 +10066,7 @@ function ensureMcpChineseBodyParagraphIndent(value: string) {
 }
 
 function normalizeMcpDocumentMathText(value: string) {
-  const protectedText = protectMcpDocumentFilePathText(value);
+  const protectedText = protectMcpDocumentLiteralText(value);
   let text = protectedText.text
     .replace(/\u00a0/g, " ")
     .replace(/\u2212/g, "-")
@@ -10129,7 +10135,7 @@ function normalizeMcpDocumentMathText(value: string) {
     .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
     .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
 
-  return restoreMcpDocumentFilePathText(text.replace(/\\/g, ""), protectedText.paths);
+  return restoreMcpDocumentLiteralText(text, protectedText.literals);
 }
 
 function createMcpDocumentElement(value: string, kind: keyof typeof MCP_DOCUMENT_STYLE) {
@@ -10508,14 +10514,52 @@ function formatMcpDocumentSnapshotPreservingText(snapshot: KnowledgeDocumentSnap
   };
 }
 
+function resolveMcpDocumentTitle(storedTitle: unknown, nodeTitle: unknown) {
+  const stored = normalizeMcpText(storedTitle, "");
+  const node = normalizeMcpText(nodeTitle, "");
+  if (!stored || /^(?:节点文档|node document)$/i.test(stored)) return node || stored || "节点文档";
+  return stored;
+}
+
+function createMcpDocumentRagIndexStatus(currentSnapshotId: unknown) {
+  return {
+    supported: false,
+    status: "not_configured",
+    currentSnapshotId: normalizeMcpText(currentSnapshotId, "") || null,
+    indexedSnapshotId: null,
+    synchronized: false,
+    verificationAvailable: false,
+    message: "AIstudy Public has no configured RAG vector-index contract. A saved document must not be treated as indexed."
+  };
+}
+
+async function readMcpDocumentNodeTitle(courseId: string, mindMapId: string, nodeId: string) {
+  const runtime = await getMysqlRuntime();
+  const [rows] = await runtime.pool.execute<Array<RowDataPacket & { title: string }>>(
+    `SELECT title FROM ${runtime.mindMapNodeTable}
+     WHERE course_id = ? AND mind_map_id = ? AND node_id = ? AND deleted_at IS NULL LIMIT 1`,
+    [courseId, mindMapId, nodeId]
+  );
+  const nodeTitle = normalizeMcpText(rows[0]?.title, "");
+  if (!nodeTitle) throw createAppError("APP_INVALID_ARGUMENT", "Mind map node is missing.");
+  return nodeTitle;
+}
+
 async function resolveMcpDocumentTarget(args: Record<string, unknown>) {
   const refTarget = await resolveMcpNodeRef(args);
-  if (refTarget) return refTarget;
-  const course = await getRequiredCourseForMcp(args.courseId);
-  const mapId = normalizeMcpText(args.mindMapId, "") || (await readMindMapDocument(course.id))?.mapId || "";
-  const nodeId = normalizeMcpText(args.nodeId, "");
-  if (!mapId || !nodeId) throw createAppError("APP_INVALID_ARGUMENT", "MCP document target requires courseId and nodeId.");
-  return { course, mindMapId: mapId, nodeId };
+  const target = refTarget
+    ? refTarget
+    : await (async () => {
+      const course = await getRequiredCourseForMcp(args.courseId);
+      const mindMapId = normalizeMcpText(args.mindMapId, "") || (await readMindMapDocument(course.id))?.mapId || "";
+      const nodeId = normalizeMcpText(args.nodeId, "");
+      if (!mindMapId || !nodeId) throw createAppError("APP_INVALID_ARGUMENT", "MCP document target requires courseId and nodeId.");
+      return { course, mindMapId, nodeId };
+    })();
+  return {
+    ...target,
+    nodeTitle: await readMcpDocumentNodeTitle(target.course.id, target.mindMapId, target.nodeId)
+  };
 }
 
 async function listMcpNodeDocuments(args: Record<string, unknown>) {
@@ -10533,27 +10577,37 @@ async function listMcpNodeDocuments(args: Record<string, unknown>) {
   if (courseIds.length === 0) return { scope: "all", documents: [] };
   const placeholders = courseIds.map(() => "?").join(", ");
   const [rows] = await runtime.pool.execute<KnowledgeDocumentStatusRow[]>(
-    `SELECT id, course_id AS courseId, mind_map_id AS mindMapId, node_id AS nodeId, title,
-            current_byte_size AS currentByteSize, has_content AS hasContent, updated_at AS updatedAt
-     FROM ${runtime.knowledgeDocumentTable}
-     WHERE course_id IN (${placeholders}) AND deleted_at IS NULL
-     ORDER BY updated_at DESC
+    `SELECT d.id, d.course_id AS courseId, d.mind_map_id AS mindMapId, d.node_id AS nodeId, d.title,
+            n.title AS nodeTitle, d.current_snapshot_id AS currentSnapshotId,
+            d.current_byte_size AS currentByteSize, d.has_content AS hasContent, d.updated_at AS updatedAt
+     FROM ${runtime.knowledgeDocumentTable} d
+     INNER JOIN ${runtime.mindMapNodeTable} n
+       ON n.course_id = d.course_id AND n.mind_map_id = d.mind_map_id AND n.node_id = d.node_id AND n.deleted_at IS NULL
+     WHERE d.course_id IN (${placeholders}) AND d.deleted_at IS NULL
+     ORDER BY d.updated_at DESC
      LIMIT 200`,
     courseIds
   );
   return {
     scope: course ? "course" : "all",
     course: course ?? null,
-    documents: rows.map((row) => ({
-      courseId: row.courseId,
-      mindMapId: row.mindMapId,
-      nodeId: row.nodeId,
-      documentId: row.id,
-      title: row.title,
-      updatedAt: toIsoTimestamp(row.updatedAt),
-      byteSize: Number(row.currentByteSize) || 0,
-      hasContent: Boolean(Number(row.hasContent))
-    }))
+    documents: rows.map((row) => {
+      const title = resolveMcpDocumentTitle(row.title, row.nodeTitle);
+      return {
+        courseId: row.courseId,
+        mindMapId: row.mindMapId,
+        nodeId: row.nodeId,
+        nodeTitle: row.nodeTitle || "",
+        documentId: row.id,
+        title,
+        storedTitle: row.title,
+        titleSource: title === row.title ? "document" : "node",
+        updatedAt: toIsoTimestamp(row.updatedAt),
+        byteSize: Number(row.currentByteSize) || 0,
+        hasContent: Boolean(Number(row.hasContent)),
+        ragIndex: createMcpDocumentRagIndexStatus(row.currentSnapshotId)
+      };
+    })
   };
 }
 
@@ -10565,25 +10619,55 @@ async function readMcpNodeDocument(args: Record<string, unknown>) {
     nodeId: target.nodeId
   });
   const mode = ["text", "snapshot", "audit"].includes(String(args.mode || "")) ? String(args.mode) : "text";
+  const offset = normalizeMcpContextInteger(args.offset, 0, 0, 10000000);
   const maxChars = normalizeMcpContextInteger(args.maxChars, 12000, 200, 200000);
-  const metadata = document ? { ...document, snapshot: undefined } : null;
+  const title = resolveMcpDocumentTitle(document?.title, target.nodeTitle);
+  const decoratedDocument = document ? {
+    ...document,
+    title,
+    storedTitle: document.title,
+    nodeTitle: target.nodeTitle,
+    titleSource: title === document.title ? "document" : "node",
+    ragIndex: createMcpDocumentRagIndexStatus(document.currentSnapshotId)
+  } : null;
+  const metadata = decoratedDocument ? { ...decoratedDocument, snapshot: undefined } : null;
+  const ragIndex = createMcpDocumentRagIndexStatus(document?.currentSnapshotId);
   if (mode === "snapshot") {
-    return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, mode, document };
+    return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, nodeTitle: target.nodeTitle, mode, document: decoratedDocument, ragIndex };
   }
   const textFields = createMcpDocumentTextFields(document?.snapshot?.content ?? "");
   if (mode === "audit") {
-    return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, mode, document: metadata, ...textFields };
+    return { course: target.course, mindMapId: target.mindMapId, nodeId: target.nodeId, nodeTitle: target.nodeTitle, mode, document: metadata, ragIndex, ...textFields };
   }
-  const text = textFields.textClean.slice(0, maxChars);
+  const text = textFields.textClean.slice(offset, offset + maxChars);
+  const nextOffset = offset + text.length < textFields.textClean.length ? offset + text.length : null;
   return {
     course: target.course,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
+    nodeTitle: target.nodeTitle,
     mode,
     document: metadata,
+    ragIndex,
     text,
     textLength: textFields.textClean.length,
-    textTruncated: text.length < textFields.textClean.length
+    textOffset: offset,
+    returnedTextLength: text.length,
+    remainingTextLength: Math.max(0, textFields.textClean.length - offset - text.length),
+    nextOffset,
+    complete: nextOffset === null,
+    textTruncated: offset > 0 || nextOffset !== null,
+    requiredNextCall: nextOffset === null ? null : {
+      tool: "read_node_document",
+      arguments: {
+        courseId: target.course.id,
+        mindMapId: target.mindMapId,
+        nodeId: target.nodeId,
+        mode: "text",
+        offset: nextOffset,
+        maxChars
+      }
+    }
   };
 }
 
@@ -10596,7 +10680,7 @@ function normalizeMcpContextInteger(value: unknown, fallback: number, min: numbe
 function normalizeMcpContextDocumentMode(args: Record<string, unknown>) {
   if (args.includeDocuments === false) return "none";
   const mode = normalizeMcpText(args.documentMode, "summary");
-  return mode === "none" || mode === "summary" || mode === "text" ? mode : "summary";
+  return mode === "none" || mode === "summary" || mode === "text" || mode === "full" ? mode : "summary";
 }
 
 function buildMcpContextNodeSummary(
@@ -10629,25 +10713,30 @@ async function readMcpContextDocuments(
   if (documentMode === "none" || nodeIds.length === 0) return new Map<string, Record<string, unknown>>();
   const runtime = await getMysqlRuntime();
   const placeholders = nodeIds.map(() => "?").join(", ");
-  const snapshotJoin = documentMode === "text"
+  const includeText = documentMode === "text" || documentMode === "full";
+  const snapshotJoin = includeText
     ? `LEFT JOIN ${runtime.knowledgeDocumentSnapshotTable} s
          ON s.id = d.current_snapshot_id AND s.document_id = d.id`
     : "";
   const [rows] = await runtime.pool.execute<McpNodeContextDocumentRow[]>(
-    `SELECT d.id, d.node_id AS nodeId, d.title, d.current_snapshot_id AS currentSnapshotId, d.current_byte_size AS byteSize,
+    `SELECT d.id, d.node_id AS nodeId, d.title, n.title AS nodeTitle,
+            d.current_snapshot_id AS currentSnapshotId, d.current_byte_size AS byteSize,
             d.has_content AS hasContent, d.updated_at AS updatedAt
-            ${documentMode === "text" ? ", s.payload_json AS payloadJson" : ""}
+            ${includeText ? ", s.payload_json AS payloadJson" : ""}
      FROM ${runtime.knowledgeDocumentTable} d
+     INNER JOIN ${runtime.mindMapNodeTable} n
+       ON n.course_id = d.course_id AND n.mind_map_id = d.mind_map_id AND n.node_id = d.node_id AND n.deleted_at IS NULL
      ${snapshotJoin}
      WHERE d.course_id = ? AND d.mind_map_id = ? AND d.node_id IN (${placeholders}) AND d.deleted_at IS NULL`,
     [courseId, mindMapId, ...nodeIds]
   );
   const documents = new Map<string, Record<string, unknown>>();
+  let fullTextChars = 0;
   for (const row of rows) {
     let text = "";
     let textLength = 0;
     let textTruncated = false;
-    if (documentMode === "text" && row.payloadJson) {
+    if (includeText && row.payloadJson) {
       try {
         const snapshotId = row.currentSnapshotId || `${row.id}:${String(row.updatedAt ?? "")}`;
         let snapshot = knowledgeDocumentSnapshotCache.get(snapshotId);
@@ -10657,21 +10746,45 @@ async function readMcpContextDocuments(
         }
         text = createMcpDocumentTextFields(snapshot.content).textClean;
         textLength = text.length;
-        if (text.length > maxDocumentChars) {
+        if (documentMode === "full") {
+          fullTextChars += textLength;
+          if (fullTextChars > MCP_DOCUMENT_CONTEXT_FULL_MAX_CHARS) {
+            throw createAppError(
+              "APP_INVALID_ARGUMENT",
+              `DOCUMENT_CONTEXT_TOO_LARGE: full document text exceeds ${MCP_DOCUMENT_CONTEXT_FULL_MAX_CHARS} characters. Use summary/text mode and follow requiredNextCalls.`
+            );
+          }
+        } else if (text.length > maxDocumentChars) {
           text = text.slice(0, maxDocumentChars);
           textTruncated = true;
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("DOCUMENT_CONTEXT_TOO_LARGE:")) throw error;
         text = "";
       }
     }
+    const title = resolveMcpDocumentTitle(row.title, row.nodeTitle);
     documents.set(row.nodeId, {
       documentId: row.id,
-      title: row.title || "",
+      title,
+      storedTitle: row.title || "",
+      nodeTitle: row.nodeTitle || "",
+      titleSource: title === row.title ? "document" : "node",
       updatedAt: toIsoTimestamp(row.updatedAt),
       byteSize: Number(row.byteSize) || 0,
       hasContent: Boolean(Number(row.hasContent)),
-      ...(documentMode === "text" ? { text, textLength, textTruncated } : {})
+      ragIndex: createMcpDocumentRagIndexStatus(row.currentSnapshotId),
+      ...(includeText ? {
+        text,
+        textLength,
+        returnedTextLength: text.length,
+        textTruncated,
+        complete: documentMode === "full" || !textTruncated,
+        requiredNextCall: textTruncated ? {
+          tool: "read_node_document",
+          arguments: { courseId, mindMapId, nodeId: row.nodeId, mode: "text", offset: text.length, maxChars: maxDocumentChars }
+        } : null
+      } : {})
     });
   }
   return documents;
@@ -10794,6 +10907,22 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
     ? (childrenByParent.get(row.nodeId) || []).length
     : Number(row.childCount) || 0;
   const toSummary = (row: McpNodeContextRow) => buildMcpContextNodeSummary(row, childCount(row), documents.get(row.nodeId) || null);
+  const requiredNextCalls: Array<Record<string, unknown>> = [];
+  for (const [documentNodeId, document] of documents.entries()) {
+    if (!document.hasContent) continue;
+    if (document.requiredNextCall && typeof document.requiredNextCall === "object") {
+      requiredNextCalls.push(document.requiredNextCall as Record<string, unknown>);
+    } else if (documentMode === "summary") {
+      requiredNextCalls.push({
+        tool: "read_node_document",
+        arguments: { courseId: course.id, mindMapId: map.id, nodeId: documentNodeId, mode: "text", offset: 0 }
+      });
+    }
+  }
+  const documentTextComplete = documentMode === "none"
+    || [...documents.values()].every((document) => !document.hasContent)
+    || documentMode === "full"
+    || documentMode === "text" && requiredNextCalls.length === 0;
   const buildTree = (row: McpNodeContextRow, relativeDepth: number): Record<string, unknown> => {
     const summary = toSummary(row);
     const children = childrenByParent.get(row.nodeId) || [];
@@ -10834,14 +10963,36 @@ async function readMcpNodeContext(args: Record<string, unknown>) {
       truncated: subtreeTruncated,
       truncatedReason: subtreeTruncated ? "maxDepth or maxNodes reached; narrow the target or increase limits within the schema caps." : null
     } : null,
-    documents: { mode: documentMode, returnedCount: documents.size, nodeIds: [...documents.keys()] },
-    readingGuidance: "Use read_node_context for fast structured parent/subtree context. Use read_node_document only when a full single document snapshot is needed."
+    documents: {
+      mode: documentMode,
+      returnedCount: documents.size,
+      nodeIds: [...documents.keys()],
+      complete: documentTextComplete,
+      truncatedCount: [...documents.values()].filter((document) => document.textTruncated).length,
+      requiresFollowUp: requiredNextCalls.length > 0,
+      requiredNextCalls
+    },
+    completion: {
+      complete: !subtreeTruncated && documentTextComplete,
+      subtreeComplete: !subtreeTruncated,
+      documentTextComplete,
+      requiresFollowUp: subtreeTruncated || requiredNextCalls.length > 0,
+      requiredNextCalls,
+      message: subtreeTruncated
+        ? "Node subtree is incomplete because maxDepth or maxNodes was reached."
+        : requiredNextCalls.length > 0
+          ? "Document text is incomplete. Execute every requiredNextCalls entry before treating the context as complete."
+          : "Requested node context is complete."
+    },
+    readingGuidance: documentMode === "full"
+      ? "Full text was returned atomically for the selected nodes. Check completion.complete before using the result."
+      : "Check completion.complete. Execute every requiredNextCalls entry before treating previews or summaries as complete documents."
   };
 }
 
 async function writeMcpNodeDocument(args: Record<string, unknown>) {
   const target = await resolveMcpDocumentTarget(args);
-  const title = normalizeMcpText(args.title, "") || "节点文档";
+  const title = normalizeMcpText(args.title, "") || target.nodeTitle;
   const existing = await readKnowledgeDocument({
     courseId: target.course.id,
     mindMapId: target.mindMapId,
@@ -10885,7 +11036,8 @@ function createMcpDocumentMutationResult(course: CourseRecord, document: Knowled
     byteSize: document.byteSize,
     hasContent: document.hasContent,
     textLength: text.length,
-    contentHash: document.snapshot ? createSnapshotContentHash(document.snapshot) : null
+    contentHash: document.snapshot ? createSnapshotContentHash(document.snapshot) : null,
+    ragIndex: createMcpDocumentRagIndexStatus(document.currentSnapshotId)
   };
 }
 
@@ -10911,7 +11063,7 @@ async function appendMcpNodeDocument(args: Record<string, unknown>) {
     courseId: target.course.id,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
-    title: normalizeMcpText(args.title, "") || existing?.title || "节点文档",
+    title: normalizeMcpText(args.title, "") || resolveMcpDocumentTitle(existing?.title, target.nodeTitle),
     snapshot,
     expectedSnapshotId: currentSnapshotId
   });
@@ -10931,7 +11083,7 @@ async function formatMcpNodeDocument(args: Record<string, unknown>) {
     courseId: target.course.id,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
-    title: normalizeMcpText(args.title, "") || existing.title,
+    title: normalizeMcpText(args.title, "") || resolveMcpDocumentTitle(existing.title, target.nodeTitle),
     snapshot,
     expectedSnapshotId: normalizeMcpText(args.expectedSnapshotId, "")
   });
@@ -10963,7 +11115,7 @@ async function updateMcpNodeDocumentStyle(args: Record<string, unknown>) {
     courseId: target.course.id,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
-    title: existing.title,
+    title: resolveMcpDocumentTitle(existing.title, target.nodeTitle),
     snapshot,
     expectedSnapshotId: normalizeMcpText(args.expectedSnapshotId, "")
   });

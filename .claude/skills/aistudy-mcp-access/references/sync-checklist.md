@@ -50,6 +50,10 @@ node scripts\qa\validate-error-codes.mjs
 - Are edit tools still gated by explicit permission?
 - Does `format_node_document` remain style-only and text-preserving?
 - Do `write_node_document` and `append_node_document` still apply the same Chinese-article hierarchy, paragraph spacing, two-character indent, and protected URL/path/code rules in both stdio and desktop/HTTP implementations?
+- Do Windows paths, UNC paths, tool/field names, underscore identifiers, IDs, compact refs, JSON, switches, and script names round-trip exactly?
+- Do bounded document reads return `complete` plus mandatory continuation calls, and does `documentMode: "full"` fail atomically above its cap?
+- Does PowerShell documentation prefer `--args-stdin`/`--args-file` for complex JSON?
+- Does `mcp_get_started` expose effective tool/course/node edit allowlists and the honest RAG status?
 - Does `write_node_document` still refuse accidental overwrite?
 - Do human docs and the skill say the same first-use order?
 - Does `agents/openai.yaml` still describe the skill accurately?

@@ -34,7 +34,7 @@ MCP 现在按独立模块管理，主进程不再直接维护 MCP 工具状态�
 - 暴露外部客户端真实会调用的工具清单。
 - 提供 Chrome 端口管理工具：`chrome_ports_status`、`chrome_port_open_page`。
 
-Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC, one JSON object per line. It is intentionally not a `Content-Length` framed transport. Use `scripts/mcp/call-aistudy-mcp.mjs` for ad-hoc same-machine calls.
+Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC, one JSON object per line. It is intentionally not a `Content-Length` framed transport. Use `scripts/mcp/call-aistudy-mcp.mjs` for ad-hoc same-machine calls. PowerShell complex objects must use `--args-stdin` or `--args-file`; malformed JSON is rejected before a tool call and never degrades into empty/default arguments.
 
 `electron/mcp/remoteAccess.ts` 负责：
 
@@ -53,6 +53,7 @@ Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited J
 - 需要调用系统能力时：由 `main.ts` 或外部脚本里明确封装，不要让 MCP 直接暴露任意系统命令。
 - 涉及知识库范围时：默认支持全库；只有写入动作要求明确 `courseId`。
 - 涉及编辑动作时：知识库/分区、导图节点、导图样式布局、节点文档都必须经过 MCP 编辑许可；删除类工具必须标注 destructive。
+- 外部 stdio 编辑权限由总开关和工具/知识库/节点白名单共同约束；配置了范围白名单时必须缺省拒绝，不能因缺少目标扩大权限。
 - 涉及 Chrome 端口时：AIstudy 只负责读取端口信息和打开页面，不在 MCP 里执行网页脚本。
 - 需要给外部 Codex 使用时：同步更新 `docs/mcp/AIstudy-MCP-quickstart.md`。
 - 单文件交接说明也要同步更新 `docs/mcp/AIstudy-MCP-access-skill.md`。
@@ -103,11 +104,15 @@ Local stdio boundary: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited J
 - `format_node_document`
 - `update_node_document_style`
 
-读取边界：`read_current_mindmap`、`search_nodes`、`list_node_documents` 不允许因参数缺失自动扩大到全库；全库操作必须显式传 `scope: "all"`。`read_node_context` 默认只定向查询目标与祖先路径，不展开后代、不解析完整导图快照且只返回文档摘要；正文和子树按需开启。`read_node_document` 以 `text`、`snapshot`、`audit` 三种模式隔离普通读取、编辑器快照和完整诊断。文档及导图快照缓存同时设置条目数与字节上限，避免长期 MCP 会话随大快照累积而无界占用内存。
+读取边界：`read_current_mindmap`、`search_nodes`、`list_node_documents` 不允许因参数缺失自动扩大到全库；全库操作必须显式传 `scope: "all"`。`read_node_context` 默认只定向查询目标与祖先路径，不展开后代、不解析完整导图快照且只返回文档摘要；正文和子树按需开启。`documentMode: "full"` 在总量安全上限内原子返回目标范围全文，超限明确失败；其他模式必须返回顶层 `completion`、截断统计和后续调用。`read_node_document` 以 `text`、`snapshot`、`audit` 三种模式隔离普通读取、编辑器快照和完整诊断；文本模式支持 `offset` 续读并返回 `complete`、`nextOffset` 和 `requiredNextCall`。文档及导图快照缓存同时设置条目数与字节上限，避免长期 MCP 会话随大快照累积而无界占用内存。
 
-节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；节点名称由文档页单独显示，正文默认不重复。文本按可选 `#` 独立文章标题、`一、`/`（一）`/`1.`/`（1）` 四级标题、引用、字段标签、列表和逐段正文组织。新正文自动生成宋体、两字符首行缩进、两端对齐和比例行距；空输入行只表示段落边界，不生成大空白行。中文附近标点和中英文间距可以安全规范化，但 URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进必须保护。`format_node_document` 只改样式并逐字保留 `value`，不得借排版之名改写正文或补写缩进字符。
+节点文档写入边界：`write_node_document` 和 `append_node_document` 接收干净、结构化文本或 Markdown 标题；节点名称由文档页单独显示，正文默认不重复。文本按可选 `#` 独立文章标题、`一、`/`（一）`/`1.`/`（1）` 四级标题、引用、字段标签、列表和逐段正文组织。新正文自动生成宋体、两字符首行缩进、两端对齐和比例行距；空输入行只表示段落边界，不生成大空白行。中文附近标点和中英文间距可以安全规范化，但 Windows/UNC 路径、紧凑引用、JSON、命令开关、工具名、字段名、ID、脚本名、URL、邮箱、代码、公式、列表符号和树形缩进必须逐字符保护。`format_node_document` 只改样式并逐字保留 `value`，不得借排版之名改写正文或补写缩进字符。写入返回的 `textLength` 与普通回读采用同一份清理正文定义。
 
 并发边界：文档服务在事务内使用行锁读取当前快照，并校验调用方的 `expectedSnapshotId`。MCP、用户文档页、教材载入和信息采集均复用该服务；冲突时拒绝旧版本写入。写入结果只返回版本、大小、长度和哈希等轻量元数据。
+
+标题边界：MCP 读取和列举文档时返回有效标题。存储标题为空或为通用“节点文档”时回退到节点名称，同时保留 `storedTitle`、`nodeTitle` 和 `titleSource`；独立文章标题不得被节点名称覆盖。
+
+RAG 边界：当前代码库没有可查询的向量索引实现或索引版本表。MCP 必须返回 `ragIndex.status: "not_configured"`、当前快照和 `synchronized: false`，明确区分“文档已写入”和“RAG 已同步”；在真正接入索引服务前不得伪造同步成功。
 
 定位与交接：
 
@@ -120,9 +125,10 @@ Chrome 端口：
 
 ## 验证顺序
 
-1. `npm run qa:mcp-runtime-safety`
-2. `npm run build`
-3. 运行 `scripts/mcp/aistudy-mcp-server.mjs` 的 `initialize`、`tools/list`、`resources/list`、`prompts/list`、`mcp_get_started`。
-3. 调用 `chrome_ports_status`，确认端口工具能返回平台和端口。
-4. 在客户端界面里点击 MCP 控制台的工具卡片，确认状态灯有调用反馈。
-5. 编辑类工具默认应被权限拦截。
+1. `npm run qa:mcp-system-contracts`
+2. `npm run qa:mcp-runtime-safety`
+3. `npm run build`
+4. 运行 `scripts/mcp/aistudy-mcp-server.mjs` 的 `initialize`、`tools/list`、`resources/list`、`prompts/list`、`mcp_get_started`。
+5. 调用 `chrome_ports_status`，确认端口工具能返回平台和端口。
+6. 在客户端界面里点击 MCP 控制台的工具卡片，确认状态灯有调用反馈。
+7. 验证编辑总开关关闭时被拦截，并验证精确白名单范围外请求返回 `MCP_EDIT_POLICY_DENIED`。

@@ -21,6 +21,7 @@ const DOCUMENT_EDITOR = "aistudy-word";
 const DOCUMENT_EDITOR_VERSION = "mcp-text";
 const DOCUMENT_READ_DEFAULT_MAX_CHARS = 12000;
 const DOCUMENT_SNAPSHOT_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+const DOCUMENT_CONTEXT_FULL_MAX_CHARS = 1000000;
 const MIND_MAP_SNAPSHOT_CACHE_MAX_BYTES = 6 * 1024 * 1024;
 const PUBLIC_MYSQL_DATABASE = "aistudy_public";
 const PUBLIC_MYSQL_TABLES = {
@@ -285,9 +286,9 @@ const toolDefinitions = [
   {
     name: "read_node_document",
     mode: "read",
-    description: "Read a node document by compact ref or exact ids. Default mode=text returns one cleaned text copy; mode=snapshot returns editor JSON; mode=audit returns integrity diagnostics.",
+    description: "Read a node document by compact ref or exact ids. Default mode=text returns one cleaned text page with explicit completion and continuation fields; mode=snapshot returns editor JSON; mode=audit returns integrity diagnostics.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputSchema: { type: "object", additionalProperties: false, properties: { ref: { type: "string", maxLength: 160 }, courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, mode: { type: "string", enum: ["text", "snapshot", "audit"] }, maxChars: { type: "integer", minimum: 200, maximum: 200000 } } }
+    inputSchema: { type: "object", additionalProperties: false, properties: { ref: { type: "string", maxLength: 160 }, courseId: { type: "string", maxLength: 120 }, mindMapId: { type: "string", maxLength: 120 }, nodeId: { type: "string", maxLength: 120 }, mode: { type: "string", enum: ["text", "snapshot", "audit"] }, offset: { type: "integer", minimum: 0, maximum: 10000000 }, maxChars: { type: "integer", minimum: 200, maximum: 200000 } } }
   },
   {
     name: "read_node_context",
@@ -305,7 +306,7 @@ const toolDefinitions = [
         includeAncestors: { type: "boolean", description: "Default true. Include root-to-parent context." },
         includeDescendants: { type: "boolean", description: "Default false. Include a nested subtree rooted at nodeId only when requested." },
         includeDocuments: { type: "boolean", description: "Default true. Attach current node document metadata for returned nodes." },
-        documentMode: { type: "string", enum: ["none", "summary", "text"], description: "Default summary. text returns one cleaned text copy with truncation." },
+        documentMode: { type: "string", enum: ["none", "summary", "text", "full"], description: "Default summary. text returns bounded previews with mandatory continuation calls; full atomically returns all selected document text up to the aggregate safety cap." },
         maxDepth: { type: "integer", minimum: 0, maximum: 32, description: "Default 4. Descendant depth relative to target." },
         maxNodes: { type: "integer", minimum: 1, maximum: 500, description: "Default 120. Maximum returned descendant nodes." },
         maxDocumentChars: { type: "integer", minimum: 200, maximum: 20000, description: "Default 4000. Maximum cleaned text chars per document." }
@@ -531,11 +532,11 @@ function createMcpTaskPlan(args = {}) {
   const courseId = typeof args.courseId === "string" ? args.courseId.trim() : "";
   const nodeQuery = typeof args.nodeQuery === "string" ? args.nodeQuery.trim() : "";
   const allowEdit = args.allowEdit === true;
-  const editLike = /编辑|新增|创建|写入|追加|删除|移动|改名|重命名|样式|布局|更新|覆盖|append|write|delete|move|rename|style|layout/i.test(intent);
+  const editLike = /编辑|新增|创建|写入|追加|删除|移动|改名|重命名|排版|格式|样式|字体|字号|颜色|布局|更新|覆盖|append|write|delete|move|rename|format|style|layout/i.test(intent);
   const documentLike = /文档|document|正文|内容/i.test(intent);
   const locatorLike = /路径|定位|locator|handoff|本地/i.test(intent);
   const searchLike = /搜索|查找|节点|node|关键词/i.test(intent) || Boolean(nodeQuery);
-  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|小红书|xiaohongshu|rednote|zhaopin|zhipin|打开|browser|port/i.test(intent);
+  const browserLike = /端口|浏览器|chrome|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|小红书|xiaohongshu|rednote|zhaopin|zhipin|browser|port/i.test(intent);
   const steps = [
     { order: 1, tool: "mcp_get_started", arguments: {}, purpose: "确认 MCP 状态、全库范围和安全规则。" },
     { order: 2, tool: "read_courses", arguments: {}, purpose: "拿到真实 courseId，避免按显示名称猜参数。" }
@@ -569,9 +570,16 @@ function createMcpTaskPlan(args = {}) {
     });
   }
   if (editLike) {
+    const documentEditTool = /追加|append/i.test(intent)
+      ? "append_node_document"
+      : /排版|格式|format/i.test(intent)
+        ? "format_node_document"
+        : /样式|字体|字号|颜色|style/i.test(intent)
+          ? "update_node_document_style"
+          : "write_node_document";
     steps.push({
       order: order++,
-      tool: documentLike ? "write_node_document / append_node_document / format_node_document / update_node_document_style" : "create_mindmap_node / update_mindmap_node_text / move_mindmap_node / update_mindmap_node_style / update_mindmap_layout",
+      tool: documentLike ? documentEditTool : "create_mindmap_node / update_mindmap_node_text / move_mindmap_node / update_mindmap_node_style / update_mindmap_layout",
       arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" },
       purpose: "只调用和用户意图匹配的编辑工具。"
     });
@@ -1393,6 +1401,18 @@ function hashSnapshot(snapshot) {
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
+function createDocumentRagIndexStatus(currentSnapshotId) {
+  return {
+    supported: false,
+    status: "not_configured",
+    currentSnapshotId: currentSnapshotId || null,
+    indexedSnapshotId: null,
+    synchronized: false,
+    verificationAvailable: false,
+    message: "AIstudy Public has no configured RAG vector-index contract. A saved document must not be treated as indexed."
+  };
+}
+
 function createEntityId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 }
@@ -1411,9 +1431,51 @@ async function nextSortOrder(runtime, tableName, whereSql = "", params = []) {
   return Number(rows[0]?.nextOrder) || 0;
 }
 
-function assertEditEnabled() {
+function readMcpEditAllowList(name) {
+  return new Set(
+    String(process.env[name] || "")
+      .split(/[\s,;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function createMcpEditPolicy() {
+  const allowedTools = readMcpEditAllowList("AISTUDY_MCP_ALLOWED_EDIT_TOOLS");
+  const allowedCourseIds = readMcpEditAllowList("AISTUDY_MCP_ALLOWED_COURSE_IDS");
+  const allowedNodeIds = readMcpEditAllowList("AISTUDY_MCP_ALLOWED_NODE_IDS");
+  return {
+    enabled: process.env.AISTUDY_MCP_ALLOW_EDIT === "1",
+    allowedTools: [...allowedTools],
+    allowedCourseIds: [...allowedCourseIds],
+    allowedNodeIds: [...allowedNodeIds],
+    toolRestricted: allowedTools.size > 0,
+    courseRestricted: allowedCourseIds.size > 0,
+    nodeRestricted: allowedNodeIds.size > 0
+  };
+}
+
+function assertEditEnabled(tool = "", args = {}) {
   if (process.env.AISTUDY_MCP_ALLOW_EDIT !== "1") {
     throw new Error("MCP edit calls are disabled by configuration.");
+  }
+  // Public tools/call performs the scoped policy check with the real tool and
+  // arguments. Individual mutation functions retain this global guard for
+  // direct/internal callers without re-evaluating an empty target.
+  if (!tool) return;
+  const policy = createMcpEditPolicy();
+  if (policy.toolRestricted && (!tool || !policy.allowedTools.includes(tool))) {
+    throw new Error(`MCP_EDIT_POLICY_DENIED: tool ${tool || "<unknown>"} is not allowed.`);
+  }
+  const courseId = normalizeText(args.courseId, "");
+  if (policy.courseRestricted && (!courseId || !policy.allowedCourseIds.includes(courseId))) {
+    throw new Error(`MCP_EDIT_POLICY_DENIED: courseId ${courseId || "<missing>"} is not allowed.`);
+  }
+  const nodeIds = ["nodeId", "parentNodeId", "targetParentNodeId"]
+    .map((key) => normalizeText(args[key], ""))
+    .filter(Boolean);
+  if (policy.nodeRestricted && (nodeIds.length === 0 || nodeIds.some((nodeId) => !policy.allowedNodeIds.includes(nodeId)))) {
+    throw new Error(`MCP_EDIT_POLICY_DENIED: node target is missing or outside the allowed node set.`);
   }
 }
 
@@ -2343,24 +2405,24 @@ function normalizeDocumentNestedScriptText(value) {
   });
 }
 
-const DOCUMENT_FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)/g;
-const DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX = "\uE000AISTUDYPATH";
-const DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX = "\uE001";
+const DOCUMENT_LITERAL_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\r\n]*)|(?:\\\\[^\r\n]+)|(?:aistudy:\/\/[^\s]+)|(?:\{(?=[^\r\n]{0,4000}"[^"]+"\s*:)[^\r\n]+\})|(?:--[A-Za-z0-9][A-Za-z0-9-]*)|(?:\b[A-Za-z][A-Za-z0-9]{1,}(?:_[A-Za-z0-9]+)+\b)|(?:\b[A-Za-z][A-Za-z0-9._-]*\.(?:mjs|cjs|js|ts|tsx|json|jsonl|md|ps1|cmd|exe)\b)/g;
+const DOCUMENT_LITERAL_PLACEHOLDER_PREFIX = "\uE000AISTUDYLITERAL";
+const DOCUMENT_LITERAL_PLACEHOLDER_SUFFIX = "\uE001";
 
-function protectDocumentFilePathText(value) {
-  const paths = [];
-  const text = String(value || "").replace(DOCUMENT_FILE_PATH_TEXT_PATTERN, (match) => {
-    const index = paths.push(match) - 1;
-    return `${DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}${index}${DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`;
+function protectDocumentLiteralText(value) {
+  const literals = [];
+  const text = String(value || "").replace(DOCUMENT_LITERAL_TEXT_PATTERN, (match) => {
+    const index = literals.push(match) - 1;
+    return `${DOCUMENT_LITERAL_PLACEHOLDER_PREFIX}${index}${DOCUMENT_LITERAL_PLACEHOLDER_SUFFIX}`;
   });
-  return { text, paths };
+  return { text, literals };
 }
 
-function restoreDocumentFilePathText(value, paths) {
-  if (paths.length === 0) return value;
+function restoreDocumentLiteralText(value, literals) {
+  if (literals.length === 0) return value;
   return value.replace(
-    new RegExp(`${DOCUMENT_FILE_PATH_PLACEHOLDER_PREFIX}(\\d+)${DOCUMENT_FILE_PATH_PLACEHOLDER_SUFFIX}`, "g"),
-    (_match, index) => paths[Number(index)] ?? ""
+    new RegExp(`${DOCUMENT_LITERAL_PLACEHOLDER_PREFIX}(\\d+)${DOCUMENT_LITERAL_PLACEHOLDER_SUFFIX}`, "g"),
+    (_match, index) => literals[Number(index)] ?? ""
   );
 }
 
@@ -2388,8 +2450,9 @@ const DOCUMENT_CHINESE_TYPOGRAPHY_KINDS = new Set([
 ]);
 
 function normalizeChineseArticleTypography(value) {
+  const literalText = protectDocumentLiteralText(value);
   const protectedValues = [];
-  let text = String(value ?? "").replace(DOCUMENT_INLINE_PROTECTED_PATTERN, (match) => {
+  let text = literalText.text.replace(DOCUMENT_INLINE_PROTECTED_PATTERN, (match) => {
     const index = protectedValues.push(match) - 1;
     return `${DOCUMENT_INLINE_PLACEHOLDER_PREFIX}${index}${DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`;
   });
@@ -2400,10 +2463,11 @@ function normalizeChineseArticleTypography(value) {
     .replace(/([\p{Script=Han}])([,;:?!])/gu, (_match, chinese, punctuation) => `${chinese}${DOCUMENT_CHINESE_PUNCTUATION.get(punctuation)}`)
     .replace(/([,;:?!])(?=[\p{Script=Han}])/gu, (punctuation) => DOCUMENT_CHINESE_PUNCTUATION.get(punctuation))
     .replace(/ {2,}/g, " ");
-  return text.replace(
+  const restoredInline = text.replace(
     new RegExp(`${DOCUMENT_INLINE_PLACEHOLDER_PREFIX}(\\d+)${DOCUMENT_INLINE_PLACEHOLDER_SUFFIX}`, "g"),
     (_match, index) => protectedValues[Number(index)] ?? ""
   );
+  return restoreDocumentLiteralText(restoredInline, literalText.literals);
 }
 
 function ensureChineseBodyParagraphIndent(value) {
@@ -2413,7 +2477,7 @@ function ensureChineseBodyParagraphIndent(value) {
 }
 
 function normalizeDocumentMathText(value) {
-  const protectedText = protectDocumentFilePathText(value);
+  const protectedText = protectDocumentLiteralText(value);
   let text = protectedText.text
     .replace(/\u00a0/g, " ")
     .replace(/\u2212/g, "-")
@@ -2482,7 +2546,7 @@ function normalizeDocumentMathText(value) {
     .replace(new RegExp(`(${mathToken})\\s*subseteq\\s*(${mathTarget})`, "g"), "$1 ⊆ $2")
     .replace(new RegExp(`(${mathToken})\\s*subset\\s*(${mathTarget})`, "g"), "$1 ⊂ $2");
 
-  return restoreDocumentFilePathText(text.replace(/\\/g, ""), protectedText.paths);
+  return restoreDocumentLiteralText(text, protectedText.literals);
 }
 
 function createTemplateElement(value, kind) {
@@ -3055,14 +3119,37 @@ function formatDocumentSnapshotPreservingText(snapshot) {
   };
 }
 
+function resolveDocumentTitle(storedTitle, nodeTitle) {
+  const stored = normalizeText(storedTitle, "");
+  const node = normalizeText(nodeTitle, "");
+  if (!stored || /^(?:节点文档|node document)$/i.test(stored)) return node || stored || "节点文档";
+  return stored;
+}
+
+async function readDocumentNodeTitle(runtime, target) {
+  const [rows] = await runtime.pool.execute(
+    `SELECT title
+     FROM ${escapeIdentifier(runtime.config.mindMapNodeTable, "node table")}
+     WHERE course_id = ? AND mind_map_id = ? AND node_id = ? AND deleted_at IS NULL LIMIT 1`,
+    [target.course.id, target.mindMapId, target.nodeId]
+  );
+  const nodeTitle = normalizeText(rows[0]?.title, "");
+  if (!nodeTitle) throw new Error("Mind map node is missing.");
+  return nodeTitle;
+}
+
 async function resolveDocumentTarget(runtime, args) {
   const refTarget = await resolveMcpNodeRef(runtime, args);
-  if (refTarget) return refTarget;
-  const { course } = await resolveCourse(runtime, args, true);
-  const nodeId = normalizeName(args.nodeId, "nodeId");
-  const mindMapId = normalizeText(args.mindMapId, "") || (await findMindMapByCourse(runtime, course.id))?.id;
-  if (!mindMapId) throw new Error("Mind map is missing.");
-  return { course, mindMapId, nodeId };
+  const target = refTarget
+    ? refTarget
+    : await (async () => {
+      const { course } = await resolveCourse(runtime, args, true);
+      const nodeId = normalizeName(args.nodeId, "nodeId");
+      const mindMapId = normalizeText(args.mindMapId, "") || (await findMindMapByCourse(runtime, course.id))?.id;
+      if (!mindMapId) throw new Error("Mind map is missing.");
+      return { course, mindMapId, nodeId };
+    })();
+  return { ...target, nodeTitle: await readDocumentNodeTitle(runtime, target) };
 }
 
 async function findDocument(runtime, target, connection = runtime.pool, forUpdate = false, includeDeleted = false) {
@@ -3082,30 +3169,43 @@ async function readNodeDocument(runtime, args) {
   const target = await resolveDocumentTarget(runtime, args);
   const doc = await findDocument(runtime, target);
   const mode = ["text", "snapshot", "audit"].includes(args.mode) ? args.mode : "text";
+  const offset = normalizeContextInteger(args.offset, 0, 0, 10000000);
   const maxChars = normalizeContextInteger(args.maxChars, DOCUMENT_READ_DEFAULT_MAX_CHARS, 200, 200000);
+  const title = resolveDocumentTitle(doc?.title, target.nodeTitle);
   const base = {
     course: target.course,
     mindMapId: target.mindMapId,
     nodeId: target.nodeId,
+    nodeTitle: target.nodeTitle,
     mode,
     document: doc ? {
       courseId: target.course.id,
       mindMapId: target.mindMapId,
       nodeId: target.nodeId,
       documentId: doc.id,
-      title: doc.title,
+      title,
+      storedTitle: doc.title,
+      titleSource: title === doc.title ? "document" : "node",
       currentSnapshotId: doc.currentSnapshotId || null,
       updatedAt: toIsoTimestamp(doc.updatedAt),
       byteSize: Number(doc.currentByteSize) || 0,
-      hasContent: Boolean(Number(doc.hasContent))
-    } : null
+      hasContent: Boolean(Number(doc.hasContent)),
+      ragIndex: createDocumentRagIndexStatus(doc.currentSnapshotId)
+    } : null,
+    ragIndex: createDocumentRagIndexStatus(doc?.currentSnapshotId)
   };
   if (!doc?.currentSnapshotId) {
     return {
       ...base,
       text: "",
       textLength: 0,
-      textTruncated: false
+      textOffset: 0,
+      returnedTextLength: 0,
+      remainingTextLength: 0,
+      nextOffset: null,
+      complete: true,
+      textTruncated: false,
+      requiredNextCall: null
     };
   }
   let snapshot = mode === "audit" ? null : readCachedSnapshot(documentSnapshotCache, doc.currentSnapshotId);
@@ -3128,7 +3228,7 @@ async function readNodeDocument(runtime, args) {
   const rawText = extractDocumentText(rawSnapshot?.content || "");
   const normalizedText = extractDocumentText(snapshot?.content || "");
   const textClean = cleanExtractedDocumentText(rawText);
-  const text = textClean.slice(0, maxChars);
+  const text = textClean.slice(offset, offset + maxChars);
   if (mode === "snapshot") {
     return {
       ...base,
@@ -3153,7 +3253,23 @@ async function readNodeDocument(runtime, args) {
     ...base,
     text,
     textLength: textClean.length,
-    textTruncated: text.length < textClean.length,
+    textOffset: offset,
+    returnedTextLength: text.length,
+    remainingTextLength: Math.max(0, textClean.length - offset - text.length),
+    nextOffset: offset + text.length < textClean.length ? offset + text.length : null,
+    complete: offset + text.length >= textClean.length,
+    textTruncated: offset > 0 || offset + text.length < textClean.length,
+    requiredNextCall: offset + text.length < textClean.length ? {
+      tool: "read_node_document",
+      arguments: {
+        courseId: target.course.id,
+        mindMapId: target.mindMapId,
+        nodeId: target.nodeId,
+        mode: "text",
+        offset: offset + text.length,
+        maxChars
+      }
+    } : null,
     contentHash: payloadHash || (snapshot ? hashSnapshot(snapshot) : null)
   };
 }
@@ -3167,7 +3283,7 @@ function normalizeContextInteger(value, fallback, min, max) {
 function normalizeContextDocumentMode(args) {
   if (args.includeDocuments === false) return "none";
   const mode = normalizeText(args.documentMode, "summary");
-  return ["none", "summary", "text"].includes(mode) ? mode : "summary";
+  return ["none", "summary", "text", "full"].includes(mode) ? mode : "summary";
 }
 
 function buildContextNodeSummary(row, childCount, document) {
@@ -3235,46 +3351,73 @@ async function readContextNodeRows(runtime, courseId, mindMapId, nodeId, include
 async function readContextDocuments(runtime, courseId, mindMapId, nodeIds, documentMode, maxDocumentChars) {
   if (documentMode === "none" || nodeIds.length === 0) return new Map();
   const placeholders = nodeIds.map(() => "?").join(", ");
-  const snapshotJoin = documentMode === "text"
+  const includeText = documentMode === "text" || documentMode === "full";
+  const snapshotJoin = includeText
     ? `LEFT JOIN ${escapeIdentifier(runtime.config.knowledgeDocumentSnapshotTable, "document snapshot table")} s
          ON s.id = d.current_snapshot_id AND s.document_id = d.id`
     : "";
   const [rows] = await runtime.pool.execute(
     `SELECT d.id, d.course_id AS courseId, d.mind_map_id AS mindMapId, d.node_id AS nodeId, d.title,
+            n.title AS nodeTitle,
             d.current_snapshot_id AS currentSnapshotId,
             d.current_byte_size AS byteSize, d.has_content AS hasContent, d.updated_at AS updatedAt
-            ${documentMode === "text" ? ", s.payload_json AS payloadJson" : ""}
+            ${includeText ? ", s.payload_json AS payloadJson" : ""}
      FROM ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")} d
+     INNER JOIN ${escapeIdentifier(runtime.config.mindMapNodeTable, "node table")} n
+       ON n.course_id = d.course_id AND n.mind_map_id = d.mind_map_id AND n.node_id = d.node_id AND n.deleted_at IS NULL
      ${snapshotJoin}
      WHERE d.course_id = ? AND d.mind_map_id = ? AND d.node_id IN (${placeholders}) AND d.deleted_at IS NULL`,
     [courseId, mindMapId, ...nodeIds]
   );
   const documents = new Map();
+  let fullTextChars = 0;
   for (const row of rows) {
     let text = "";
     let textTruncated = false;
     let textLength = 0;
-    if (documentMode === "text" && row.payloadJson) {
+    if (includeText && row.payloadJson) {
       try {
         const snapshotId = row.currentSnapshotId || `${row.id}:${row.updatedAt || ""}`;
         const snapshot = getCachedSnapshot(documentSnapshotCache, snapshotId, row.payloadJson, normalizeDocumentSnapshot);
         text = cleanExtractedDocumentText(extractDocumentText(snapshot?.content || ""));
         textLength = text.length;
-        if (text.length > maxDocumentChars) {
+        if (documentMode === "full") {
+          fullTextChars += textLength;
+          if (fullTextChars > DOCUMENT_CONTEXT_FULL_MAX_CHARS) {
+            throw new Error(`DOCUMENT_CONTEXT_TOO_LARGE: full document text exceeds ${DOCUMENT_CONTEXT_FULL_MAX_CHARS} characters. Use summary/text mode and follow requiredNextCalls.`);
+          }
+        } else if (text.length > maxDocumentChars) {
           text = text.slice(0, maxDocumentChars);
           textTruncated = true;
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("DOCUMENT_CONTEXT_TOO_LARGE:")) throw error;
         text = "";
       }
     }
+    const title = resolveDocumentTitle(row.title, row.nodeTitle);
+    const complete = documentMode === "full" || documentMode === "text" && !textTruncated;
     documents.set(row.nodeId, {
       documentId: row.id,
-      title: row.title || "",
+      title,
+      storedTitle: row.title || "",
+      nodeTitle: row.nodeTitle || "",
+      titleSource: title === row.title ? "document" : "node",
       updatedAt: toIsoTimestamp(row.updatedAt),
       byteSize: Number(row.byteSize) || 0,
       hasContent: Boolean(Number(row.hasContent)),
-      ...(documentMode === "text" ? { text, textLength, textTruncated } : {})
+      ragIndex: createDocumentRagIndexStatus(row.currentSnapshotId),
+      ...(includeText ? {
+        text,
+        textLength,
+        returnedTextLength: text.length,
+        textTruncated,
+        complete,
+        requiredNextCall: textTruncated ? {
+          tool: "read_node_document",
+          arguments: { courseId, mindMapId, nodeId: row.nodeId, mode: "text", offset: text.length, maxChars: maxDocumentChars }
+        } : null
+      } : {})
     });
   }
   return documents;
@@ -3346,6 +3489,22 @@ async function readNodeContext(runtime, args) {
     ? Number(row.childCount) || 0
     : (childrenByParent.get(row.nodeId) || []).length;
   const toSummary = (row) => buildContextNodeSummary(row, childCount(row), documents.get(row.nodeId));
+  const requiredNextCalls = [];
+  for (const [documentNodeId, document] of documents.entries()) {
+    if (!document?.hasContent) continue;
+    if (document?.requiredNextCall) {
+      requiredNextCalls.push(document.requiredNextCall);
+    } else if (documentMode === "summary") {
+      requiredNextCalls.push({
+        tool: "read_node_document",
+        arguments: { courseId: course.id, mindMapId: map.id, nodeId: documentNodeId, mode: "text", offset: 0 }
+      });
+    }
+  }
+  const documentTextComplete = documentMode === "none"
+    || [...documents.values()].every((document) => !document?.hasContent)
+    || documentMode === "full"
+    || documentMode === "text" && requiredNextCalls.length === 0;
   const buildTree = (row, relativeDepth) => {
     const summary = toSummary(row);
     const children = childrenByParent.get(row.nodeId) || [];
@@ -3398,9 +3557,27 @@ async function readNodeContext(runtime, args) {
     documents: {
       mode: documentMode,
       returnedCount: documents.size,
-      nodeIds: [...documents.keys()]
+      nodeIds: [...documents.keys()],
+      complete: documentTextComplete,
+      truncatedCount: [...documents.values()].filter((document) => document?.textTruncated).length,
+      requiresFollowUp: requiredNextCalls.length > 0,
+      requiredNextCalls
     },
-    readingGuidance: "Use read_node_context for fast structured parent/subtree context. Use read_node_document only when a full single document snapshot is needed."
+    completion: {
+      complete: !subtreeTruncated && documentTextComplete,
+      subtreeComplete: !subtreeTruncated,
+      documentTextComplete,
+      requiresFollowUp: subtreeTruncated || requiredNextCalls.length > 0,
+      requiredNextCalls,
+      message: subtreeTruncated
+        ? "Node subtree is incomplete because maxDepth or maxNodes was reached."
+        : requiredNextCalls.length > 0
+          ? "Document text is incomplete. Execute every requiredNextCalls entry before treating the context as complete."
+          : "Requested node context is complete."
+    },
+    readingGuidance: documentMode === "full"
+      ? "Full text was returned atomically for the selected nodes. Check completion.complete before using the result."
+      : "Check completion.complete. Execute every requiredNextCalls entry before treating previews or summaries as complete documents."
   };
 }
 
@@ -3466,8 +3643,9 @@ async function writeNodeDocumentSnapshot(runtime, target, title, snapshot, expec
       updatedAt,
       byteSize,
       hasContent,
-      textLength: extractDocumentText(normalizedSnapshot.content).length,
-      contentHash: payloadHash
+      textLength: cleanExtractedDocumentText(extractDocumentText(normalizedSnapshot.content)).length,
+      contentHash: payloadHash,
+      ragIndex: createDocumentRagIndexStatus(snapshotId)
     };
   } catch (error) {
     await connection.rollback();
@@ -3526,8 +3704,9 @@ async function writeNodeDocumentSnapshotPreserved(runtime, target, documentId, t
       updatedAt,
       byteSize,
       hasContent,
-      textLength: extractDocumentText(snapshot.content).length,
-      contentHash: payloadHash
+      textLength: cleanExtractedDocumentText(extractDocumentText(snapshot.content)).length,
+      contentHash: payloadHash,
+      ragIndex: createDocumentRagIndexStatus(snapshotId)
     };
   } catch (error) {
     await connection.rollback();
@@ -3544,14 +3723,33 @@ async function listNodeDocuments(runtime, args) {
   if (ids.length === 0) return { scope: "all", documents: [] };
   const placeholders = ids.map(() => "?").join(", ");
   const [rows] = await runtime.pool.execute(
-    `SELECT id, course_id AS courseId, mind_map_id AS mindMapId, node_id AS nodeId, title,
-            current_byte_size AS byteSize, has_content AS hasContent, updated_at AS updatedAt
-     FROM ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")}
-     WHERE course_id IN (${placeholders}) AND deleted_at IS NULL
-     ORDER BY updated_at DESC LIMIT 200`,
+    `SELECT d.id, d.course_id AS courseId, d.mind_map_id AS mindMapId, d.node_id AS nodeId, d.title,
+            n.title AS nodeTitle, d.current_snapshot_id AS currentSnapshotId,
+            d.current_byte_size AS byteSize, d.has_content AS hasContent, d.updated_at AS updatedAt
+     FROM ${escapeIdentifier(runtime.config.knowledgeDocumentTable, "document table")} d
+     INNER JOIN ${escapeIdentifier(runtime.config.mindMapNodeTable, "node table")} n
+       ON n.course_id = d.course_id AND n.mind_map_id = d.mind_map_id AND n.node_id = d.node_id AND n.deleted_at IS NULL
+     WHERE d.course_id IN (${placeholders}) AND d.deleted_at IS NULL
+     ORDER BY d.updated_at DESC LIMIT 200`,
     ids
   );
-  return { scope: course ? "course" : "all", course: course || null, documents: rows.map((row) => ({ ...row, updatedAt: toIsoTimestamp(row.updatedAt), byteSize: Number(row.byteSize) || 0, hasContent: Boolean(Number(row.hasContent)) })) };
+  return {
+    scope: course ? "course" : "all",
+    course: course || null,
+    documents: rows.map((row) => {
+      const title = resolveDocumentTitle(row.title, row.nodeTitle);
+      return {
+        ...row,
+        title,
+        storedTitle: row.title || "",
+        titleSource: title === row.title ? "document" : "node",
+        updatedAt: toIsoTimestamp(row.updatedAt),
+        byteSize: Number(row.byteSize) || 0,
+        hasContent: Boolean(Number(row.hasContent)),
+        ragIndex: createDocumentRagIndexStatus(row.currentSnapshotId)
+      };
+    })
+  };
 }
 
 async function writeNodeDocument(runtime, args) {
@@ -3568,7 +3766,7 @@ async function writeNodeDocument(runtime, args) {
   const expectedSnapshotId = Object.prototype.hasOwnProperty.call(args, "expectedSnapshotId")
     ? normalizeText(args.expectedSnapshotId, "") || null
     : undefined;
-  return writeNodeDocumentSnapshot(runtime, target, normalizeText(args.title, "节点文档") || "节点文档", snapshot, expectedSnapshotId);
+  return writeNodeDocumentSnapshot(runtime, target, normalizeText(args.title, "") || target.nodeTitle, snapshot, expectedSnapshotId);
 }
 
 async function appendNodeDocument(runtime, args) {
@@ -3594,7 +3792,7 @@ async function appendNodeDocument(runtime, args) {
   return writeNodeDocumentSnapshot(
     runtime,
     target,
-    normalizeText(args.title, existing.document?.title || "节点文档"),
+    normalizeText(args.title, existing.document?.title || target.nodeTitle),
     snapshot,
     currentSnapshotId
   );
@@ -3786,8 +3984,10 @@ async function runMcpGetStarted(getRuntime) {
     safety: {
       defaultMode: "read-only",
       editEnv: "AISTUDY_MCP_ALLOW_EDIT=1",
+      editPolicy: createMcpEditPolicy(),
       targetRule: "编辑前必须用 read_courses/mcp_resolve_target 解析真实 courseId 和 nodeId。",
-      locatorRule: "本地路径交接使用 resolve_course_locator。"
+      locatorRule: "本地路径交接使用 resolve_course_locator。",
+      ragIndex: createDocumentRagIndexStatus(null)
     },
     resources: createMcpResourceList(),
     prompts: createMcpPromptList()
@@ -3967,8 +4167,8 @@ async function handleRequest(getRuntime, request) {
       const name = normalizeText(params.name, "");
       const tool = toolDefinitions.find((item) => item.name === name);
       if (!tool) throw new Error("Unknown tool.");
-      if (tool.mode === "edit") assertEditEnabled();
       const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
+      if (tool.mode === "edit") assertEditEnabled(name, args);
       const data = await runTool(getRuntime, name, args);
       scheduleMcpDataChangeEvent(name, args, data);
       return {
@@ -4054,11 +4254,15 @@ if (isMainModule) {
 export {
   buildDocumentTemplateElements,
   cleanExtractedDocumentText,
+  createDocumentRagIndexStatus,
   createDocumentTextIntegrity,
+  createMcpEditPolicy,
+  createMcpTaskPlan,
   extractDocumentText,
   formatDocumentSnapshotPreservingText,
   normalizeChineseArticleTypography,
   normalizeDocumentMathText,
   normalizeDocumentSnapshot,
+  resolveDocumentTitle,
   startStdioServer
 };

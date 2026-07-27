@@ -16,8 +16,8 @@ Keep this file synchronized with `electron/mcp/controller.ts`, `electron/mcp/rem
 - `read_current_mindmap`: requires `courseId`; cross-library summaries require explicit `scope: "all"`.
 - `search_nodes`: requires `courseId`; cross-library search requires explicit `scope: "all"` and a non-empty query.
 - `list_node_documents`: requires `courseId`; cross-library listing requires explicit `scope: "all"`.
-- `read_node_document`: accepts compact `ref` or full `courseId + nodeId`. Default `mode: "text"` returns one cleaned text copy; `mode: "snapshot"` returns editor JSON; `mode: "audit"` returns diagnostic text variants.
-- `read_node_context`: preferred node-level read. Default output uses a targeted target-to-root query and includes the target, ancestors, and document metadata without parsing the full mind-map snapshot. Descendants and document body text are opt-in.
+- `read_node_document`: accepts compact `ref` or full `courseId + nodeId`. Default `mode: "text"` is paged by `offset + maxChars` and returns `complete`, `nextOffset`, remaining length, and an exact `requiredNextCall`; `mode: "snapshot"` returns editor JSON; `mode: "audit"` returns diagnostic text variants.
+- `read_node_context`: preferred node-level read. Default output uses a targeted target-to-root query and includes the target, ancestors, and document metadata without parsing the full mind-map snapshot. `documentMode: "text"` returns bounded previews plus mandatory `requiredNextCalls`; `documentMode: "full"` atomically returns all selected document text only when the aggregate safety cap is not exceeded.
 
 ## Compact Node References
 
@@ -29,7 +29,7 @@ aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
 
 Pass it directly as `{"ref":"..."}` to `read_node_context` for fast structured reads, or to `read_node_document({ ref, mode: "snapshot" })` only when editor JSON is required. The MCP server expands short prefixes only inside compact refs and refuses ambiguous matches instead of guessing. Explicit ID fields require full IDs.
 
-For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--session` for multiple calls so one process and MySQL pool are reused. Prefer direct flags such as `--course-name`, `--node-query`, `--query`, `--scope`, and `--mode` on Windows. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
+For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--session` for multiple calls so one process and MySQL pool are reused. Prefer direct flags on Windows; for complex objects use `ConvertTo-Json | ... --args-stdin` or `--args-file`. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
 
 ## Course And Section Edits
 
@@ -61,6 +61,10 @@ For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--sess
 
 All writes against an existing document use `expectedSnapshotId` from the latest read. A stale value fails with `DOCUMENT_VERSION_CONFLICT`. Successful writes return lightweight version, size, length, and hash metadata rather than a full document reread.
 
+Document titles returned by MCP include the node name when the stored legacy title is empty or generic (`节点文档`). A distinct article title remains unchanged and `storedTitle`/`titleSource` expose the distinction without rewriting the database during reads.
+
+Technical literals are exact-copy content: Windows/UNC paths, MCP tool names, underscore identifiers, IDs, compact refs, JSON, command switches, and script names must not be changed by Chinese or mathematical typography.
+
 ## Locator And Chrome Port Tools
 
 - `resolve_course_locator`: generate local locator files for external agents; database/table values are fixed-boundary metadata, not overrideable runtime config.
@@ -78,3 +82,15 @@ Remote MCP is read-only by default.
 - `destructive`: delete operations.
 
 Destructive tools require both the relevant edit group and `destructive`.
+
+Local/stdio and in-process MCP can further restrict edits with:
+
+- `AISTUDY_MCP_ALLOWED_EDIT_TOOLS`
+- `AISTUDY_MCP_ALLOWED_COURSE_IDS`
+- `AISTUDY_MCP_ALLOWED_NODE_IDS`
+
+Each is a comma/semicolon/whitespace-separated exact allowlist. Effective values are returned by `mcp_get_started.safety.editPolicy`; missing targets fail closed when a scoped allowlist is configured.
+
+## RAG Status
+
+Document read/write results include `ragIndex`. AIstudy Public currently returns `status: "not_configured"`, `supported: false`, and `synchronized: false` because this repository has no vector-index persistence or version contract. A successful document snapshot write must not be reported as RAG-indexed.

@@ -40,7 +40,24 @@ mcp_resolve_target({ courseName, nodeQuery })
 
 If multiple nodes match, present candidates or ask the user to choose.
 
-Use `read_node_context` as the default node-level read. Use `read_node_document({ ..., mode: "text" })` for one cleaned text copy, `mode: "snapshot"` for editor JSON, and `mode: "audit"` only for integrity diagnostics.
+Use `read_node_context` as the default node-level read. Never infer completeness from the presence of a `text` field:
+
+```text
+read_node_context({ ..., documentMode: "text" })
+-> check completion.complete
+-> execute every completion.requiredNextCalls entry
+```
+
+Use `documentMode: "full"` only when an atomic full-text response is explicitly needed and fits the aggregate safety cap. Oversized full reads fail instead of returning an unlabeled partial result.
+
+For a single long document, follow the returned continuation:
+
+```text
+read_node_document({ ..., mode: "text", offset: 0 })
+-> while complete=false, call requiredNextCall
+```
+
+Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only for integrity diagnostics.
 
 Explicit IDs must be full IDs. Short prefixes are accepted only in compact refs and must be unique.
 
@@ -72,9 +89,13 @@ For `write_node_document` and `append_node_document`, do not repeat the node nam
 
 New text receives Chinese heading/body fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent. AIstudy safely normalizes nearby Chinese punctuation and Chinese-English spacing while protecting URLs, Windows paths, email addresses, code, formulas, list markers, and tree indentation. `format_node_document` applies the same style system to existing content but preserves every `value` exactly, so it cannot add missing indent characters.
 
+Windows/UNC paths, tool names such as `read_node_context`, underscore identifiers, IDs, compact refs, JSON, command switches, and script names are exact-copy literals. If any of them changes after a write/read round trip, treat the operation as failed.
+
 Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map edit tools for actual mind map structure. When a document needs to describe a diagram, convert it into headings, field labels, and stable numbered outlines so the AIstudy document renderer shows structured content instead of source code or whitespace-dependent trees.
 
 For math-heavy notes, write standard symbols or readable formula text in the final content: `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, `|x_n-a| < ε`. Do not leave degraded chat text such as `epsilon`, `delta`, `infinity`, `->`, or `lim_{n->infinity}` in the document.
+
+After a write, check `ragIndex`. `status: "not_configured"` explicitly means the snapshot is persisted but no RAG/vector synchronization can be verified.
 
 ## Generate A Local Locator
 

@@ -16,7 +16,7 @@
 - `update/`：发布更新记录脚本。
 - `npm-stubs/`：项目本地 npm stub 包。
 
-MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并保持 stdio 会话。单次诊断可用 `mcp/call-aistudy-mcp.mjs`；连续调用应使用 `--session`，以复用同一个 Node 进程和 MySQL 连接池。Windows 下优先使用 `--ref`、`--course-name`、`--node-query`、`--query`、`--scope`、`--mode` 等直接参数，避免 shell 对 JSON 参数转义造成丢失。`read_node_context` 默认只定向查询目标与祖先路径；只有显式要求后代时才加载整张节点表。快照缓存同时受条目数和字节数限制。
+MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并保持 stdio 会话。单次诊断可用 `mcp/call-aistudy-mcp.mjs`；连续调用应使用 `--session`，以复用同一个 Node 进程和 MySQL 连接池。Windows 下优先使用 `--ref`、`--course-name`、`--node-query`、`--query`、`--scope`、`--mode` 等直接参数。复杂对象使用 PowerShell `ConvertTo-Json -Compress | ... --args-stdin` 或 UTF-8 JSON 文件配合 `--args-file`；不要依赖 PowerShell 中的内联 `--args-json` 引号转义。`--args-json`、`--args-stdin`、`--args-file` 互斥，解析失败会在 MCP 调用前退出。`read_node_context` 默认只定向查询目标与祖先路径；只有显式要求后代时才加载整张节点表。快照缓存同时受条目数和字节数限制。
 
 ## 使用边界
 
@@ -29,3 +29,4 @@ MCP 本机调用：标准客户端直接启动 `mcp/aistudy-mcp-server.mjs` 并�
 - 同步 GitHub 前使用 `npm run github:sync:doctor`。
 - 批量导入先 dry-run，再通过审计脚本确认后提交。
 - 构建缓存必须放在项目本地忽略目录，不能写入系统盘缓存。
+- MCP 参数、技术文本保真、全文完成状态、规划、权限、标题与 RAG 状态契约使用 `npm run qa:mcp-system-contracts` 验证。

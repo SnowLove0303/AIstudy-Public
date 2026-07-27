@@ -192,6 +192,7 @@ const documentSchema = {
     replaceExisting: { type: "boolean" },
     expectedSnapshotId: { type: ["string", "null"], maxLength: 120 },
     mode: { type: "string", enum: ["text", "snapshot", "audit"] },
+    offset: { type: "integer", minimum: 0, maximum: 10000000 },
     maxChars: { type: "integer", minimum: 200, maximum: 200000 },
     snapshot: { type: "object" },
     fontSize: { type: "integer", minimum: 10, maximum: 72 },
@@ -212,7 +213,7 @@ const nodeContextSchema = {
     includeAncestors: { type: "boolean" },
     includeDescendants: { type: "boolean" },
     includeDocuments: { type: "boolean" },
-    documentMode: { type: "string", enum: ["none", "summary", "text"] },
+    documentMode: { type: "string", enum: ["none", "summary", "text", "full"] },
     maxDepth: { type: "integer", minimum: 0, maximum: 32 },
     maxNodes: { type: "integer", minimum: 1, maximum: 500 },
     maxDocumentChars: { type: "integer", minimum: 200, maximum: 20000 }
@@ -728,17 +729,59 @@ function includesNormalized(value: string, query: string) {
   return value.trim().toLowerCase().includes(query.trim().toLowerCase());
 }
 
+function readMcpEditAllowList(name: string) {
+  return new Set(
+    String(process.env[name] || "")
+      .split(/[\s,;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function createMcpEditPolicy() {
+  const allowedTools = readMcpEditAllowList("AISTUDY_MCP_ALLOWED_EDIT_TOOLS");
+  const allowedCourseIds = readMcpEditAllowList("AISTUDY_MCP_ALLOWED_COURSE_IDS");
+  const allowedNodeIds = readMcpEditAllowList("AISTUDY_MCP_ALLOWED_NODE_IDS");
+  return {
+    enabled: process.env.AISTUDY_MCP_ALLOW_EDIT === "1",
+    allowedTools: [...allowedTools],
+    allowedCourseIds: [...allowedCourseIds],
+    allowedNodeIds: [...allowedNodeIds],
+    toolRestricted: allowedTools.size > 0,
+    courseRestricted: allowedCourseIds.size > 0,
+    nodeRestricted: allowedNodeIds.size > 0
+  };
+}
+
+function getMcpEditPolicyViolation(toolId: string, args: Record<string, unknown>) {
+  const policy = createMcpEditPolicy();
+  if (policy.toolRestricted && !policy.allowedTools.includes(toolId)) {
+    return `MCP_EDIT_POLICY_DENIED: tool ${toolId} is not allowed.`;
+  }
+  const courseId = typeof args.courseId === "string" ? args.courseId.trim() : "";
+  if (policy.courseRestricted && (!courseId || !policy.allowedCourseIds.includes(courseId))) {
+    return `MCP_EDIT_POLICY_DENIED: courseId ${courseId || "<missing>"} is not allowed.`;
+  }
+  const nodeIds = ["nodeId", "parentNodeId", "targetParentNodeId"]
+    .map((key) => typeof args[key] === "string" ? String(args[key]).trim() : "")
+    .filter(Boolean);
+  if (policy.nodeRestricted && (nodeIds.length === 0 || nodeIds.some((nodeId) => !policy.allowedNodeIds.includes(nodeId)))) {
+    return "MCP_EDIT_POLICY_DENIED: node target is missing or outside the allowed node set.";
+  }
+  return "";
+}
+
 function createMcpTaskPlan(args: Record<string, unknown>) {
   const intent = typeof args.intent === "string" ? args.intent.trim() : "";
   const targetName = typeof args.targetName === "string" ? args.targetName.trim() : "";
   const courseId = typeof args.courseId === "string" ? args.courseId.trim() : "";
   const nodeQuery = typeof args.nodeQuery === "string" ? args.nodeQuery.trim() : "";
   const allowEdit = args.allowEdit === true;
-  const editLike = /编辑|新增|创建|写入|追加|删除|移动|改名|重命名|样式|布局|更新|覆盖|append|write|delete|move|rename|style|layout/i.test(intent);
+  const editLike = /编辑|新增|创建|写入|追加|删除|移动|改名|重命名|排版|格式|样式|字体|字号|颜色|布局|更新|覆盖|append|write|delete|move|rename|format|style|layout/i.test(intent);
   const documentLike = /文档|document|正文|内容/i.test(intent);
   const locatorLike = /路径|定位|locator|handoff|本地/i.test(intent);
   const searchLike = /搜索|查找|节点|node|关键词/i.test(intent) || Boolean(nodeQuery);
-  const browserLike = /端口|浏览器|chrome|页面|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|小红书|xiaohongshu|rednote|zhaopin|zhipin|自动化|点击|输入|browser|port/i.test(intent);
+  const browserLike = /端口|浏览器|chrome|网页|bilibili|知乎|豆包|chatgpt|智联|招聘|boss|直聘|小红书|xiaohongshu|rednote|zhaopin|zhipin|browser|port/i.test(intent);
 
   const steps: Array<Record<string, unknown>> = [
     { order: 1, tool: "mcp_get_started", arguments: {}, purpose: "确认 MCP 状态、全库范围和安全规则。" },
@@ -773,9 +816,16 @@ function createMcpTaskPlan(args: Record<string, unknown>) {
     });
   }
   if (editLike) {
+    const documentEditTool = /追加|append/i.test(intent)
+      ? "append_node_document"
+      : /排版|格式|format/i.test(intent)
+        ? "format_node_document"
+        : /样式|字体|字号|颜色|style/i.test(intent)
+          ? "update_node_document_style"
+          : "write_node_document";
     steps.push({
       order: order++,
-      tool: documentLike ? "write_node_document / append_node_document / update_node_document_style" : "create_mindmap_node / update_mindmap_node_text / move_mindmap_node / update_mindmap_node_style / update_mindmap_layout",
+      tool: documentLike ? documentEditTool : "create_mindmap_node / update_mindmap_node_text / move_mindmap_node / update_mindmap_node_style / update_mindmap_layout",
       arguments: { courseId: courseId || "<resolvedCourseId>", nodeId: "<resolvedNodeId>" },
       purpose: "只调用和用户意图匹配的编辑工具。"
     });
@@ -941,8 +991,16 @@ export function createMcpController(dependencies: McpControllerDependencies) {
       safety: {
         defaultMode: "read-only",
         editEnv: "AISTUDY_MCP_ALLOW_EDIT=1",
+        editPolicy: createMcpEditPolicy(),
         targetRule: "编辑前必须用 read_courses/mcp_resolve_target 解析真实 courseId 和 nodeId。",
-        locatorRule: "本地路径交接使用 resolve_course_locator。"
+        locatorRule: "本地路径交接使用 resolve_course_locator。",
+        ragIndex: {
+          supported: false,
+          status: "not_configured",
+          synchronized: false,
+          verificationAvailable: false,
+          message: "AIstudy Public has no configured RAG vector-index contract. A saved document must not be treated as indexed."
+        }
       },
       resources: createMcpResourceList(),
       prompts: createMcpPromptList()
@@ -1049,8 +1107,12 @@ export function createMcpController(dependencies: McpControllerDependencies) {
     if (!tool.enabled) {
       throw dependencies.createAppError("APP_INVALID_ARGUMENT", "MCP tool is disabled.");
     }
-    if (tool.mode === "edit" && !mcpEditEnabled) {
-      throw dependencies.createAppError("APP_INVALID_ARGUMENT", "MCP edit permission is disabled.");
+    if (tool.mode === "edit") {
+      if (!mcpEditEnabled) {
+        throw dependencies.createAppError("APP_INVALID_ARGUMENT", "MCP edit permission is disabled.");
+      }
+      const violation = getMcpEditPolicyViolation(tool.id, candidate);
+      if (violation) throw dependencies.createAppError("APP_INVALID_ARGUMENT", violation);
     }
     if (activeMcpToolId) {
       throw dependencies.createAppError("APP_INVALID_ARGUMENT", "Another MCP tool is running.");
@@ -1169,8 +1231,15 @@ export function createMcpController(dependencies: McpControllerDependencies) {
   async function runTrustedTool(name: unknown, args: unknown) {
     const toolId = normalizeToolId(name);
     const tool = getToolRuntime(toolId);
-    if (tool.mode === "edit") mcpEditEnabled = true;
-    return runTool(createToolCallInput(toolId, args));
+    if (tool.mode !== "edit") return runTool(createToolCallInput(toolId, args));
+    const previousEditEnabled = mcpEditEnabled;
+    mcpEditEnabled = true;
+    try {
+      return await runTool(createToolCallInput(toolId, args));
+    } finally {
+      mcpEditEnabled = previousEditEnabled;
+      emitState();
+    }
   }
 
   async function handleJsonRpcRequest(request: JsonRpcRequest) {
@@ -1267,10 +1336,6 @@ export function createMcpController(dependencies: McpControllerDependencies) {
           : {};
         const name = normalizeToolId(params.name);
         const tool = getToolRuntime(name);
-        if (tool.mode === "edit" && process.env.AISTUDY_MCP_ALLOW_EDIT !== "1") {
-          throw dependencies.createAppError("APP_INVALID_ARGUMENT", "MCP edit calls are disabled by configuration.");
-        }
-        if (tool.mode === "edit") mcpEditEnabled = true;
         const response = await runTool(createToolCallInput(name, params.arguments));
         const data = response.result.data ?? response.result.summary;
         return {

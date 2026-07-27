@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,8 @@ const EDIT_TOOLS = new Set([
 
 function printUsageAndExit() {
   console.error(`Usage:
+  '{"ref":"aistudy://node/...","documentMode":"text"}' | node scripts/mcp/call-aistudy-mcp.mjs --tool read_node_context --args-stdin
+  node scripts/mcp/call-aistudy-mcp.mjs --tool read_node_context --args-file "F:\\path\\arguments.json"
   node scripts/mcp/call-aistudy-mcp.mjs --tool read_node_context --args-json "{\\"ref\\":\\"aistudy://node/...\\",\\"documentMode\\":\\"text\\"}"
   node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..." --max-depth 4 --max-nodes 120
   node scripts/mcp/call-aistudy-mcp.mjs --tool search_nodes --course-id "..." --query "keyword"
@@ -42,6 +45,9 @@ Session input (one JSON object per line):
   {"tool":"read_node_context","arguments":{"ref":"aistudy://node/..."}}
 
 Notes:
+  In PowerShell, prefer: $args | ConvertTo-Json -Compress | node ... --args-stdin
+  --args-file and --args-stdin avoid native-command quote rewriting for complex JSON.
+  Use only one of --args-json, --args-file, or --args-stdin.
   Standard MCP clients and --session keep one server process and MySQL pool alive across calls.
   One-shot CLI calls are intended for diagnostics and shell scripts.
   Do not use Content-Length framing with this local stdio server.`);
@@ -57,11 +63,23 @@ function takeValue(argv, index, flag) {
 }
 
 function parseArgs(argv) {
+  if (argv.includes("--session") && argv.includes("--args-stdin")) {
+    throw new Error("--session and --args-stdin cannot share standard input.");
+  }
   const parsed = {
     tool: "read_node_context",
     arguments: {},
     timeoutMs: DEFAULT_TIMEOUT_MS,
-    session: false
+    session: false,
+    argumentsSource: null
+  };
+
+  const setArguments = (source, value) => {
+    if (parsed.argumentsSource) {
+      throw new Error(`Use only one arguments source. Already using ${parsed.argumentsSource}; cannot also use ${source}.`);
+    }
+    parsed.argumentsSource = source;
+    parsed.arguments = value;
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -78,8 +96,24 @@ function parseArgs(argv) {
     }
     if (arg === "--args-json") {
       const value = takeValue(argv, index, arg);
-      parsed.arguments = JSON.parse(value);
+      try {
+        setArguments(arg, JSON.parse(value));
+      } catch (error) {
+        throw new Error(
+          `--args-json is not valid JSON after shell argument parsing. In PowerShell, pipe ConvertTo-Json output to --args-stdin or use --args-file. ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
       index += 1;
+      continue;
+    }
+    if (arg === "--args-file") {
+      const filePath = path.resolve(takeValue(argv, index, arg));
+      setArguments(arg, JSON.parse(readFileSync(filePath, "utf8")));
+      index += 1;
+      continue;
+    }
+    if (arg === "--args-stdin") {
+      setArguments(arg, JSON.parse(readFileSync(0, "utf8")));
       continue;
     }
     if (arg === "--ref") {
@@ -169,6 +203,9 @@ function parseArgs(argv) {
   }
 
   if (!parsed.tool) throw new Error("--tool is required.");
+  if (!parsed.arguments || Array.isArray(parsed.arguments) || typeof parsed.arguments !== "object") {
+    throw new Error("MCP tool arguments must be a JSON object.");
+  }
   if (!Number.isFinite(parsed.timeoutMs) || parsed.timeoutMs < 1000) {
     throw new Error("--timeout-ms must be at least 1000.");
   }

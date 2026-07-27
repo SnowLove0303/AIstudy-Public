@@ -58,6 +58,16 @@ Use stdio for same-machine access:
 
 Set `AISTUDY_MCP_ALLOW_EDIT=1` only for explicitly approved editing work.
 
+Optional local edit allowlists use comma-separated exact IDs:
+
+```text
+AISTUDY_MCP_ALLOWED_EDIT_TOOLS=append_node_document,format_node_document
+AISTUDY_MCP_ALLOWED_COURSE_IDS=<full-course-id>
+AISTUDY_MCP_ALLOWED_NODE_IDS=<full-node-id>
+```
+
+An unset allowlist is unrestricted within the global edit switch. A configured allowlist fails closed when the required target is missing.
+
 ### Local stdio transport rule
 
 `scripts/mcp/aistudy-mcp-server.mjs` is line-delimited JSON-RPC over stdio. Send exactly one JSON-RPC object followed by `\n`, and read responses as one JSON object per line.
@@ -75,6 +85,20 @@ Prefer direct flags on Windows instead of shell-escaped `--args-json`:
 ```powershell
 node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool mcp_resolve_target --course-name "Pynes" --node-query "目标节点"
 ```
+
+For complex objects, avoid native-command quote rewriting entirely:
+
+```powershell
+$mcpArgs = @{
+  intent = "编辑节点文档"
+  courseId = "<full-course-id>"
+  allowEdit = $true
+}
+$mcpArgs | ConvertTo-Json -Depth 10 -Compress |
+  node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool mcp_plan_task --args-stdin
+```
+
+An existing JSON file can be passed with `--args-file F:\path\arguments.json`. `--args-json` remains compatible for shells that preserve quotes, but malformed post-shell JSON fails before MCP initialization and points to the safe input modes.
 
 For node searches, pass the search term without JSON shell escaping:
 

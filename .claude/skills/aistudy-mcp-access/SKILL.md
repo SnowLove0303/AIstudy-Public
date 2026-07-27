@@ -28,6 +28,7 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
    - Local stdio: server script path, data root, app root, and edit flag.
    - Important: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC on stdio: write one JSON object plus `\n`, then read one JSON object per line. Do not use `Content-Length` MCP framing for this local script.
    - For ad-hoc local reads, prefer `node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..."` instead of writing a temporary wrapper.
+   - In PowerShell, pass complex argument objects through `ConvertTo-Json | ... --args-stdin`, or store them in an F-drive JSON file and use `--args-file`. Do not rely on native-command quote preservation for `--args-json`.
    - For multiple local calls, use `--session` and send one `{ "tool", "arguments" }` JSON object per input line. This keeps one Node process and MySQL pool alive.
 2. Start read-only.
    - Call `mcp_get_started`.
@@ -47,6 +48,7 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 - `read_current_mindmap`, `search_nodes`, and `list_node_documents` require `courseId`. Pass `scope: "all"` only for an intentional cross-library operation.
 - Explicit `courseId`, `mindMapId`, and `nodeId` arguments are full IDs. Short prefixes are supported only inside a compact node ref and must resolve uniquely.
 - Keep remote endpoints read-only until the user explicitly allows edits and AIstudy settings expose the relevant permission group.
+- Local/stdio editing may additionally restrict actions, courses, and nodes with `AISTUDY_MCP_ALLOWED_EDIT_TOOLS`, `AISTUDY_MCP_ALLOWED_COURSE_IDS`, and `AISTUDY_MCP_ALLOWED_NODE_IDS`. `mcp_get_started.safety.editPolicy` is the effective policy source.
 - Prefer append/style-specific tools over whole-document replacement.
 - Use destructive tools only after explicit user confirmation.
 
@@ -56,6 +58,7 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 - Use Chinese article hierarchy in text input: `一、` for the first level, `（一）` for the second, `1.` for the third, and `（1）` for the fourth. Use `> ` for quotations, `字段：内容` for labels, and normal bullet or numbered lists where appropriate.
 - Put one natural body paragraph on each line. Blank input lines may mark paragraph boundaries, but AIstudy renders paragraph spacing instead of visible blank rows.
 - New text written or appended through MCP receives Chinese heading/body fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent. Safe Chinese-English spacing and Chinese punctuation are normalized while URLs, Windows paths, email addresses, inline/fenced code, formulas, tree indentation, and list markers are protected.
+- MCP tool names, field names, IDs, compact refs, JSON, command switches, script names, Windows paths, and UNC paths are exact-copy literals. Never accept Unicode subscript/superscript rewrites of these tokens.
 - Use `write_node_document` only for new content or explicit whole-document replacement with `replaceExisting: true`.
 - Read `currentSnapshotId` first and pass it as `expectedSnapshotId` for replacement, append, formatting, or style changes. A stale version fails with `DOCUMENT_VERSION_CONFLICT`.
 - Use `append_node_document` for additions.
@@ -64,6 +67,8 @@ For ordinary MCP use, start with `connection.md` only if connection details are 
 - Use `format_node_document` only for Chinese-article style cleanup that preserves every editor element `value` exactly. Because it is text-preserving, it does not insert missing first-line indent characters.
 - Use `update_node_document_style` only for simple full-document style changes.
 - Do not call `write_node_document` merely to fix formatting.
+- Treat `read_node_context` and `read_node_document` as complete only when `completion.complete`/`complete` is true. Execute every `requiredNextCalls`/`requiredNextCall` entry after a bounded read. Use `documentMode: "full"` only for an explicit atomic full-text read within the aggregate safety cap.
+- A document save is not proof of RAG synchronization. Check `ragIndex`; `status: "not_configured"` means AIstudy Public has no verifiable vector-index contract and the content must not be described as indexed.
 
 ## When MCP Changes
 

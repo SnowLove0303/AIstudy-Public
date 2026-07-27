@@ -71,6 +71,20 @@ For quick local reads, use:
 node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1" --max-depth 4 --max-nodes 120
 ```
 
+PowerShell 传复杂对象时不要把 JSON 直接拼进 `--args-json`。优先通过标准输入或 UTF-8 JSON 文件传递，避免引号在 Node 收到参数前被 PowerShell 消耗：
+
+```powershell
+@{
+  courseId = "course_xxx"
+  nodeId = "node_xxx"
+  documentMode = "text"
+} | ConvertTo-Json -Compress | node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool read_node_context --args-stdin
+
+node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --tool read_node_context --args-file F:\path\to\arguments.json
+```
+
+`--args-json`、`--args-stdin`、`--args-file` 三者只能选一个；解析失败时辅助脚本会在调用 MCP 前明确退出，不会用空参数继续执行。`--session` 不能与 `--args-stdin` 共用，因为持续会话占用同一个标准输入。
+
 ## 第一次运行顺序
 
 1. 调用 `mcp_get_started`，读取健康状态、全库概览、安全规则和下一步建议。
@@ -78,8 +92,8 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 3. 调用 `mcp_resolve_target`。按知识库名、`courseId` 或节点关键词解析真实目标，减少猜参数。
 4. 调用 `read_current_mindmap`。定向读取传完整 `courseId`；只有明确需要全库摘要时才传 `scope: "all"`。
 5. 调用 `search_nodes`。定向搜索传 `courseId`；跨库搜索必须显式传 `scope: "all"` 和非空 `query`。
-6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`。默认通过定向查询只读取目标、父级路径和文档摘要，不解析完整导图快照；子树及正文按需开启。
-7. 普通正文读取使用 `read_node_document({ mode: "text" })`；只有需要编辑器 JSON 时才用 `mode: "snapshot"`。
+6. 已知 `courseId + nodeId` 时优先调用 `read_node_context`。默认通过定向查询只读取目标、父级路径和文档摘要，不解析完整导图快照；子树及正文按需开启。需要一次取得目标范围内所有文档全文时显式传 `documentMode: "full"`，并检查顶层 `completion.complete`。
+7. 普通正文读取使用 `read_node_document({ mode: "text" })`；只有需要编辑器 JSON 时才用 `mode: "snapshot"`。每次读取都要检查 `complete`；若为 `false`，按 `requiredNextCall` 或 `nextOffset` 继续读取，不能把截断片段当全文。
 7. 需要打开网页端口时，先用 `chrome_ports_status` 读取平台和端口，再用 `chrome_port_open_page` 打开页面。
 8. 需要编辑时，先调用 `mcp_plan_task` 规划工具顺序；写入必须传 `courseId`，节点文档写入还必须传 `nodeId`。
 
@@ -135,6 +149,8 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 - 简单全文样式：`update_node_document_style`
 
 `write_node_document` 和 `append_node_document` 的 `text` 应保持干净并结构化。节点名称已作为文档抬头，正文默认不重复；只有独立文章标题才写 `# 标题`。使用 `一、`、`（一）`、`1.`、`（1）` 四级标题、`> ` 引用、`目标：`/`数据来源：` 等字段标签、列表和逐段正文。每行是一段自然正文，输入空行只标记段落边界，系统通过行距而不是可见空白行分隔段落。新写入和追加正文自动应用宋体、两字符首行缩进、两端对齐和中文标点，中英文相邻处安全留白；URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进不改写。真实导图结构优先使用导图工具；数学内容使用 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}` 等规范表达。
+
+Windows 路径、UNC 路径、紧凑引用、JSON、命令行开关、带下划线的工具名/字段名和脚本文件名属于精确技术文本。写入、追加和回读必须逐字符保持，不允许把反斜杠移除、把下划线转成下标字符或对标识符做中文排版替换。
 
 不要为了排版调用 `write_node_document` 重写整篇文档；节点已有内容时，`write_node_document` 默认拒绝覆盖，只有用户明确要求整篇覆盖时才传 `replaceExisting: true`。不要手写编辑器内部元素或用大量空行制造间距。`format_node_document` 只应用中国文章字体、标题层级、对齐和行距，必须保证元素数量一致、所有 `value` 逐字不变；因此它不能清理空行、补写首行缩进字符、拆段或合段。
 
@@ -214,7 +230,7 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 
 `mcp_resolve_target({ courseName, nodeQuery })` -> `search_nodes({ courseId, query })` -> `read_node_context`
 
-`read_node_context` 是节点级读取的优先工具：默认通过递归路径查询返回目标节点、父级路径和关联文档摘要，不加载整张节点表或完整导图快照。只有任务确实需要时才传 `includeDescendants: true` 或 `documentMode: "text"`。短 ID 只允许出现在紧凑引用中，显式 ID 参数必须传完整值。
+`read_node_context` 是节点级读取的优先工具：默认通过递归路径查询返回目标节点、父级路径和关联文档摘要，不加载整张节点表或完整导图快照。只有任务确实需要时才传 `includeDescendants: true`、`documentMode: "text"` 或 `documentMode: "full"`。`summary`/`text` 模式可能要求后续读取，必须检查 `completion.complete` 与 `requiredNextCalls`；`full` 模式在安全总量上限内原子返回全文，超过上限会明确报错而不会静默截断。短 ID 只允许出现在紧凑引用中，显式 ID 参数必须传完整值。
 
 ### 编辑导图
 
@@ -244,6 +260,16 @@ AISTUDY_MCP_ALLOW_EDIT=1
 
 编辑工具覆盖知识库、分区、导图节点、导图样式布局和节点文档。调用前要说明目标知识库、`courseId`、节点 ID 和具体动作；调用后应立刻恢复只读模式。
 
+可在总开关之上配置精确白名单，多个值使用逗号、分号或空白分隔：
+
+```text
+AISTUDY_MCP_ALLOWED_EDIT_TOOLS=write_node_document,append_node_document
+AISTUDY_MCP_ALLOWED_COURSE_IDS=course_xxx
+AISTUDY_MCP_ALLOWED_NODE_IDS=node_xxx
+```
+
+只要配置了任一范围白名单，缺少目标或目标不在白名单内都会以 `MCP_EDIT_POLICY_DENIED` 拒绝，不会回退成环境级全权限。`mcp_get_started.safety.editPolicy` 会返回当前实际生效的策略。
+
 ## 排障
 
 - `dataRootExists=false`：数据目录路径填错了。
@@ -251,6 +277,7 @@ AISTUDY_MCP_ALLOW_EDIT=1
 - `mysql=false` 或启动报连接错误：MySQL 没启动，或配置指向了错误数据库。
 - `MCP requires an explicit knowledge base.`：写入没有传入 `courseId`。MCP 不依赖客户端当前选中项，编辑必须明确目标知识库。
 - `MCP edit calls are disabled by configuration.`：编辑权限没有打开，这是默认安全行为。
+- `MCP_EDIT_POLICY_DENIED`：工具、知识库或节点不在当前精确编辑白名单内，或配置了范围白名单但请求没有携带目标。
 - `resolve_course_locator` 返回的 `locatorPath`：这是给外部 Codex 使用的本地定位文件路径，里面包含数据目录、固定数据库名、固定表名和知识库 ID；其中数据库名和表名只是边界元数据，不代表公开版运行时支持覆盖库名或表名。
 - `Unknown tool: copy_config`：当前连接的是独立 `scripts/mcp` 服务，复制接入配置请在 AIstudy 设置页里点按钮。
 - Local stdio client hangs after `initialize`：客户端大概率用了 `Content-Length` MCP framing。改用 line-delimited JSON-RPC，或直接用 `scripts/mcp/call-aistudy-mcp.mjs`。
@@ -258,7 +285,9 @@ AISTUDY_MCP_ALLOW_EDIT=1
 
 ## read_node_document text fields
 
-Use `read_node_document({ mode: "text" })` for one cleaned readable body. Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only when auditing extraction behavior.
+Use `read_node_document({ mode: "text" })` for one cleaned readable body. Use `offset` and keep reading until `complete` is true. Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only when auditing extraction behavior.
+
+文档返回的 `title` 是有效标题：数据库标题为空或仍为通用“节点文档”时，会回退为节点名称；`storedTitle`、`nodeTitle`、`titleSource` 可用于审计来源。文档写入成功不等于 RAG 已同步；当前仓库未配置可验证的向量索引时，`ragIndex.status` 明确返回 `not_configured`，且 `synchronized=false`，不得据此声称检索已包含最新快照。
 
 ## Compact MCP node ref
 

@@ -6,7 +6,7 @@
 
 ## read_node_document text fields
 
-Use `read_node_document({ mode: "text" })` for one cleaned readable body. Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only when auditing extraction behavior.
+Use `read_node_document({ mode: "text" })` for one cleaned readable body. Check `complete`; when it is false, continue with `nextOffset` or `requiredNextCall`. Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only when auditing extraction behavior.
 
 ## Compact MCP node ref
 
@@ -36,6 +36,8 @@ For same-machine reads, use the maintained helper instead of writing a custom wr
 node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1" --max-depth 4 --max-nodes 120
 ```
 
+PowerShell complex objects must use `ConvertTo-Json -Compress | ... --args-stdin` or a UTF-8 JSON file with `--args-file`. Do not depend on inline `--args-json` quoting. The three JSON input channels are mutually exclusive, and malformed input stops before MCP receives a tool call.
+
 ## 给 Codex/Claude Code 的 Skill 提示
 
 ```text
@@ -61,7 +63,8 @@ Workflow:
 4. Read in this order.
    - read_current_mindmap with courseId for the target knowledge base.
    - search_nodes with courseId and the user's keyword.
-   - read_node_context when courseId and nodeId are known; it returns ancestors, subtree, and node-bound documents in one structured payload.
+   - read_node_context when courseId and nodeId are known; use documentMode full only when all selected document bodies must be returned atomically.
+   - Inspect completion/complete on every bounded document read. Follow requiredNextCalls/nextOffset until complete; never treat a truncated body as complete.
    - list_node_documents, then read_node_document only when a full single-node document snapshot is required.
 5. Open browser ports only through AIstudy port management.
    - Call chrome_ports_status first.
@@ -153,6 +156,8 @@ Authorization: Bearer ...
 
 Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes one JSON-RPC object per line. Do not frame local stdio messages with `Content-Length`.
 
+需要进一步缩小本地 stdio 编辑范围时，可配置 `AISTUDY_MCP_ALLOWED_EDIT_TOOLS`、`AISTUDY_MCP_ALLOWED_COURSE_IDS`、`AISTUDY_MCP_ALLOWED_NODE_IDS`。总开关仍必须为 `1`；配置范围白名单后，缺少目标或超出范围的请求会以 `MCP_EDIT_POLICY_DENIED` 拒绝。
+
 ## 第一次使用顺序
 
 1. `mcp_get_started`：确认服务、权限、数据状态。
@@ -202,7 +207,7 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 
 - `read_current_mindmap`：传完整 `courseId` 读取目标导图；只有明确全库读取时才传 `scope: "all"`。
 - `search_nodes`：传 `courseId` 定向搜索；跨库搜索必须显式传 `scope: "all"` 和非空 `query`。
-- `read_node_context`：已知 `courseId + nodeId` 时优先使用；默认以定向路径查询返回目标节点、父级路径和文档摘要，不解析完整导图快照，子树和正文按需开启。
+- `read_node_context`：已知 `courseId + nodeId` 时优先使用；默认以定向路径查询返回目标节点、父级路径和文档摘要，不解析完整导图快照，子树和正文按需开启。需要一次取得目标范围全文时使用 `documentMode: "full"` 并检查 `completion.complete`；超出安全总量会明确失败，不会返回伪完整结果。
 - `append_mindmap_node`：在指定知识库导图根节点追加节点。
 - `create_mindmap_node`：在指定父节点下新增节点。
 - `update_mindmap_node_text`：修改节点标题。
@@ -214,7 +219,7 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 ### 节点文档
 
 - `list_node_documents`：列出全库或指定知识库里已有节点文档。
-- `read_node_document`：默认 `mode: "text"` 只返回一份清理正文；`mode: "snapshot"` 返回编辑器快照；`mode: "audit"` 返回完整诊断字段。
+- `read_node_document`：默认 `mode: "text"` 只返回一份清理正文；长文档用 `offset` 续读，直到 `complete=true`；`mode: "snapshot"` 返回编辑器快照；`mode: "audit"` 返回完整诊断字段。
 - `write_node_document`：创建节点文档或在明确授权时覆盖整篇。节点已有内容时，必须显式传 `replaceExisting: true` 才允许覆盖；不要把它当作“排版工具”使用。
 - `append_node_document`：在节点文档末尾追加干净文本或 Markdown 标题。
 - `format_node_document`：只应用中国文章字体、标题层级、对齐和行距。它必须逐字保留每一个编辑器元素的 `value`，不得改写文字、修剪空白、删除空行、插入空行、补写首行缩进字符、拆段或合段。
@@ -230,6 +235,7 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 - 显式 `courseId`、`mindMapId`、`nodeId` 必须使用完整 ID；短前缀只允许放在紧凑引用中，并且必须唯一匹配。
 - 新内容写入用 `write_node_document`，补内容用 `append_node_document`，不改内容的样式清理用 `format_node_document`，简单全文样式用 `update_node_document_style`。
 - `write_node_document` 和 `append_node_document` 的 `text` 必须保持干净并结构化。节点名称已经作为文档抬头，正文默认不重复；只有独立文章标题才写 `# 标题`。使用 `一、`、`（一）`、`1.`、`（1）` 四级标题、`> ` 引用、`目标：`/`数据来源：` 字段标签、列表和逐段正文。每行是一段自然正文，空输入行只标记段落边界，系统通过比例行距而不是可见空白行分段。新正文自动应用宋体、两字符首行缩进、两端对齐和中文标点；中英文相邻间距会安全规范化，同时保护 URL、Windows 路径、邮箱、代码、公式、列表符号和树形缩进。
+- Windows/UNC 路径、紧凑引用、JSON、命令行开关、带下划线的工具名/字段名、ID 和脚本名属于精确技术文本，写入、追加、回读与排版都必须逐字符保留。
 - 数学内容必须使用规范符号和可读公式文本，例如 `ε`、`δ`、`∞`、`→`、`≤`、`≥`、`x_n`、`x^2`、`lim_{n→∞}`、`|x_n-a| < ε`。不要把 `epsilon`、`delta`、`infinity`、`->`、`lim_{n->infinity}` 原样写入最终文档。
 - `format_node_document` 写入前必须校验元素数量一致、所有 `value` 逐字一致；校验失败必须中断，不得写入。
 - MCP 不把“清理空行、补写缩进字符、重排段落”当作已有文档的安全排版。需要改变正文结构时，必须先读全文、让用户确认，再用 `write_node_document` 重建整篇。
@@ -299,11 +305,14 @@ Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes
 
 编辑必须明确目标知识库 `courseId`。文档编辑还必须明确 `nodeId`。删除操作需要单独确认。
 
+MCP 文档的 `title` 为有效标题：通用“节点文档”会回退到节点名称，独立文章标题保持不变；需要审计时读取 `storedTitle`、`nodeTitle`、`titleSource`。文档写入与 RAG 同步是两个状态；当前未配置可验证向量索引时，`ragIndex.status=not_configured` 且 `synchronized=false`，不得声称最新快照已经进入检索。
+
 ## 常见问题
 
 - TCP 超时：AIstudy 没开、内网访问没开、Tailscale 没在线，或 `6188` 没暴露成功。
 - 401/403：token 错了，或请求头没有带 `Authorization`。
 - 能读不能写：远程编辑权限没开，这是默认安全状态。
+- `MCP_EDIT_POLICY_DENIED`：本地 stdio 精确编辑白名单未包含工具、知识库或节点，或请求缺少已受限的目标。
 - `dataRootExists=false`：本地数据目录路径错了。
 - `MCP requires an explicit knowledge base`：编辑调用没有传 `courseId`。
 - 找不到目标知识库：先用 `read_courses` 和 `mcp_resolve_target`，不要猜 ID。
