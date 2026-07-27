@@ -79,12 +79,16 @@ assert(
   "directory controls must remain in a persistent interaction layer above drawers and the canvas"
 );
 assert(
-  viewportScrollbars.includes("setPointerCapture")
-    && viewportScrollbars.includes("releasePointerCapture")
-    && viewportScrollbars.includes('window.addEventListener("blur"')
-    && viewportScrollbars.includes('document.addEventListener("visibilitychange"')
-    && !viewportScrollbars.includes('window.addEventListener("pointermove"'),
-  "viewport scrollbars must not leak temporary window drag listeners across workspace changes"
+  viewportScrollbars.includes('type="range"')
+    && viewportScrollbars.includes("viewport-scrollbar-input")
+    && viewportScrollbars.includes("onInput=")
+    && viewportScrollbars.includes('aria-label={label}')
+    && !viewportScrollbars.includes("setPointerCapture")
+    && !viewportScrollbars.includes('addEventListener("pointermove"')
+    && styles.includes(".viewport-scrollbar-input")
+    && styles.includes("width: 22px")
+    && styles.includes("height: 22px"),
+  "viewport scrollbars must use native range input lifecycles with accessible labels and a forgiving hit area"
 );
 assert(
   mindMapWorkspace.includes('modeChangeRequest?.mode === "word" || modeChangeRequest?.mode === "textbook"'),

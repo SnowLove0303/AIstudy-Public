@@ -2442,27 +2442,22 @@ h3 {
 
 .viewport-scrollbar {
   position: absolute;
-  border: 1px solid rgba(123, 145, 169, 0.22);
-  border-radius: 999px;
-  background: rgba(248, 250, 252, 0.72);
-  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04);
   pointer-events: auto;
-  touch-action: none;
   transition: opacity 120ms ease;
 }
 
 .viewport-scrollbar.vertical {
   top: 8px;
-  right: 7px;
-  bottom: 18px;
-  width: 10px;
+  right: 0;
+  bottom: 22px;
+  width: 22px;
 }
 
 .viewport-scrollbar.horizontal {
-  right: 18px;
-  bottom: 7px;
+  right: 22px;
+  bottom: 0;
   left: 8px;
-  height: 10px;
+  height: 22px;
 }
 
 .viewport-scrollbar.disabled {
@@ -2470,21 +2465,65 @@ h3 {
   pointer-events: none;
 }
 
+.viewport-scrollbar-rail {
+  position: absolute;
+  border: 1px solid rgba(123, 145, 169, 0.22);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.72);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04);
+  pointer-events: none;
+}
+
+.viewport-scrollbar.vertical .viewport-scrollbar-rail {
+  inset: 0 6px;
+}
+
+.viewport-scrollbar.horizontal .viewport-scrollbar-rail {
+  inset: 6px 0;
+}
+
 .viewport-scrollbar-thumb {
   position: absolute;
-  border-radius: inherit;
+  z-index: 1;
+  border-radius: 999px;
   background: rgba(96, 116, 139, 0.58);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  pointer-events: none;
 }
 
 .viewport-scrollbar.vertical .viewport-scrollbar-thumb {
-  left: 1px;
-  right: 1px;
+  left: 7px;
+  right: 7px;
 }
 
 .viewport-scrollbar.horizontal .viewport-scrollbar-thumb {
-  top: 1px;
-  bottom: 1px;
+  top: 7px;
+  bottom: 7px;
+}
+
+.viewport-scrollbar-input {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.viewport-scrollbar-input:active {
+  cursor: grabbing;
+}
+
+.viewport-scrollbar.vertical .viewport-scrollbar-input {
+  writing-mode: vertical-lr;
+}
+
+.viewport-scrollbar:focus-within .viewport-scrollbar-rail {
+  border-color: rgba(31, 111, 209, 0.42);
+  box-shadow: 0 0 0 2px rgba(31, 111, 209, 0.1);
 }
 
 .mindmap-viewport-scrollbars,
