@@ -293,7 +293,6 @@ export function MindMapCatalog({
       if (!canCopy && !canDelete && !canToggleBoundary) return;
       event.preventDefault();
       event.stopPropagation();
-      onNodeSelect?.(item);
       const width = 178;
       const height = 12 + (canToggleBoundary ? 30 : 0) + (canCopy ? 30 : 0) + (canDelete ? 30 : 0);
       setContextMenu({
@@ -303,7 +302,7 @@ export function MindMapCatalog({
         copied: false
       });
     },
-    [onNodeCopyDocumentPath, onNodeDelete, onNodeSelect, onNodeToggleCatalogBoundary]
+    [onNodeCopyDocumentPath, onNodeDelete, onNodeToggleCatalogBoundary]
   );
 
   const runCopyDocumentPath = React.useCallback(async () => {
@@ -357,16 +356,16 @@ export function MindMapCatalog({
           onMouseDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
-          {contextMenu.item.nodeId && contextMenu.item.parentNodeId && onNodeToggleCatalogBoundary ? (
-            <button type="button" role="menuitem" onClick={() => void runToggleCatalogBoundary()}>
-              {contextMenu.item.catalogBoundary ? <ListTree size={14} /> : <ListX size={14} />}
-              <span>{contextMenu.item.catalogBoundary ? "恢复下级目录" : "设为终极目录"}</span>
-            </button>
-          ) : null}
           {contextMenu.item.nodeId && onNodeCopyDocumentPath ? (
             <button type="button" role="menuitem" onClick={() => void runCopyDocumentPath()}>
               <Copy size={14} />
               <span>{contextMenu.copied ? "已复制文档路径" : "复制文档路径"}</span>
+            </button>
+          ) : null}
+          {contextMenu.item.nodeId && contextMenu.item.parentNodeId && onNodeToggleCatalogBoundary ? (
+            <button type="button" role="menuitem" onClick={() => void runToggleCatalogBoundary()}>
+              {contextMenu.item.catalogBoundary ? <ListTree size={14} /> : <ListX size={14} />}
+              <span>{contextMenu.item.catalogBoundary ? "恢复下级目录" : "设为终极目录"}</span>
             </button>
           ) : null}
           {contextMenu.item.nodeId && contextMenu.item.parentNodeId && onNodeDelete ? (

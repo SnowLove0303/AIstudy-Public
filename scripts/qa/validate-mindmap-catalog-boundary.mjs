@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const snapshotSourcePath = path.join(projectRoot, "src/renderer/features/mindmap/mindMapSnapshot.ts");
 const coreContractSourcePath = path.join(projectRoot, "src/renderer/domain/coreContracts.ts");
+const catalogSourcePath = path.join(projectRoot, "src/renderer/features/mindmap/MindMapCatalog.tsx");
 
 function assert(condition, message) {
   if (!condition) {
@@ -45,6 +46,26 @@ if (!fs.existsSync(snapshotSourcePath)) {
 if (!fs.existsSync(coreContractSourcePath)) {
   throw new Error("Missing core contract module.");
 }
+if (!fs.existsSync(catalogSourcePath)) {
+  throw new Error("Missing mind map catalog component.");
+}
+
+const catalogSource = fs.readFileSync(catalogSourcePath, "utf8");
+const contextMenuStart = catalogSource.indexOf("const openContextMenu");
+const contextMenuEnd = catalogSource.indexOf("const runCopyDocumentPath", contextMenuStart);
+const contextMenuSource = catalogSource.slice(contextMenuStart, contextMenuEnd);
+const copyMenuIndex = catalogSource.indexOf("复制文档路径", contextMenuEnd);
+const boundaryMenuIndex = catalogSource.indexOf("恢复下级目录", contextMenuEnd);
+
+assert(contextMenuStart >= 0 && contextMenuEnd > contextMenuStart, "catalog context-menu source contract should remain discoverable");
+assert(
+  !contextMenuSource.includes("onNodeSelect?.(item)"),
+  "right-clicking a catalog node must not select it, collapse the drawer, or switch workspace mode"
+);
+assert(
+  copyMenuIndex >= 0 && boundaryMenuIndex >= 0 && copyMenuIndex < boundaryMenuIndex,
+  "copy document path must remain the first catalog context-menu action"
+);
 
 const tempRoot = process.env.TMP || process.env.TEMP || os.tmpdir();
 const tempDir = path.join(tempRoot, "aistudy-mindmap-catalog-boundary-qa");

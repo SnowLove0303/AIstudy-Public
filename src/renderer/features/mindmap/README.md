@@ -47,3 +47,4 @@ Current files:
 - Resize handles belong to topic bubbles, not editor text boxes. Dragging the right edge should resize the bubble while the text layout moves with it.
 - Native summary rendering must restore the latest render-node instances to the active selection before subsequent insert, text-edit, or formatting commands.
 - Viewport scrollbar dragging must use the full visible thumb as its hit model, keep a local drag position while the editor catches up, frame-batch editor updates, and abort temporary document listeners on release or interruption.
+- Catalog right-click actions must not run the left-click node-selection flow; otherwise the catalog drawer collapses before copy-path, boundary, or delete actions can be used. Copy document path remains the first context-menu action.
