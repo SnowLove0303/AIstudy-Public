@@ -535,6 +535,23 @@ function buildDocxChildren(snapshot: KnowledgeDocumentSnapshot): FileChild[] {
   return children.length > 0 ? children : [new Paragraph({ text: "" })];
 }
 
+function createNodeDocumentTitle(title: string) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 0, after: 180 },
+    keepNext: true,
+    children: [
+      new TextRun({
+        text: title,
+        bold: true,
+        font: DEFAULT_FONT,
+        size: 32,
+        color: DOCX_TEXT_COLOR
+      })
+    ]
+  });
+}
+
 function createDocxDocument(title: string, snapshot: KnowledgeDocumentSnapshot) {
   return new DocxDocument({
     title,
@@ -585,7 +602,10 @@ function createDocxDocument(title: string, snapshot: KnowledgeDocumentSnapshot) 
             }
           }
         },
-        children: buildDocxChildren(snapshot)
+        children: [
+          createNodeDocumentTitle(title),
+          ...buildDocxChildren(snapshot)
+        ]
       }
     ]
   });

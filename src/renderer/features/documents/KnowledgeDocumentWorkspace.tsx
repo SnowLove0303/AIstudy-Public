@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { createCanvasDocumentEditor, createEmptyKnowledgeDocumentSnapshot } from "./canvasEditorAdapter";
 import { createBlankEmbeddedMindMapData } from "./documentEmbeddedMindMap";
+import { NodeDocumentTitle, normalizeNodeDocumentTitle } from "./NodeDocumentTitle";
 import { AiAssistantPanel } from "../assistant/AiAssistantPanel";
 import { ImporterDialog } from "../importer/ImporterDialog";
 import { createKnowledgeDocumentBinding } from "../../domain/coreContracts";
@@ -595,6 +596,7 @@ export function KnowledgeDocumentWorkspace({
   onOpenFormatPane,
   onCloseFormatPane
 }: KnowledgeDocumentWorkspaceProps) {
+  const documentTitle = normalizeNodeDocumentTitle(selectedNode.title);
   const mountRef = React.useRef<HTMLDivElement | null>(null);
   const toolbarAiButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const aiPanelRef = React.useRef<HTMLDivElement | null>(null);
@@ -957,7 +959,7 @@ export function KnowledgeDocumentWorkspace({
       documentDirtyRef.current = true;
       pendingSaveRef.current = {
         ...documentBinding,
-        title: selectedNode.title || "未命名",
+        title: documentTitle,
         snapshot: nextSnapshot
       };
       if (saveTimerRef.current !== null) {
@@ -965,7 +967,7 @@ export function KnowledgeDocumentWorkspace({
       }
       saveTimerRef.current = window.setTimeout(() => flushPendingSave(false), SAVE_DEBOUNCE_MS);
     },
-    [documentBinding, flushPendingSave, selectedNode.title]
+    [documentBinding, documentTitle, flushPendingSave]
   );
 
   const importDocumentSnapshot = React.useCallback(
@@ -980,14 +982,14 @@ export function KnowledgeDocumentWorkspace({
       documentDirtyRef.current = true;
       await persistDocument({
         ...documentBinding,
-        title: selectedNode.title || "未命名",
+        title: documentTitle,
         snapshot: nextSnapshot
       });
       setSavedAt(formatSavedAt());
       setError("");
       setExportMessage("");
     },
-    [documentBinding, persistDocument, selectedNode.title]
+    [documentBinding, documentTitle, persistDocument]
   );
 
   React.useEffect(() => {
@@ -1275,11 +1277,11 @@ export function KnowledgeDocumentWorkspace({
     latestSnapshotRef.current = nextSnapshot;
     pendingSaveRef.current = {
       ...documentBinding,
-      title: selectedNode.title || "未命名",
+      title: documentTitle,
       snapshot: nextSnapshot
     };
     return flushPendingSave(false);
-  }, [documentBinding, flushPendingSave, selectedNode.title, snapshot]);
+  }, [documentBinding, documentTitle, flushPendingSave, snapshot]);
 
   const exportDocx = React.useCallback(async () => {
     if (!documentBinding || !snapshot || isExportingDocx || !window.aistudyKnowledgeDocuments?.exportDocx) return;
@@ -1292,7 +1294,7 @@ export function KnowledgeDocumentWorkspace({
       if (!nextSnapshot) return;
       latestSnapshotRef.current = nextSnapshot;
       const result = await window.aistudyKnowledgeDocuments.exportDocx({
-        title: selectedNode.title || "未命名",
+        title: documentTitle,
         snapshot: nextSnapshot
       });
       if (!result.canceled) {
@@ -1303,7 +1305,7 @@ export function KnowledgeDocumentWorkspace({
     } finally {
       setIsExportingDocx(false);
     }
-  }, [documentBinding, isExportingDocx, selectedNode.title, snapshot]);
+  }, [documentBinding, documentTitle, isExportingDocx, snapshot]);
 
   const insertImage = React.useCallback(async () => {
     if (!documentBinding || !window.aistudyKnowledgeAssets?.chooseImage || isChoosingImage) return;
@@ -1716,14 +1718,17 @@ export function KnowledgeDocumentWorkspace({
         onKeyDownCapture={handleEditorKeyDownCapture}
         onPointerUpCapture={finishSingleUseFormatBrushAfterSelection}
       >
-        <div ref={mountRef} className="document-editor-host" aria-hidden={!canUseDocument} />
-        <ViewportScrollbars
-          className="document-viewport-scrollbars"
-          state={documentViewportState}
-          onChange={scrollDocumentViewport}
-        />
-        <div className={canUseDocument && isEditorReady ? "document-placeholder is-hidden" : "document-placeholder"}>
-          <strong>{isLoading || canUseDocument ? "正在打开文档" : "请选择目录节点"}</strong>
+        {documentBinding ? <NodeDocumentTitle title={documentTitle} /> : null}
+        <div className="document-editor-body">
+          <div ref={mountRef} className="document-editor-host" aria-hidden={!canUseDocument} />
+          <ViewportScrollbars
+            className="document-viewport-scrollbars"
+            state={documentViewportState}
+            onChange={scrollDocumentViewport}
+          />
+          <div className={canUseDocument && isEditorReady ? "document-placeholder is-hidden" : "document-placeholder"}>
+            <strong>{isLoading || canUseDocument ? "正在打开文档" : "请选择目录节点"}</strong>
+          </div>
         </div>
       </div>
 
@@ -1761,7 +1766,7 @@ export function KnowledgeDocumentWorkspace({
             courseId: documentBinding.courseId,
             mindMapId: documentBinding.mindMapId,
             nodeId: documentBinding.nodeId,
-            title: selectedNode.title || "当前节点"
+            title: documentTitle
           }}
           onClose={() => setIsImporterOpen(false)}
           onCommit={importDocumentSnapshot}
@@ -1769,7 +1774,7 @@ export function KnowledgeDocumentWorkspace({
       ) : null}
 
       <div className="document-status-strip">
-        <span>{canUseDocument ? selectedNode.title || "未命名" : "未选择节点"}</span>
+        <span>{canUseDocument ? documentTitle : "未选择节点"}</span>
         <span>{storageText}</span>
         {formatBrush ? <span>{formatBrush.reusable ? "连续格式刷已取样" : "单次格式刷已取样"}</span> : null}
         {skipBlankPages ? <span>跳过空白页</span> : null}

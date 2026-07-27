@@ -4276,6 +4276,38 @@ h3 {
 
 .document-editor-shell {
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.document-node-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 58px;
+  padding: 11px clamp(36px, 7vw, 64px) 10px;
+  border-bottom: 1px solid rgba(123, 145, 169, 0.12);
+  background: #ffffff;
+}
+
+.document-node-title h1 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #172033;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-editor-body {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
