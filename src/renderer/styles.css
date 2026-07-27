@@ -1377,9 +1377,17 @@ select {
   cursor: default;
 }
 
+.workspace-pane-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 64;
+  pointer-events: none;
+  isolation: isolate;
+}
+
 .pane-collapse-button {
   position: absolute;
-  z-index: 32;
+  z-index: 1;
   top: 18px;
   display: grid;
   place-items: center;
@@ -1392,6 +1400,7 @@ select {
   color: var(--text-muted);
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .pane-collapse-button:hover {
@@ -1400,19 +1409,19 @@ select {
 }
 
 .pane-collapse-button.library-toggle {
-  left: calc(var(--library-pane-width) - 14px);
+  left: clamp(8px, calc(var(--library-pane-width) - 14px), calc(100% - 36px));
 }
 
-.study-layout.library-collapsed .pane-collapse-button.library-toggle {
+.pane-collapse-button.library-toggle.collapsed {
   left: 8px;
   top: 58px;
 }
 
 .pane-collapse-button.catalog-toggle-button {
-  right: calc(var(--catalog-pane-width) - 14px);
+  right: clamp(8px, calc(var(--catalog-pane-width) - 14px), calc(100% - 36px));
 }
 
-.study-layout.catalog-collapsed .pane-collapse-button.catalog-toggle-button {
+.pane-collapse-button.catalog-toggle-button.collapsed {
   right: 8px;
   top: 58px;
 }
@@ -2438,6 +2447,7 @@ h3 {
   background: rgba(248, 250, 252, 0.72);
   box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04);
   pointer-events: auto;
+  touch-action: none;
   transition: opacity 120ms ease;
 }
 

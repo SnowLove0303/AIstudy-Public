@@ -54,13 +54,74 @@ function getDisplayPosition(axisState: ViewportScrollAxisState) {
 }
 
 export function ViewportScrollbars({ state, className = "", onChange }: ViewportScrollbarsProps) {
+  const onChangeRef = React.useRef(onChange);
+  const dragRef = React.useRef<{
+    pointerId: number;
+    axis: ViewportScrollAxis;
+    track: HTMLDivElement;
+    trackRect: DOMRect;
+    trackLength: number;
+    displayMaxPosition: number;
+    grabOffset: number;
+    maxPosition: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  const releasePointerCapture = React.useCallback(() => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    try {
+      if (drag.track.hasPointerCapture(drag.pointerId)) {
+        drag.track.releasePointerCapture(drag.pointerId);
+      }
+    } catch {
+      // The track may already be detached during a workspace mode switch.
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const cancelOnBlur = () => releasePointerCapture();
+    const cancelWhenHidden = () => {
+      if (document.visibilityState === "hidden") releasePointerCapture();
+    };
+    window.addEventListener("blur", cancelOnBlur);
+    document.addEventListener("visibilitychange", cancelWhenHidden);
+    return () => {
+      window.removeEventListener("blur", cancelOnBlur);
+      document.removeEventListener("visibilitychange", cancelWhenHidden);
+      releasePointerCapture();
+    };
+  }, [releasePointerCapture]);
+
+  const moveDrag = React.useCallback((pointerId: number, clientX: number, clientY: number) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== pointerId) return;
+    const nextPointerOffset = drag.axis === "vertical"
+      ? clientY - drag.trackRect.top
+      : clientX - drag.trackRect.left;
+    const nextDisplayPosition = clamp(
+      ((nextPointerOffset - drag.grabOffset) / drag.trackLength) * 100,
+      0,
+      drag.displayMaxPosition
+    );
+    const nextPosition = drag.displayMaxPosition <= 0
+      ? 0
+      : (nextDisplayPosition / drag.displayMaxPosition) * drag.maxPosition;
+    onChangeRef.current(drag.axis, clamp(nextPosition, 0, drag.maxPosition));
+  }, []);
+
   const startDrag = React.useCallback(
     (axis: ViewportScrollAxis, event: React.PointerEvent<HTMLDivElement>) => {
       const axisState = getAxisState(state, axis);
-      if (!axisState.enabled) return;
+      if (!axisState.enabled || event.button !== 0) return;
 
       event.preventDefault();
       event.stopPropagation();
+      releasePointerCapture();
 
       const track = event.currentTarget;
       const trackRect = track.getBoundingClientRect();
@@ -69,7 +130,9 @@ export function ViewportScrollbars({ state, className = "", onChange }: Viewport
 
       const displaySize = getDisplayThumbSize(axisState);
       const displayMaxPosition = Math.max(0, 100 - displaySize);
-      const pointerOffset = axis === "vertical" ? event.clientY - trackRect.top : event.clientX - trackRect.left;
+      const pointerOffset = axis === "vertical"
+        ? event.clientY - trackRect.top
+        : event.clientX - trackRect.left;
       const currentStart = (getDisplayPosition(axisState) / 100) * trackLength;
       const thumbLength = (displaySize / 100) * trackLength;
       const target = event.target as HTMLElement;
@@ -77,34 +140,35 @@ export function ViewportScrollbars({ state, className = "", onChange }: Viewport
         ? pointerOffset - currentStart
         : thumbLength / 2;
 
-      const maxPosition = Math.max(0, 100 - axisState.size);
-
-      const moveTo = (clientX: number, clientY: number) => {
-        const nextPointerOffset = axis === "vertical" ? clientY - trackRect.top : clientX - trackRect.left;
-        const nextDisplayPosition = clamp(((nextPointerOffset - grabOffset) / trackLength) * 100, 0, displayMaxPosition);
-        const nextPosition =
-          displayMaxPosition <= 0 ? 0 : (nextDisplayPosition / displayMaxPosition) * maxPosition;
-        onChange(axis, clamp(nextPosition, 0, maxPosition));
+      dragRef.current = {
+        pointerId: event.pointerId,
+        axis,
+        track,
+        trackRect,
+        trackLength,
+        displayMaxPosition,
+        grabOffset,
+        maxPosition: Math.max(0, 100 - axisState.size)
       };
-
-      moveTo(event.clientX, event.clientY);
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        moveEvent.preventDefault();
-        moveTo(moveEvent.clientX, moveEvent.clientY);
-      };
-      const stopDrag = () => {
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", stopDrag);
-        window.removeEventListener("pointercancel", stopDrag);
-      };
-
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", stopDrag, { once: true });
-      window.addEventListener("pointercancel", stopDrag, { once: true });
+      track.setPointerCapture(event.pointerId);
+      moveDrag(event.pointerId, event.clientX, event.clientY);
     },
-    [onChange, state]
+    [moveDrag, releasePointerCapture, state]
   );
+
+  const handlePointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveDrag(event.pointerId, event.clientX, event.clientY);
+  }, [moveDrag]);
+
+  const handlePointerEnd = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    releasePointerCapture();
+  }, [releasePointerCapture]);
 
   const verticalPosition = getDisplayPosition(state.vertical);
   const horizontalPosition = getDisplayPosition(state.horizontal);
@@ -116,6 +180,10 @@ export function ViewportScrollbars({ state, className = "", onChange }: Viewport
       <div
         className={state.vertical.enabled ? "viewport-scrollbar vertical" : "viewport-scrollbar vertical disabled"}
         onPointerDown={(event) => startDrag("vertical", event)}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onLostPointerCapture={handlePointerEnd}
       >
         <div
           className="viewport-scrollbar-thumb"
@@ -128,6 +196,10 @@ export function ViewportScrollbars({ state, className = "", onChange }: Viewport
       <div
         className={state.horizontal.enabled ? "viewport-scrollbar horizontal" : "viewport-scrollbar horizontal disabled"}
         onPointerDown={(event) => startDrag("horizontal", event)}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onLostPointerCapture={handlePointerEnd}
       >
         <div
           className="viewport-scrollbar-thumb"

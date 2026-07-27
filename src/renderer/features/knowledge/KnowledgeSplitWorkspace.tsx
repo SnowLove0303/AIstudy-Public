@@ -9,6 +9,13 @@ type KnowledgeSplitWorkspaceProps = {
   onCompactChange?: (compact: boolean) => void;
 };
 
+type SplitDragState = {
+  pointerId: number;
+  rect: DOMRect;
+  target: HTMLDivElement;
+  startRatio: number;
+};
+
 const DEFAULT_MIND_MAP_RATIO = 60;
 const MIN_MIND_MAP_WIDTH = 360;
 const MIN_DOCUMENT_WIDTH = 420;
@@ -44,7 +51,7 @@ export function KnowledgeSplitWorkspace({
   onCompactChange
 }: KnowledgeSplitWorkspaceProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const dragRef = React.useRef<{ pointerId: number; rect: DOMRect } | null>(null);
+  const dragRef = React.useRef<SplitDragState | null>(null);
   const pendingFrameRef = React.useRef<number | null>(null);
   const pendingRatioRef = React.useRef(DEFAULT_MIND_MAP_RATIO);
   const ratioRef = React.useRef(DEFAULT_MIND_MAP_RATIO);
@@ -102,13 +109,6 @@ export function KnowledgeSplitWorkspace({
     return () => observer.disconnect();
   }, [applyRatio, onCompactChange]);
 
-  React.useEffect(() => () => {
-    if (pendingFrameRef.current !== null) {
-      window.cancelAnimationFrame(pendingFrameRef.current);
-    }
-    document.documentElement.classList.remove("knowledge-split-resizing");
-  }, []);
-
   const updatePointerRatio = React.useCallback((clientX: number) => {
     const drag = dragRef.current;
     if (!drag) return;
@@ -121,22 +121,82 @@ export function KnowledgeSplitWorkspace({
     });
   }, [applyRatio]);
 
+  const settleDragging = React.useCallback((shouldCommit: boolean) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    if (pendingFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingFrameRef.current);
+      pendingFrameRef.current = null;
+    }
+    document.documentElement.classList.remove("knowledge-split-resizing");
+    commitRatio(shouldCommit ? pendingRatioRef.current : drag.startRatio);
+    try {
+      if (drag.target.hasPointerCapture(drag.pointerId)) {
+        drag.target.releasePointerCapture(drag.pointerId);
+      }
+    } catch {
+      // The separator may already be detached after a mode or window change.
+    }
+  }, [commitRatio]);
+
   const finishDragging = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
     updatePointerRatio(event.clientX);
-    dragRef.current = null;
-    document.documentElement.classList.remove("knowledge-split-resizing");
-    commitRatio(pendingRatioRef.current);
-  }, [commitRatio, updatePointerRatio]);
+    settleDragging(true);
+  }, [settleDragging, updatePointerRatio]);
 
   const cancelDragging = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
-    dragRef.current = null;
-    document.documentElement.classList.remove("knowledge-split-resizing");
-    commitRatio(ratioRef.current);
-  }, [commitRatio]);
+    settleDragging(false);
+  }, [settleDragging]);
 
   const isSplitVisible = mode === "split" && !isCompact;
+
+  React.useEffect(() => {
+    const finishFromWindow = (event: PointerEvent) => {
+      if (dragRef.current?.pointerId !== event.pointerId) return;
+      updatePointerRatio(event.clientX);
+      settleDragging(true);
+    };
+    const cancelFromWindow = (event: PointerEvent) => {
+      if (dragRef.current?.pointerId === event.pointerId) settleDragging(false);
+    };
+    const cancelOnBlur = () => settleDragging(false);
+    const cancelWhenHidden = () => {
+      if (document.visibilityState === "hidden") settleDragging(false);
+    };
+
+    window.addEventListener("pointerup", finishFromWindow, true);
+    window.addEventListener("pointercancel", cancelFromWindow, true);
+    window.addEventListener("blur", cancelOnBlur);
+    document.addEventListener("visibilitychange", cancelWhenHidden);
+    return () => {
+      window.removeEventListener("pointerup", finishFromWindow, true);
+      window.removeEventListener("pointercancel", cancelFromWindow, true);
+      window.removeEventListener("blur", cancelOnBlur);
+      document.removeEventListener("visibilitychange", cancelWhenHidden);
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (pendingFrameRef.current !== null) {
+        window.cancelAnimationFrame(pendingFrameRef.current);
+        pendingFrameRef.current = null;
+      }
+      document.documentElement.classList.remove("knowledge-split-resizing");
+      try {
+        if (drag?.target.hasPointerCapture(drag.pointerId)) {
+          drag.target.releasePointerCapture(drag.pointerId);
+        }
+      } catch {
+        // The component is already leaving the document.
+      }
+    };
+  }, [settleDragging, updatePointerRatio]);
+
+  React.useEffect(() => {
+    if (!isSplitVisible) settleDragging(false);
+  }, [isSplitVisible, settleDragging]);
+
   return (
     <div
       ref={containerRef}
@@ -171,8 +231,14 @@ export function KnowledgeSplitWorkspace({
             if (event.button !== 0) return;
             const container = containerRef.current;
             if (!container) return;
+            settleDragging(false);
             event.currentTarget.setPointerCapture(event.pointerId);
-            dragRef.current = { pointerId: event.pointerId, rect: container.getBoundingClientRect() };
+            dragRef.current = {
+              pointerId: event.pointerId,
+              rect: container.getBoundingClientRect(),
+              target: event.currentTarget,
+              startRatio: ratioRef.current
+            };
             pendingRatioRef.current = ratioRef.current;
             document.documentElement.classList.add("knowledge-split-resizing");
             updatePointerRatio(event.clientX);

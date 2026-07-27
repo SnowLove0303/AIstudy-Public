@@ -45,3 +45,5 @@ Current files:
 - Catalog hierarchy styling is a reading aid only. It must derive from `MindMapOutlineItem.level` and must not mutate node text format or mind-map snapshot data.
 - New exports should use adapter commands and avoid scraping DOM state.
 - Resize handles belong to topic bubbles, not editor text boxes. Dragging the right edge should resize the bubble while the text layout moves with it.
+- Native summary rendering must restore the latest render-node instances to the active selection before subsequent insert, text-edit, or formatting commands.
+- Viewport scrollbar dragging must use pointer capture and release it on interruption; temporary global pointer-move listeners are not allowed.

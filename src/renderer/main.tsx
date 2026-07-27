@@ -6,8 +6,6 @@ import {
   Bot,
   Check,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   ChevronsDown,
   ChevronsRight,
   ClipboardList,
@@ -37,6 +35,7 @@ import { CourseSidebar } from "./features/course/CourseSidebar";
 import { courseApi } from "./features/course/courseService";
 import type { Course, CourseSection, CourseStore, CourseSyncStatus } from "./features/course/courseTypes";
 import { ExamWorkspace } from "./features/exam/ExamWorkspace";
+import { WorkspacePaneControls } from "./features/knowledge/WorkspacePaneControls";
 import { McpControlPanel } from "./features/mcp/McpControlPanel";
 import { MindMapCatalog, type MindMapCatalogCollapseRequest } from "./features/mindmap/MindMapCatalog";
 import {
@@ -1715,34 +1714,18 @@ function App() {
             }}
           />
         ) : null}
-        <button
-          className="pane-collapse-button library-toggle"
-          title={isLibraryPaneCollapsed ? "展开知识库" : "收起知识库"}
-          aria-label={isLibraryPaneCollapsed ? "展开知识库" : "收起知识库"}
-          type="button"
-          onClick={() => {
-            setIsLibraryPaneCollapsed((value) => {
-              if (value) setIsCatalogPaneCollapsed(true);
-              return !value;
-            });
+        <WorkspacePaneControls
+          libraryCollapsed={isLibraryPaneCollapsed}
+          catalogCollapsed={isCatalogPaneCollapsed}
+          onToggleLibrary={() => {
+            setIsLibraryPaneCollapsed((value) => !value);
+            setIsCatalogPaneCollapsed(true);
           }}
-        >
-          {isLibraryPaneCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
-        </button>
-        <button
-          className="pane-collapse-button catalog-toggle-button"
-          title={isCatalogPaneCollapsed ? "展开目录" : "收起目录"}
-          aria-label={isCatalogPaneCollapsed ? "展开目录" : "收起目录"}
-          type="button"
-          onClick={() => {
-            setIsCatalogPaneCollapsed((value) => {
-              if (value) setIsLibraryPaneCollapsed(true);
-              return !value;
-            });
+          onToggleCatalog={() => {
+            setIsCatalogPaneCollapsed((value) => !value);
+            setIsLibraryPaneCollapsed(true);
           }}
-        >
-          {isCatalogPaneCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
-        </button>
+        />
         <CourseSidebar
           sections={courseSections}
           courses={courses}

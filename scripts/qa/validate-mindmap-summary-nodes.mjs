@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const snapshotSourcePath = path.join(projectRoot, "src/renderer/features/mindmap/mindMapSnapshot.ts");
 const coreContractSourcePath = path.join(projectRoot, "src/renderer/domain/coreContracts.ts");
+const adapterSourcePath = path.join(projectRoot, "src/renderer/features/mindmap/simpleMindMapAdapter.ts");
 
 function assert(condition, message) {
   if (!condition) {
@@ -52,6 +53,7 @@ const {
   normalizeNativeMindMapGeneralization,
   normalizeMindMapTree
 } = await import(`${pathToFileURL(snapshotModulePath).href}?qa=${Date.now()}`);
+const adapterSource = fs.readFileSync(adapterSourcePath, "utf8");
 
 const root = normalizeMindMapTree({
   data: { uid: "root", text: "Pynes", expand: true },
@@ -118,6 +120,13 @@ assert(normalizedDuplicateSummary?.text === "选定方式", "edited summary text
 assert(
   normalizedDuplicateSummary?.range?.join(",") === "0,2",
   "range summary should remove legacy self summary on the same parent"
+);
+assert(
+  adapterSource.includes("restoreActiveNodesAfterSummary")
+    && adapterSource.includes('editor.render(() => restoreActiveNodesAfterSummary(editor, activeNodeIds))')
+    && adapterSource.includes("findNodeByUid?.(nodeId)")
+    && adapterSource.includes("addNodeToActiveList?.(node, true)"),
+  "adding a summary must restore current render-node instances so editing can continue"
 );
 
 console.log("mind map native summary policy: ok");

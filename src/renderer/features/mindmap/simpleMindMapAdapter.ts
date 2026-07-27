@@ -351,10 +351,23 @@ function applySummaryTarget(editor: any, target: SummaryTarget) {
   return true;
 }
 
+function restoreActiveNodesAfterSummary(editor: any, nodeIds: string[]) {
+  const nodes = nodeIds
+    .map((nodeId) => editor.renderer?.findNodeByUid?.(nodeId))
+    .filter(Boolean);
+  if (nodes.length === 0) return;
+  editor.renderer?.clearActiveNodeList?.();
+  nodes.forEach((node: any) => editor.renderer?.addNodeToActiveList?.(node, true));
+  editor.renderer?.emitNodeActiveEvent?.(nodes[0], nodes);
+}
+
 function addNativeGeneralization(editor: any, activeNode: any = null) {
   const activeNodes = getActiveNodes(editor, activeNode);
   const targets = createSummaryTargets(activeNodes);
   if (targets.length <= 0) return;
+  const activeNodeIds: string[] = activeNodes
+    .map((node: any) => extractNodeId(node))
+    .filter((nodeId: unknown): nodeId is string => typeof nodeId === "string" && Boolean(nodeId));
 
   let changed = false;
   targets.forEach((target) => {
@@ -363,7 +376,11 @@ function addNativeGeneralization(editor: any, activeNode: any = null) {
   if (!changed) {
     normalizeRuntimeGeneralizations(editor, targets);
   }
-  editor.render?.();
+  if (typeof editor.render === "function") {
+    editor.render(() => restoreActiveNodesAfterSummary(editor, activeNodeIds));
+    return;
+  }
+  restoreActiveNodesAfterSummary(editor, activeNodeIds);
 }
 
 function readFiniteNumber(value: unknown) {
