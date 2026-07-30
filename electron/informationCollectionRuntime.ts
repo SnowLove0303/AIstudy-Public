@@ -37,6 +37,12 @@ export type InformationPreparedDocument = {
   message: string;
 };
 
+export type InformationMimoConfig = {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
+
 export function createInformationStep(
   id: InformationProcessStep["id"],
   name: string,
@@ -122,23 +128,25 @@ export async function runInformationExecFile(command: string, args: string[], cw
   });
 }
 
-function readMimoApiKey() {
-  return process.env.AISTUDY_MIMO_API_KEY?.trim() || process.env.MIMO_API_KEY?.trim() || "";
+function readMimoApiKey(config?: Partial<InformationMimoConfig>) {
+  return config?.apiKey?.trim() || process.env.AISTUDY_MIMO_API_KEY?.trim() || process.env.MIMO_API_KEY?.trim() || "";
 }
 
-function readMimoBaseUrl(apiKey: string) {
-  const configured = process.env.AISTUDY_MIMO_BASE_URL?.trim() || process.env.MIMO_BASE_URL?.trim();
+function readMimoBaseUrl(apiKey: string, config?: Partial<InformationMimoConfig>) {
+  const configured = config?.baseUrl?.trim() || process.env.AISTUDY_MIMO_BASE_URL?.trim() || process.env.MIMO_BASE_URL?.trim();
   if (configured) return configured.replace(/\/+$/, "");
   return apiKey.startsWith("tp-") ? "https://token-plan-cn.xiaomimimo.com/v1" : "https://api.xiaomimimo.com/v1";
 }
 
-function readMimoModel() {
-  return process.env.AISTUDY_MIMO_MODEL?.trim() || process.env.MIMO_MODEL?.trim() || "mimo-v2.5-pro";
+function readMimoModel(config?: Partial<InformationMimoConfig>) {
+  return config?.model?.trim() || process.env.AISTUDY_MIMO_MODEL?.trim() || process.env.MIMO_MODEL?.trim() || "mimo-v2.5-pro";
 }
 
 const MIMO_REQUEST_TIMEOUT_MS = 90_000;
 const MIMO_PROBE_TIMEOUT_MS = 10_000;
 const MAX_MIMO_PROMPT_CHARS = 32_000;
+const MIMO_DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
+const MIMO_COMPACT_MAX_OUTPUT_TOKENS = 12_288;
 const MAX_LOCAL_ITEM_COUNT = 24;
 const MAX_OVERVIEW_ITEM_COUNT = 10;
 
@@ -180,14 +188,14 @@ function shouldRetryMimoWithoutJsonFormat(error: unknown) {
   return status === 400 || status === 422 || lowerMessage.includes("response_format") || lowerMessage.includes("bad request");
 }
 
-function createMimoChatCompletionBody(prompt: string, useJsonResponseFormat: boolean) {
+function createMimoChatCompletionBody(prompt: string, useJsonResponseFormat: boolean, maxTokens = MIMO_DEFAULT_MAX_OUTPUT_TOKENS) {
   const body: Record<string, unknown> = {
     model: readMimoModel(),
     messages: [
       { role: "system", content: "你负责把视频转录整理成可入库的中文早报文档，只能输出 JSON。" },
       { role: "user", content: prompt }
     ],
-    max_tokens: 4096
+    max_tokens: maxTokens
   };
   if (useJsonResponseFormat) {
     body.response_format = { type: "json_object" };
@@ -195,18 +203,27 @@ function createMimoChatCompletionBody(prompt: string, useJsonResponseFormat: boo
   return body;
 }
 
-async function requestMimoChatCompletion(apiKey: string, prompt: string, useJsonResponseFormat: boolean) {
+async function requestMimoChatCompletion(
+  apiKey: string,
+  prompt: string,
+  useJsonResponseFormat: boolean,
+  config?: Partial<InformationMimoConfig>,
+  maxTokens = MIMO_DEFAULT_MAX_OUTPUT_TOKENS
+) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MIMO_REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(`${readMimoBaseUrl(apiKey)}/chat/completions`, {
+    const response = await fetch(`${readMimoBaseUrl(apiKey, config)}/chat/completions`, {
       method: "POST",
       headers: {
         "authorization": `Bearer ${apiKey}`,
         "api-key": apiKey,
         "content-type": "application/json"
       },
-      body: JSON.stringify(createMimoChatCompletionBody(prompt, useJsonResponseFormat)),
+      body: JSON.stringify({
+        ...createMimoChatCompletionBody(prompt, useJsonResponseFormat, maxTokens),
+        model: readMimoModel(config)
+      }),
       signal: controller.signal
     });
     if (!response.ok) {
@@ -325,6 +342,41 @@ function normalizeInformationDocumentItem(value: unknown): InformationDocumentIt
   };
 }
 
+function normalizeInformationItemMatchKey(value: string) {
+  return normalizeInformationItemTitle(value)
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .toLowerCase();
+}
+
+function isMatchingInformationItemTitle(expectedTitle: string, candidateTitle: string) {
+  const expected = normalizeInformationItemMatchKey(expectedTitle);
+  const candidate = normalizeInformationItemMatchKey(candidateTitle);
+  if (!expected || !candidate) return false;
+  if (expected === candidate || expected.includes(candidate) || candidate.includes(expected)) return true;
+  const expectedHead = expected.slice(0, Math.min(expected.length, 12));
+  const candidateHead = candidate.slice(0, Math.min(candidate.length, 12));
+  return expectedHead.length >= 6 && candidateHead.length >= 6 && (expected.includes(candidateHead) || candidate.includes(expectedHead));
+}
+
+function mergeInformationItemsWithExpectedTitles(expectedItems: InformationDocumentItem[], mimoItems: InformationDocumentItem[]) {
+  if (!expectedItems.length) return mimoItems;
+  const used = new Set<number>();
+  const merged = expectedItems.map((expected) => {
+    const matchIndex = mimoItems.findIndex((item, index) =>
+      !used.has(index) && isMatchingInformationItemTitle(expected.title, item.title)
+    );
+    if (matchIndex < 0) return expected;
+    used.add(matchIndex);
+    const match = mimoItems[matchIndex]!;
+    return {
+      title: expected.title,
+      mainContent: match.mainContent || expected.mainContent,
+      sourceUrls: Array.from(new Set([...match.sourceUrls, ...expected.sourceUrls]))
+    };
+  });
+  return merged.slice(0, MAX_LOCAL_ITEM_COUNT);
+}
+
 function parseMimoJsonPayload(value: string) {
   const text = value.trim();
   if (!text) return null;
@@ -337,6 +389,114 @@ function parseMimoJsonPayload(value: string) {
   }
 }
 
+async function requestMimoStructuredDocument(input: {
+  apiKey: string;
+  prompt: string;
+  compactPrompt: string;
+  config?: Partial<InformationMimoConfig>;
+  workDir: string;
+}) {
+  let lastContent = "";
+  let lastError: unknown = null;
+  const attempts = [
+    { prompt: input.prompt, maxTokens: MIMO_DEFAULT_MAX_OUTPUT_TOKENS },
+    { prompt: input.compactPrompt, maxTokens: MIMO_COMPACT_MAX_OUTPUT_TOKENS }
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      let payload: Record<string, unknown>;
+      try {
+        payload = await requestMimoChatCompletion(input.apiKey, attempt.prompt, true, input.config, attempt.maxTokens);
+      } catch (firstError) {
+        if (!shouldRetryMimoWithoutJsonFormat(firstError)) throw firstError;
+        payload = await requestMimoChatCompletion(input.apiKey, attempt.prompt, false, input.config, attempt.maxTokens);
+      }
+      const content = readMimoMessageContent(payload);
+      lastContent = content || lastContent;
+      const parsed = parseMimoJsonPayload(content);
+      if (parsed) return parsed;
+      lastError = new Error("Mimo response is not valid JSON.");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastContent) await writeMimoDiagnosticFile(input.workDir, "mimo-response.txt", lastContent);
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || "Mimo response is not valid JSON."));
+}
+
+async function writeMimoDiagnosticFile(workDir: string, fileName: string, content: string) {
+  await fs.writeFile(path.join(workDir, fileName), `${content.slice(0, 80_000)}\n`, "utf8").catch(() => undefined);
+}
+
+const INFORMATION_CATEGORY_HEADINGS = new Set([
+  "概览",
+  "模型发布",
+  "开发生态",
+  "产品应用",
+  "技术与洞察",
+  "行业动态",
+  "前瞻与传闻",
+  "相关链接",
+  "相关阅读"
+]);
+
+function normalizeInformationSourceLine(value: string) {
+  return normalizeInformationText(value).trim();
+}
+
+function createMarkedInformationItems(value: string) {
+  const lines = String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(normalizeInformationSourceLine)
+    .filter(Boolean);
+  const byNumber = new Map<number, { title: string; content: string }>();
+  let current: { number: number; title: string; lines: string[] } | null = null;
+  let previousLine = "";
+
+  const closeCurrent = (nextTitle = "") => {
+    if (!current) return;
+    const contentLines = [...current.lines];
+    if (nextTitle && contentLines[contentLines.length - 1] === nextTitle) contentLines.pop();
+    const content = contentLines
+      .filter((line) => !INFORMATION_CATEGORY_HEADINGS.has(line))
+      .join("\n");
+    const existing = byNumber.get(current.number);
+    if (!existing || content.length > existing.content.length) {
+      byNumber.set(current.number, { title: current.title, content });
+    }
+    current = null;
+  };
+
+  for (const line of lines) {
+    const marker = line.match(/^#\s*(\d{1,3})$/);
+    if (marker) {
+      const title = previousLine && !INFORMATION_CATEGORY_HEADINGS.has(previousLine) ? previousLine : `分点 ${marker[1]}`;
+      closeCurrent(title);
+      current = { number: Number(marker[1]), title, lines: [] };
+      previousLine = line;
+      continue;
+    }
+    current?.lines.push(line);
+    previousLine = line;
+  }
+  closeCurrent();
+
+  return Array.from(byNumber.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([_number, item]) => {
+      const formatted = formatInformationItemContent(item.content || item.title);
+      return {
+        title: normalizeInformationItemTitle(item.title),
+        mainContent: formatted.mainContent,
+        sourceUrls: formatted.sourceUrls
+      };
+    })
+    .filter((item) => item.title && item.mainContent.length >= item.title.length);
+}
+
 function createLocalInformationDocument(input: {
   title: string;
   author: string;
@@ -347,28 +507,31 @@ function createLocalInformationDocument(input: {
   message: string;
 }): InformationPreparedDocument {
   const paragraphs = splitInformationTranscriptParagraphs(input.transcript);
-  const numberedItems: InformationDocumentItem[] = [];
+  const markedItems = createMarkedInformationItems(input.transcript);
+  const numberedItems: InformationDocumentItem[] = [...markedItems];
   let current: InformationDocumentItem | null = null;
-  for (const paragraph of paragraphs) {
-    const numbered = paragraph.match(/^\d{1,3}[.、]\s*(.+)$/);
-    if (numbered) {
-      if (current) numberedItems.push(current);
-      const content = numbered[1].trim();
-      const formatted = formatInformationItemContent(content);
-      current = {
-        title: normalizeInformationItemTitle(content),
-        mainContent: formatted.mainContent,
-        sourceUrls: formatted.sourceUrls
-      };
-      continue;
+  if (!numberedItems.length) {
+    for (const paragraph of paragraphs) {
+      const numbered = paragraph.match(/^\d{1,3}[.、]\s*(.+)$/);
+      if (numbered) {
+        if (current) numberedItems.push(current);
+        const content = numbered[1].trim();
+        const formatted = formatInformationItemContent(content);
+        current = {
+          title: normalizeInformationItemTitle(content),
+          mainContent: formatted.mainContent,
+          sourceUrls: formatted.sourceUrls
+        };
+        continue;
+      }
+      if (current) {
+        const formatted = formatInformationItemContent(paragraph);
+        current.mainContent = [current.mainContent, formatted.mainContent].filter(Boolean).join("\n\n");
+        current.sourceUrls = Array.from(new Set([...current.sourceUrls, ...formatted.sourceUrls]));
+      }
     }
-    if (current) {
-      const formatted = formatInformationItemContent(paragraph);
-      current.mainContent = [current.mainContent, formatted.mainContent].filter(Boolean).join("\n\n");
-      current.sourceUrls = Array.from(new Set([...current.sourceUrls, ...formatted.sourceUrls]));
-    }
+    if (current) numberedItems.push(current);
   }
-  if (current) numberedItems.push(current);
 
   const items = numberedItems.length
     ? numberedItems.slice(0, MAX_LOCAL_ITEM_COUNT)
@@ -393,6 +556,56 @@ function createLocalInformationDocument(input: {
     transcript: input.transcript,
     message: input.message || "Mimo 未配置或暂时不可用，已使用本地规则整理。"
   };
+}
+
+function readStringField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+async function readJsonFile(filePath: string) {
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export async function readInformationMimoConfig(getDataPath?: (...segments: string[]) => string): Promise<Partial<InformationMimoConfig>> {
+  const envConfig = {
+    apiKey: readMimoApiKey(),
+    baseUrl: process.env.AISTUDY_MIMO_BASE_URL?.trim() || process.env.MIMO_BASE_URL?.trim() || "",
+    model: readMimoModel()
+  };
+  if (envConfig.apiKey) return envConfig;
+  if (!getDataPath) return {};
+
+  const configPaths = [
+    getDataPath("config", "information-collection.config.json"),
+    getDataPath("config", "mimo.config.json")
+  ];
+
+  for (const configPath of configPaths) {
+    const raw = await readJsonFile(configPath);
+    if (!raw) continue;
+    const mimo = raw.mimo && typeof raw.mimo === "object" ? raw.mimo as Record<string, unknown> : raw;
+    const apiKey = readStringField(mimo.apiKey) || readStringField(mimo.key) || readStringField(mimo.token);
+    if (!apiKey) continue;
+    return {
+      apiKey,
+      baseUrl: readStringField(mimo.baseUrl) || readStringField(mimo.apiBaseUrl),
+      model: readStringField(mimo.model) || "mimo-v2.5-pro"
+    };
+  }
+
+  return {};
+}
+
+async function persistInformationPreparedDocument(workDir: string, document: InformationPreparedDocument) {
+  const text = `${JSON.stringify(document, null, 2)}\n`;
+  await fs.writeFile(path.join(workDir, "prepared-document.json"), text, "utf8").catch(() => undefined);
+  if (document.provider === "mimo") {
+    await fs.writeFile(path.join(workDir, "mimo-document.json"), text, "utf8").catch(() => undefined);
+  }
 }
 
 function formatMimoFailureMessage(error: unknown) {
@@ -433,20 +646,29 @@ export async function organizeInformationDocumentWithMimo(input: {
   description: string;
   transcript: string;
   workDir: string;
+  getDataPath?: (...segments: string[]) => string;
 }): Promise<InformationPreparedDocument> {
   const fallback = createLocalInformationDocument({
     ...input,
     message: "Mimo 未配置，已使用本地规则整理。"
   });
-  const apiKey = readMimoApiKey();
-  if (!apiKey) return fallback;
+  const mimoConfig = await readInformationMimoConfig(input.getDataPath);
+  const apiKey = readMimoApiKey(mimoConfig);
+  if (!apiKey) {
+    await persistInformationPreparedDocument(input.workDir, fallback);
+    return fallback;
+  }
 
   const sourceUrls = collectSourceUrls(input.description);
+  const expectedItems = fallback.items;
+  const expectedItemGuide = expectedItems.length
+    ? expectedItems.map((item, index) => `${index + 1}. ${item.title}`).join("\n")
+    : "无";
   const prompt = [
     "你是 AIstudy 的信息采集整理器。请只基于提供的视频元数据、来源链接和转录内容整理，不要补充未经材料支持的信息。",
     "输出必须是 JSON，不要 Markdown，不要解释。",
     "JSON 结构：{\"title\":\"文档标题\",\"overview\":\"今日概览，使用多行短句或编号清单，不要写成长段落\",\"items\":[{\"title\":\"分点标题\",\"mainContent\":\"2 到 5 段主要内容，段落之间使用两个换行\",\"sourceUrls\":[\"https://...\"]}]}。",
-    "要求：每个早报分点都要有独立标题和主要内容；标题不要重复编号；正文按自然段整理，避免把所有内容挤成一段；来源链接只使用材料中出现过的 URL；不要返回完整转录。",
+    "要求：必须按“分点标题清单”逐条输出 items，不要合并分点、不要跳号、不要新增清单外的分点；标题不要重复编号；正文按自然段整理，避免把所有内容挤成一段；来源链接只使用材料中出现过的 URL；不要返回完整转录。",
     "",
     `视频标题：${input.title}`,
     `发布者：${input.author}`,
@@ -454,30 +676,37 @@ export async function organizeInformationDocumentWithMimo(input: {
     `视频链接：${input.url}`,
     `材料中的来源链接：${sourceUrls.join("\n") || "无"}`,
     "",
+    "分点标题清单：",
+    expectedItemGuide,
+    "",
     "视频简介：",
     input.description || "无",
     "",
     "转录内容：",
     input.transcript.slice(0, MAX_MIMO_PROMPT_CHARS),
     input.transcript.length > MAX_MIMO_PROMPT_CHARS
-      ? "（转录过长，本次整理使用了前 48000 个字符；完整原始转录仍会保留在文档中。）"
+      ? "（转录过长，本次整理使用了前 32000 个字符；完整原始转录只保留在运行缓存中，不写入正式文档。）"
       : ""
   ].join("\n");
 
   try {
     let payload: Record<string, unknown>;
     try {
-      payload = await requestMimoChatCompletion(apiKey, prompt, true);
+      payload = await requestMimoChatCompletion(apiKey, prompt, true, mimoConfig);
     } catch (firstError) {
       if (!shouldRetryMimoWithoutJsonFormat(firstError)) throw firstError;
-      payload = await requestMimoChatCompletion(apiKey, prompt, false);
+      payload = await requestMimoChatCompletion(apiKey, prompt, false, mimoConfig);
     }
     const content = readMimoMessageContent(payload);
     const parsed = parseMimoJsonPayload(content);
-    if (!parsed) throw new Error("Mimo response is not valid JSON.");
-    const items = Array.isArray(parsed.items)
+    if (!parsed) {
+      await writeMimoDiagnosticFile(input.workDir, "mimo-response.txt", content);
+      throw new Error("Mimo response is not valid JSON.");
+    }
+    const parsedItems = Array.isArray(parsed.items)
       ? parsed.items.map(normalizeInformationDocumentItem).filter((item): item is InformationDocumentItem => Boolean(item))
       : [];
+    const items = mergeInformationItemsWithExpectedTitles(expectedItems, parsedItems);
     const document: InformationPreparedDocument = {
       status: "available",
       provider: "mimo",
@@ -489,21 +718,24 @@ export async function organizeInformationDocumentWithMimo(input: {
       transcript: input.transcript,
       message: "已通过 Mimo 整理转录内容。"
     };
-    await fs.writeFile(path.join(input.workDir, "mimo-document.json"), `${JSON.stringify(document, null, 2)}\n`, "utf8").catch(() => undefined);
+    await persistInformationPreparedDocument(input.workDir, document);
     return document;
   } catch (error) {
-    return {
+    await writeMimoDiagnosticFile(input.workDir, "mimo-error.txt", error instanceof Error ? error.message : String(error));
+    const document = {
       ...fallback,
       message: formatMimoFailureMessage(error)
     };
+    await persistInformationPreparedDocument(input.workDir, document);
+    return document;
   }
 }
 
-async function probeMimoConnection(apiKey: string) {
+async function probeMimoConnection(apiKey: string, config?: Partial<InformationMimoConfig>) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MIMO_PROBE_TIMEOUT_MS);
   try {
-    const response = await fetch(`${readMimoBaseUrl(apiKey)}/models`, {
+    const response = await fetch(`${readMimoBaseUrl(apiKey, config)}/models`, {
       headers: {
         "authorization": `Bearer ${apiKey}`,
         "api-key": apiKey
@@ -518,7 +750,7 @@ async function probeMimoConnection(apiKey: string) {
   }
 }
 
-export async function readInformationToolStatus(): Promise<InformationToolStatus[]> {
+export async function readInformationToolStatus(getDataPath?: (...segments: string[]) => string): Promise<InformationToolStatus[]> {
   const tools: Array<{ id: InformationToolStatus["id"]; name: string; command: string; args: string[]; missingMessage: string }> = [
     { id: "yt-dlp", name: "视频下载", command: "yt-dlp", args: ["--version"], missingMessage: "未检测到视频下载工具。" },
     { id: "ffmpeg", name: "音频处理", command: "ffmpeg", args: ["-version"], missingMessage: "未检测到音频处理工具。" },
@@ -546,15 +778,16 @@ export async function readInformationToolStatus(): Promise<InformationToolStatus
       };
     }
   }));
-  const mimoKey = readMimoApiKey();
-  const mimoConnected = mimoKey ? await probeMimoConnection(mimoKey) : false;
+  const mimoConfig = await readInformationMimoConfig(getDataPath);
+  const mimoKey = readMimoApiKey(mimoConfig);
+  const mimoConnected = mimoKey ? await probeMimoConnection(mimoKey, mimoConfig) : false;
   return [
     ...runtimeTools,
     {
       id: "mimo",
       name: "内容整理",
       available: mimoConnected,
-      version: mimoKey ? readMimoModel() : "",
+      version: mimoKey ? readMimoModel(mimoConfig) : "",
       message: !mimoKey
         ? "未配置 Mimo 密钥，将使用本地规则整理。"
         : mimoConnected

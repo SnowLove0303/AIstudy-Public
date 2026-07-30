@@ -68,7 +68,10 @@ assertContains(panel, "preparedDocument", "Generated Word snapshot must use orga
 assertContains(main, "hasReadyBilibiliTranscript", "Collection status must distinguish metadata-ready from transcript-ready.");
 assertContains(main, "转录需要后续处理", "Partial collection result must explain pending transcript work.");
 assertContains(runtime, "organizeInformationDocumentWithMimo", "Runtime must own the Mimo organization boundary.");
-assertContains(runtime, "AISTUDY_MIMO_API_KEY", "Mimo credentials must be read from environment only.");
+assertContains(runtime, "AISTUDY_MIMO_API_KEY", "Mimo credentials must still support environment variables.");
+assertContains(runtime, "readInformationMimoConfig", "Mimo credentials must also support AIstudy data-directory config for packaged shortcut launches.");
+assertContains(runtime, "information-collection.config.json", "Information collection must have a durable config-file path under AIstudy data.");
+assertContains(runtime, "prepared-document.json", "Every processing run must persist the organized document result for diagnostics and write-back.");
 assertContains(runtime, "token-plan-cn.xiaomimimo.com", "Mimo Token Plan keys must use the token-plan endpoint by default.");
 assertContains(runtime, '"authorization": `Bearer ${apiKey}`', "Mimo requests must support OpenAI-compatible Bearer authentication.");
 assertContains(runtime, '"api-key": apiKey', "Mimo requests must keep Token Plan api-key authentication.");
@@ -78,6 +81,8 @@ assertContains(runtime, "MIMO_REQUEST_TIMEOUT_MS", "Mimo organization requests m
 assertContains(runtime, "probeMimoConnection", "Mimo status must verify the configured endpoint instead of only checking for a key.");
 assertContains(runtime, "readMimoMessageContent", "Mimo response parsing must support compatible content shapes.");
 assertContains(runtime, "不要返回完整转录", "Mimo must not be asked to return full transcripts inside JSON.");
+assertContains(runtime, "分点标题清单", "Mimo prompts must preserve the original numbered morning-brief item list.");
+assertContains(runtime, "mergeInformationItemsWithExpectedTitles", "Mimo output must be reconciled with locally extracted item titles.");
 assertContains(runtime, "createOverviewText", "Information collection fallback must create structured overview text.");
 assertContains(runtime, "formatInformationItemContent", "Information collection fallback must normalize item paragraphs and source links.");
 if (runtime.includes('\\"transcript\\":\\"清理后的完整转录\\"') || runtime.includes("保留完整转录")) {

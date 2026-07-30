@@ -2440,7 +2440,8 @@ async function prepareInformationVideoDocument(
     url: video.url,
     description: video.description,
     transcript: video.transcript.text,
-    workDir
+    workDir,
+    getDataPath: getAistudyDataPath
   });
   steps[steps.length - 1] = createInformationStep(
     "organize",
@@ -2504,7 +2505,7 @@ async function processYoutubeVideo(
     return finish({ status: "blocked", message: "视频处理没有开始。", video: null, steps, workDir });
   }
 
-  const tools = await readInformationToolStatus();
+  const tools = await readInformationToolStatus(getAistudyDataPath);
   const toolMap = new Map(tools.map((tool) => [tool.id, tool]));
   const ytDlpReady = Boolean(toolMap.get("yt-dlp")?.available);
   const ffmpegReady = Boolean(toolMap.get("ffmpeg")?.available);
@@ -2712,7 +2713,7 @@ async function processBilibiliVideo(
   );
   emitProgress("running", steps[2].message);
 
-  const tools = await readInformationToolStatus();
+  const tools = await readInformationToolStatus(getAistudyDataPath);
   const toolMap = new Map(tools.map((tool) => [tool.id, tool]));
   const ytDlpReady = Boolean(toolMap.get("yt-dlp")?.available);
   const ffmpegReady = Boolean(toolMap.get("ffmpeg")?.available);
@@ -6350,7 +6351,7 @@ async function checkInformationCollectionRuntime(): Promise<RuntimeDiagnosticIte
 }
 
 async function checkInformationToolRuntime(toolId: InformationToolStatus["id"]): Promise<RuntimeDiagnosticItem> {
-  const tools = await readInformationToolStatus();
+  const tools = await readInformationToolStatus(getAistudyDataPath);
   const tool = tools.find((item) => item.id === toolId);
   const name = tool?.name ?? toolId;
   if (tool?.available) {
@@ -12169,7 +12170,7 @@ ipcMain.handle(
 
 ipcMain.handle(
   "information-collection:tool-status",
-  withUserFacingError("information-collection:tool-status", "采集工具状态没有读取到。", () => readInformationToolStatus())
+  withUserFacingError("information-collection:tool-status", "采集工具状态没有读取到。", () => readInformationToolStatus(getAistudyDataPath))
 );
 
 ipcMain.handle(
