@@ -5,7 +5,7 @@ Keep this file synchronized with `electron/mcp/controller.ts`, `electron/mcp/rem
 ## Control And Discovery
 
 - `mcp_get_started`: first call; returns health, scope, safety rules, resources, prompts, and next steps.
-- `mcp_plan_task`: turns user intent into ordered MCP calls.
+- `mcp_plan_task`: turns ambiguous or multi-step user intent into ordered MCP calls. Skip it for a direct, unambiguous operation to avoid an unnecessary round trip.
 - `mcp_resolve_target`: resolves a compact ref, course, and optional node candidates. Empty targets fail; ambiguous names remain unresolved.
 - `health_check`: checks runtime, MySQL, and core tables.
 - `copy_config`: in-app helper for copying onboarding config.
@@ -30,6 +30,8 @@ aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1
 Pass it directly as `{"ref":"..."}` to `read_node_context` for fast structured reads, or to `read_node_document({ ref, mode: "snapshot" })` only when editor JSON is required. The MCP server expands short prefixes only inside compact refs and refuses ambiguous matches instead of guessing. Explicit ID fields require full IDs.
 
 For same-machine CLI access, use `scripts/mcp/call-aistudy-mcp.mjs`. Use `--session` for multiple calls so one process and MySQL pool are reused. Prefer direct flags on Windows; for complex objects use `ConvertTo-Json | ... --args-stdin` or `--args-file`. Do not use `Content-Length` MCP framing with `scripts/mcp/aistudy-mcp-server.mjs`.
+
+Claude Code's normal MCP connection is already session-oriented. The helper is for diagnostics or scripted batches, not a wrapper to launch once per Claude tool call.
 
 ## Course And Section Edits
 

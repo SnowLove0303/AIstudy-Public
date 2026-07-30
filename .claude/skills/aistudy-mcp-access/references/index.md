@@ -5,6 +5,7 @@ This skill is the canonical agent-facing entry for AIstudy MCP access.
 ## Files
 
 - `../SKILL.md`: trigger metadata, core safety rules, and reference routing.
+- `claude-code.md`: Claude Code Skill installation, MCP configuration, credential handling, and verification.
 - `connection.md`: connection shapes and config snippets.
 - `tool-index.md`: current tool groups, edit permissions, and safety semantics.
 - `workflows.md`: standard task sequences.
@@ -23,7 +24,7 @@ This skill is the canonical agent-facing entry for AIstudy MCP access.
 ## Update Order
 
 1. Update runtime code and schemas.
-2. Update `tool-index.md` and `workflows.md`.
+2. Update `tool-index.md`, `workflows.md`, and `claude-code.md` when their contracts are affected.
 3. Update `SKILL.md` only if trigger conditions, core rules, or reference routing changed.
 4. Update `docs/mcp/*.md` so human docs match this skill.
 5. Regenerate or review `agents/openai.yaml` if the skill purpose changed.

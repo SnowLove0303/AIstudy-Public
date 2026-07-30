@@ -30,7 +30,7 @@ If AIstudy copied a compact node ref, skip locator files and call:
 read_node_context({ ref })
 ```
 
-The default context read performs a targeted target-to-root database query and returns ancestors, the target, document metadata, and no descendant subtree. It does not parse the full mind-map snapshot. Request `includeDescendants: true` and bounded limits only when needed. Request `documentMode: "text"` only when body text is needed.
+This is the fastest path. The default context read performs a targeted target-to-root database query and returns ancestors, the target, document metadata, and no descendant subtree. It does not parse the full mind-map snapshot. Request `includeDescendants: true` and bounded limits only when needed. Request `documentMode: "text"` only when body text is needed.
 
 ```text
 mcp_resolve_target({ courseName, nodeQuery })
@@ -61,17 +61,19 @@ Use `mode: "snapshot"` for editor JSON and `mode: "audit"` only for integrity di
 
 Explicit IDs must be full IDs. Short prefixes are accepted only in compact refs and must be unique.
 
+Do not repeat `mcp_get_started`, `read_courses`, or the same target resolution before every read in one MCP session. Cache exact IDs in the current task context and invalidate them only when the target changes or an edit changes the relevant structure.
+
 ## Edit A Mind Map
 
 ```text
-mcp_plan_task({ intent, allowEdit: true })
--> mcp_resolve_target({ courseName, nodeQuery })
+mcp_resolve_target({ courseName, nodeQuery })
 -> read_current_mindmap({ courseId })
 -> specific edit tool
 -> read_current_mindmap({ courseId })
 ```
 
 Use exact `courseId`; use exact `nodeId` for node-level edits.
+Call `mcp_plan_task({ intent, allowEdit: true })` only when the edit is multi-step or the correct tool sequence is unclear. A direct, unambiguous edit should not pay an extra planning round trip.
 
 ## Edit A Node Document
 
@@ -85,6 +87,8 @@ mcp_resolve_target({ courseName, nodeQuery })
 Use `write_node_document` for replacement only when the user explicitly asks for whole-document overwrite and `replaceExisting: true` is passed.
 Pass the last read `currentSnapshotId` as `expectedSnapshotId`. Stale writes fail instead of overwriting concurrent changes. Write tools return lightweight metadata; re-read only when the caller actually needs the new body.
 
+If the task is append-only, re-read lightweight metadata or bounded text rather than requesting the entire editor snapshot again. If the response reports `DOCUMENT_VERSION_CONFLICT`, re-read the latest document, reconcile the user's intended change with the new body, and retry once with the new snapshot ID. Never replay the stale whole-document payload.
+
 For `write_node_document` and `append_node_document`, do not repeat the node name because AIstudy already renders it as the document heading. Use `# 标题` only when the body has a distinct article title. Use `一、` / `（一）` / `1.` / `（1）` for the four Chinese article heading levels, `> ` for quotations, `字段：内容` for labels, and one natural body paragraph per line. Blank input lines are paragraph boundaries rather than visible spacer rows.
 
 New text receives Chinese heading/body fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent. AIstudy safely normalizes nearby Chinese punctuation and Chinese-English spacing while protecting URLs, Windows paths, email addresses, code, formulas, list markers, and tree indentation. `format_node_document` applies the same style system to existing content but preserves every `value` exactly, so it cannot add missing indent characters.
@@ -96,6 +100,8 @@ Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind
 For math-heavy notes, write standard symbols or readable formula text in the final content: `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, `|x_n-a| < ε`. Do not leave degraded chat text such as `epsilon`, `delta`, `infinity`, `->`, or `lim_{n->infinity}` in the document.
 
 After a write, check `ragIndex`. `status: "not_configured"` explicitly means the snapshot is persisted but no RAG/vector synchronization can be verified.
+
+Also compare any critical exact-copy literals from the input against the re-read text. A changed backslash, underscore, ID, ref, JSON token, command switch, or script name is a failed round trip even when the write call itself succeeded.
 
 ## Generate A Local Locator
 

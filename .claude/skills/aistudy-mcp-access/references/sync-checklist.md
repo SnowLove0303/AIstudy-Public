@@ -19,6 +19,7 @@ Update this skill when any of these change:
 
 - `.claude/skills/aistudy-mcp-access/SKILL.md`
 - `.claude/skills/aistudy-mcp-access/references/index.md`
+- `.claude/skills/aistudy-mcp-access/references/claude-code.md`
 - `.claude/skills/aistudy-mcp-access/references/connection.md`
 - `.claude/skills/aistudy-mcp-access/references/tool-index.md`
 - `.claude/skills/aistudy-mcp-access/references/workflows.md`
@@ -53,6 +54,7 @@ node scripts\qa\validate-error-codes.mjs
 - Do Windows paths, UNC paths, tool/field names, underscore identifiers, IDs, compact refs, JSON, switches, and script names round-trip exactly?
 - Do bounded document reads return `complete` plus mandatory continuation calls, and does `documentMode: "full"` fail atomically above its cap?
 - Does PowerShell documentation prefer `--args-stdin`/`--args-file` for complex JSON?
+- Does Claude Code setup keep bearer tokens outside the Skill and repository, verify the server with `claude mcp list`/`/mcp`, and avoid one-process-per-call helpers?
 - Does `mcp_get_started` expose effective tool/course/node edit allowlists and the honest RAG status?
 - Does `write_node_document` still refuse accidental overwrite?
 - Do human docs and the skill say the same first-use order?

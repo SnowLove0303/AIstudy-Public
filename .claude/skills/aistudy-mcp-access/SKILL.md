@@ -1,74 +1,88 @@
 ---
 name: aistudy-mcp-access
-description: Use when Codex, Claude Code, Cursor, or another AI assistant needs to connect to AIstudy MCP over local stdio, HTTP, or Tailscale LAN; read/search AIstudy knowledge bases, operate mind maps or node documents, open fixed Chrome ports, or update the AIstudy MCP skill/docs after MCP tools, permissions, or connection behavior changes.
+description: Connect Claude Code or another AI assistant to AIstudy MCP and safely read, search, or edit knowledge bases, mind maps, and node documents. Use for AIstudy MCP setup, compact aistudy:// refs, complete long-document reads, Chinese document formatting, version-safe writes, permission diagnosis, or MCP workflow maintenance.
 ---
 
 # AIstudy MCP Access
 
-## Core Rule
+## Non-Negotiable Contract
 
-Treat AIstudy MCP as a full-library knowledge system, not as the user's currently selected UI page. Always discover the target first, then read, then edit only with explicit permission.
+- Treat AIstudy MCP as a full-library system. Never infer the target from the currently visible AIstudy page.
+- A compact `aistudy://node/...` ref is a valid target input. Otherwise resolve an exact knowledge base and node before reading or editing.
+- Start read-only. Edit only when the user explicitly requests a write and the effective MCP policy allows that exact tool, course, and node.
+- Never treat truncated text as complete, a successful document save as RAG synchronization, or a generic stored title as the effective node-document title.
+- Preserve Windows/UNC paths, tool names, field names, IDs, refs, JSON, command switches, scripts, code, and formulas exactly.
 
 ## Reference Index
 
 Read only the reference needed for the current task:
 
+- `references/claude-code.md`: install the Skill and connect Claude Code without storing credentials in it.
 - `references/index.md`: canonical file map, maintenance ownership, and update order.
 - `references/connection.md`: HTTP/Tailscale and local stdio connection examples.
 - `references/tool-index.md`: current MCP tool groups, permission model, and safety notes.
 - `references/workflows.md`: standard read, search, edit, document, locator, and Chrome-port workflows.
 - `references/sync-checklist.md`: required checklist whenever MCP tools, permissions, prompts, or docs change.
 
-For ordinary MCP use, start with `connection.md` only if connection details are missing, then `workflows.md`. For tool availability or permissions, read `tool-index.md`. For development work that changes MCP behavior, read `sync-checklist.md` before editing.
+For Claude Code setup, read `claude-code.md`. For an already connected client, read `workflows.md`; add `tool-index.md` only when schemas or permissions matter. For MCP development, read `sync-checklist.md` before editing.
 
-## First Use
+## Choose The Lowest-Cost Path
 
-1. Collect the connection shape.
-   - HTTP/Tailscale: MCP URL, optional API URL, `Authorization: Bearer ...`.
-   - Local stdio: server script path, data root, app root, and edit flag.
-   - Important: `scripts/mcp/aistudy-mcp-server.mjs` uses line-delimited JSON-RPC on stdio: write one JSON object plus `\n`, then read one JSON object per line. Do not use `Content-Length` MCP framing for this local script.
-   - For ad-hoc local reads, prefer `node scripts/mcp/call-aistudy-mcp.mjs --ref "aistudy://node/..."` instead of writing a temporary wrapper.
-   - In PowerShell, pass complex argument objects through `ConvertTo-Json | ... --args-stdin`, or store them in an F-drive JSON file and use `--args-file`. Do not rely on native-command quote preservation for `--args-json`.
-   - For multiple local calls, use `--session` and send one `{ "tool", "arguments" }` JSON object per input line. This keeps one Node process and MySQL pool alive.
-2. Start read-only.
-   - Call `mcp_get_started`.
-   - Call `read_courses`.
-   - Use `mcp_resolve_target` before reading or editing a specific knowledge base.
-3. Read before editing.
-   - If AIstudy copied a compact node ref such as `aistudy://node/c4fc3394/ba7672d3?map=mindmap_97c1`, call `read_node_context({ ref })` for lightweight metadata, or add `documentMode: "text"` when body text is needed.
-   - Use exact `courseId`.
-   - For node documents, use exact `nodeId`.
-   - After every edit, re-read the affected course, node, or document.
+1. Probe once per MCP session with `mcp_get_started`; do not repeat health and library discovery before every tool call.
+2. If a compact ref exists:
+   - Metadata/path only: `read_node_context({ ref, documentMode: "none" })`.
+   - Body needed: `read_node_context({ ref, documentMode: "text" })`.
+   - One document only: `read_node_document({ ref, mode: "text", offset: 0 })`.
+3. If no compact ref exists:
+   - `read_courses` once, then `mcp_resolve_target({ courseName, nodeQuery })`.
+   - Do not continue while the result is empty or ambiguous.
+4. Request descendants, full document text, or editor snapshots only when the task requires them.
+5. For multiple helper calls, use `--session`; normal Claude Code MCP connections already keep a session alive.
 
-## Safety Defaults
+## Read Completion
 
-- Do not invent `courseId`, `mindMapId`, `nodeId`, tokens, or local paths.
-- Do not infer the MCP target from the visible AIstudy UI selection.
-- `mcp_resolve_target` requires `ref`, `courseId`, `courseName`, or `nodeQuery`; empty resolution is an error.
-- `read_current_mindmap`, `search_nodes`, and `list_node_documents` require `courseId`. Pass `scope: "all"` only for an intentional cross-library operation.
-- Explicit `courseId`, `mindMapId`, and `nodeId` arguments are full IDs. Short prefixes are supported only inside a compact node ref and must resolve uniquely.
-- Keep remote endpoints read-only until the user explicitly allows edits and AIstudy settings expose the relevant permission group.
-- Local/stdio editing may additionally restrict actions, courses, and nodes with `AISTUDY_MCP_ALLOWED_EDIT_TOOLS`, `AISTUDY_MCP_ALLOWED_COURSE_IDS`, and `AISTUDY_MCP_ALLOWED_NODE_IDS`. `mcp_get_started.safety.editPolicy` is the effective policy source.
-- Prefer append/style-specific tools over whole-document replacement.
-- Use destructive tools only after explicit user confirmation.
+- `read_node_document({ mode: "text" })`: continue with the exact `requiredNextCall` until `complete: true`.
+- `read_node_context({ documentMode: "text" })`: execute every `completion.requiredNextCalls` entry until `completion.complete: true`.
+- `documentMode: "full"` is atomic but bounded. If it exceeds the aggregate safety cap, narrow the node range or page documents individually.
+- Use `mode: "snapshot"` only when editor JSON is required for an edit. Use `mode: "audit"` only for extraction/integrity diagnosis.
+- If a response is truncated, ambiguous, or says a continuation is required, do not summarize it as a complete document.
 
-## Document Editing Rules
+## Version-Safe Editing
 
-- The node name is already rendered as the document heading. Do not repeat it in the body unless the content has a distinct article title; use `# 标题` only for that explicit article title.
-- Use Chinese article hierarchy in text input: `一、` for the first level, `（一）` for the second, `1.` for the third, and `（1）` for the fourth. Use `> ` for quotations, `字段：内容` for labels, and normal bullet or numbered lists where appropriate.
-- Put one natural body paragraph on each line. Blank input lines may mark paragraph boundaries, but AIstudy renders paragraph spacing instead of visible blank rows.
-- New text written or appended through MCP receives Chinese heading/body fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent. Safe Chinese-English spacing and Chinese punctuation are normalized while URLs, Windows paths, email addresses, inline/fenced code, formulas, tree indentation, and list markers are protected.
-- MCP tool names, field names, IDs, compact refs, JSON, command switches, script names, Windows paths, and UNC paths are exact-copy literals. Never accept Unicode subscript/superscript rewrites of these tokens.
-- Use `write_node_document` only for new content or explicit whole-document replacement with `replaceExisting: true`.
-- Read `currentSnapshotId` first and pass it as `expectedSnapshotId` for replacement, append, formatting, or style changes. A stale version fails with `DOCUMENT_VERSION_CONFLICT`.
-- Use `append_node_document` for additions.
-- Do not write raw Mermaid or Markdown fenced blocks into node documents. Use mind map tools for actual mind map structure; if a diagram must appear in a document, convert it to headings, field labels, and stable numbered outlines instead of whitespace-dependent trees.
-- For math content, use standard symbols or readable formula text such as `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, `lim_{n→∞}`, and `|x_n-a| < ε`; do not leave degraded tokens such as `epsilon`, `infinity`, `->`, or `lim_{n->infinity}` in the final document text.
-- Use `format_node_document` only for Chinese-article style cleanup that preserves every editor element `value` exactly. Because it is text-preserving, it does not insert missing first-line indent characters.
-- Use `update_node_document_style` only for simple full-document style changes.
-- Do not call `write_node_document` merely to fix formatting.
-- Treat `read_node_context` and `read_node_document` as complete only when `completion.complete`/`complete` is true. Execute every `requiredNextCalls`/`requiredNextCall` entry after a bounded read. Use `documentMode: "full"` only for an explicit atomic full-text read within the aggregate safety cap.
-- A document save is not proof of RAG synchronization. Check `ragIndex`; `status: "not_configured"` means AIstudy Public has no verifiable vector-index contract and the content must not be described as indexed.
+1. Resolve the exact `courseId`, `mindMapId` when needed, and `nodeId`. Explicit ID fields require full IDs; short prefixes are valid only inside a uniquely resolvable compact ref.
+2. Read the latest document and capture `currentSnapshotId`.
+3. Choose the narrowest tool:
+   - Add content: `append_node_document`.
+   - Preserve text and normalize Chinese article styling: `format_node_document`.
+   - Change only global font/color/emphasis: `update_node_document_style`.
+   - Create content, or explicitly replace the whole document: `write_node_document`.
+4. Pass the latest `currentSnapshotId` as `expectedSnapshotId` for every existing-document write. Never retry `DOCUMENT_VERSION_CONFLICT` blindly; re-read, reconcile, then write once.
+5. Use `replaceExisting: true` only for an explicitly approved whole-document replacement.
+6. Re-read lightweight text/metadata after writing. Compare critical literals and inspect `currentSnapshotId`, `contentHash`, `textLength`, and `ragIndex`.
+
+## Chinese Document Input
+
+- The node name is already the document heading. Do not duplicate it; use `# 标题` only for a distinct article title.
+- Use `一、` / `（一）` / `1.` / `（1）` for four heading levels, `> ` for quotations, `字段：内容` for labels, and one natural paragraph per line.
+- Blank input lines mark paragraph boundaries; do not create spacing with repeated empty rows or embedded `\n\n`.
+- New text receives Chinese fonts, justified body alignment, proportional line spacing, and a two-ideographic-space first-line indent.
+- Do not use `write_node_document` merely to repair styling. `format_node_document` is value-preserving and cannot insert missing indent characters or restructure paragraphs.
+- Use mind-map tools for real diagrams. Do not store raw Mermaid or whitespace-dependent trees as a substitute for a mind map.
+
+## Exactness And Status Checks
+
+- Treat technical literals as immutable. After a write/read round trip, reject changes such as lost `\`, altered `_`, Unicode subscript/superscript conversion, modified JSON, or changed IDs.
+- Use standard mathematical symbols and readable formulas such as `ε`, `δ`, `∞`, `→`, `≤`, `≥`, `x_n`, `x^2`, and `lim_{n→∞}`.
+- The effective document `title` may fall back from generic `storedTitle` to `nodeTitle`; inspect `titleSource` when title origin matters.
+- `ragIndex.status: "not_configured"` means the snapshot is saved but no vector-index synchronization is verifiable.
+
+## Connection And Permission Rules
+
+- Do not invent tokens, IDs, or local paths, and never store a bearer token in this Skill.
+- `read_current_mindmap`, `search_nodes`, and `list_node_documents` require `courseId`; use `scope: "all"` only for an intentional cross-library operation.
+- In PowerShell helper calls, send complex objects through `ConvertTo-Json | ... --args-stdin` or `--args-file`; do not depend on `--args-json` quote preservation.
+- Local editing can be narrowed with `AISTUDY_MCP_ALLOWED_EDIT_TOOLS`, `AISTUDY_MCP_ALLOWED_COURSE_IDS`, and `AISTUDY_MCP_ALLOWED_NODE_IDS`. Trust `mcp_get_started.safety.editPolicy` as the effective policy.
+- Destructive tools require explicit confirmation for the exact target.
 
 ## When MCP Changes
 
