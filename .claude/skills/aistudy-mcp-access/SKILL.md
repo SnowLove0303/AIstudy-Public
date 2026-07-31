@@ -17,6 +17,7 @@ description: Connect Claude Code or another AI assistant to AIstudy MCP and safe
 
 Read only the reference needed for the current task:
 
+- `references/codex.md`: install or repair the Skill and local stdio MCP connection for Codex.
 - `references/claude-code.md`: install the Skill and connect Claude Code without storing credentials in it.
 - `references/index.md`: canonical file map, maintenance ownership, and update order.
 - `references/connection.md`: HTTP/Tailscale and local stdio connection examples.
@@ -24,7 +25,7 @@ Read only the reference needed for the current task:
 - `references/workflows.md`: standard read, search, edit, document, locator, and Chrome-port workflows.
 - `references/sync-checklist.md`: required checklist whenever MCP tools, permissions, prompts, or docs change.
 
-For Claude Code setup, read `claude-code.md`. For an already connected client, read `workflows.md`; add `tool-index.md` only when schemas or permissions matter. For MCP development, read `sync-checklist.md` before editing.
+For Codex setup or repair, read `codex.md`. For Claude Code setup, read `claude-code.md`. For an already connected client, read `workflows.md`; add `tool-index.md` only when schemas or permissions matter. For MCP development, read `sync-checklist.md` before editing.
 
 ## Choose The Lowest-Cost Path
 

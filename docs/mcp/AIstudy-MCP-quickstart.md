@@ -26,6 +26,42 @@ Chrome 端口能力只负责打开页面，不负责网页内点击、输入或�
 
 ## 客户端配置
 
+### Codex CLI（本机推荐）
+
+Codex 的 Skill 与 MCP 注册是两层能力：Skill 负责指导工具选择和安全流程，MCP 注册负责真正提供 `aistudy` 工具。两者必须同时存在。
+
+项目 Skill 是版本化事实源：
+
+```text
+F:\XIANGMU\AIstudy-public\.claude\skills\aistudy-mcp-access
+```
+
+本机 Codex 加载目录是：
+
+```text
+F:\AIAPP\Codex\.codex-home\skills\aistudy-mcp-access
+```
+
+先把旧的加载目录备份到 F 盘，再将完整项目 Skill 同步过去。随后用 Codex CLI 注册只读 MCP：
+
+```powershell
+$env:CODEX_HOME = "F:\AIAPP\Codex\.codex-home"
+
+codex mcp add `
+  --env AISTUDY_PUBLIC_DATA_ROOT=F:\XIANGMU\AIstudy-public\.runtime `
+  --env AISTUDY_APP_ROOT=F:\XIANGMU\AIstudy-public `
+  --env AISTUDY_MCP_ALLOW_EDIT=0 `
+  aistudy -- `
+  E:\MorenAnzhuangLujing\Huangjingdajian\Nodejs\node.exe `
+  F:\XIANGMU\AIstudy-public\scripts\mcp\aistudy-mcp-server.mjs
+```
+
+使用 `codex mcp add`、`codex mcp list` 和 `codex mcp remove` 管理注册，不要为普通接入直接修改 Codex TOML。注册或更新 Skill 后要新开 Codex 任务，旧任务不会自动加载新的工具和指令。
+
+人工验收流程见 `AIstudy-MCP-Codex-manual-test.md`。
+
+### 其他客户端
+
 支持 `mcpServers` JSON 的客户端可以使用这个结构：
 
 ```json

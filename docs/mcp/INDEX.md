@@ -4,6 +4,7 @@
 
 - Agent 接入入口：`.claude/skills/aistudy-mcp-access/SKILL.md`
 - Skill 索引：`.claude/skills/aistudy-mcp-access/references/index.md`
+- Codex 接入与修复：`.claude/skills/aistudy-mcp-access/references/codex.md`
 - 工具清单：`.claude/skills/aistudy-mcp-access/references/tool-index.md`
 - 同步检查表：`.claude/skills/aistudy-mcp-access/references/sync-checklist.md`
 
@@ -13,6 +14,7 @@
 
 - `AIstudy-MCP-access-skill.md`：完整接入说明，可直接发给另一台 Codex/Claude Code。
 - `AIstudy-MCP-quickstart.md`：新手快速接入。
+- `AIstudy-MCP-Codex-manual-test.md`：Codex + Skill + MCP 真实路径人工验收。
 - `AIstudy-MCP-tailscale-access.md`：Tailscale 内网访问说明。
 - `AIstudy-MCP-module-boundary.md`：MCP 模块边界和开发约束。
 

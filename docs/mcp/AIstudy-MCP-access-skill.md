@@ -38,6 +38,17 @@ node F:\XIANGMU\AIstudy-public\scripts\mcp\call-aistudy-mcp.mjs --ref "aistudy:/
 
 PowerShell complex objects must use `ConvertTo-Json -Compress | ... --args-stdin` or a UTF-8 JSON file with `--args-file`. Do not depend on inline `--args-json` quoting. The three JSON input channels are mutually exclusive, and malformed input stops before MCP receives a tool call.
 
+## Codex 本机接入
+
+Codex 必须同时具备两层配置：
+
+- 将项目 Skill `.claude/skills/aistudy-mcp-access` 完整同步到 `F:\AIAPP\Codex\.codex-home\skills\aistudy-mcp-access`。
+- 使用 `codex mcp add` 注册本地 stdio 服务，并保持 `AISTUDY_MCP_ALLOW_EDIT=0`。
+
+项目 Skill 是版本化事实源；全局 Skill 是 Codex 实际加载的副本。同步前先把旧副本备份到 F 盘，同步后比较文件哈希并新开 Codex 任务。完整命令、验证与回滚见 `.claude/skills/aistudy-mcp-access/references/codex.md`，人工验收见 `AIstudy-MCP-Codex-manual-test.md`。
+
+普通接入使用 `codex mcp add`、`codex mcp list` 和 `codex mcp remove`，不要直接修改 Codex TOML。
+
 ## 给 Codex/Claude Code 的 Skill 提示
 
 ```text

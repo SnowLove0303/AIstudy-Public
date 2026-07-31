@@ -19,6 +19,7 @@ Update this skill when any of these change:
 
 - `.claude/skills/aistudy-mcp-access/SKILL.md`
 - `.claude/skills/aistudy-mcp-access/references/index.md`
+- `.claude/skills/aistudy-mcp-access/references/codex.md`
 - `.claude/skills/aistudy-mcp-access/references/claude-code.md`
 - `.claude/skills/aistudy-mcp-access/references/connection.md`
 - `.claude/skills/aistudy-mcp-access/references/tool-index.md`
@@ -35,7 +36,7 @@ Update this skill when any of these change:
 Run:
 
 ```powershell
-python C:\Users\52882\.codex\skills\.system\skill-creator\scripts\quick_validate.py F:\XIANGMU\AIstudy-public\.claude\skills\aistudy-mcp-access
+python F:\AIAPP\Codex\.codex-home\skills\.system\skill-creator\scripts\quick_validate.py F:\XIANGMU\AIstudy-public\.claude\skills\aistudy-mcp-access
 ```
 
 For code changes, also run the project checks that match the change:
@@ -54,6 +55,7 @@ node scripts\qa\validate-error-codes.mjs
 - Do Windows paths, UNC paths, tool/field names, underscore identifiers, IDs, compact refs, JSON, switches, and script names round-trip exactly?
 - Do bounded document reads return `complete` plus mandatory continuation calls, and does `documentMode: "full"` fail atomically above its cap?
 - Does PowerShell documentation prefer `--args-stdin`/`--args-file` for complex JSON?
+- Does Codex setup register the MCP through `codex mcp add`, keep the default read-only, verify with a fresh Codex process, and avoid direct TOML edits?
 - Does Claude Code setup keep bearer tokens outside the Skill and repository, verify the server with `claude mcp list`/`/mcp`, and avoid one-process-per-call helpers?
 - Does `mcp_get_started` expose effective tool/course/node edit allowlists and the honest RAG status?
 - Does `write_node_document` still refuse accidental overwrite?
