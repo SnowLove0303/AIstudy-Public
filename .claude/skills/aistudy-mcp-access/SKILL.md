@@ -83,6 +83,8 @@ For Codex setup or repair, read `codex.md`. For Claude Code setup, read `claude-
 - `read_current_mindmap`, `search_nodes`, and `list_node_documents` require `courseId`; use `scope: "all"` only for an intentional cross-library operation.
 - In PowerShell helper calls, send complex objects through `ConvertTo-Json | ... --args-stdin` or `--args-file`; do not depend on `--args-json` quote preservation.
 - Local editing can be narrowed with `AISTUDY_MCP_ALLOWED_EDIT_TOOLS`, `AISTUDY_MCP_ALLOWED_COURSE_IDS`, and `AISTUDY_MCP_ALLOWED_NODE_IDS`. Trust `mcp_get_started.safety.editPolicy` as the effective policy.
+- Treat client configuration as desired state, not proof of a running server's policy. After changing edit environment variables or remote permission groups, reconnect the exact MCP connection, start a fresh task, or restart the client before writing.
+- Verify permissions by calling `mcp_get_started` through the same client session that will perform the write. A helper process or `codex mcp get` can diagnose configuration, but cannot prove that an older long-running stdio process reloaded it.
 - Destructive tools require explicit confirmation for the exact target.
 
 ## When MCP Changes

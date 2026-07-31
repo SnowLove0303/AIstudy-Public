@@ -163,7 +163,7 @@ Authorization: Bearer ...
 }
 ```
 
-`AISTUDY_MCP_ALLOW_EDIT=1` 只在明确要编辑时开启。
+`AISTUDY_MCP_ALLOW_EDIT=1` 只在明确要编辑时开启。修改后必须重新连接 MCP、新建任务或重启客户端；已经运行的 stdio 进程不会热更新环境变量。最终以实际写入任务调用 `mcp_get_started` 返回的 `safety.editPolicy` 为准，不能用静态配置或一次性辅助进程代替。
 
 Local stdio protocol note: `scripts/mcp/aistudy-mcp-server.mjs` reads and writes one JSON-RPC object per line. Do not frame local stdio messages with `Content-Length`.
 
@@ -322,7 +322,7 @@ MCP 文档的 `title` 为有效标题：通用“节点文档”会回退到节�
 
 - TCP 超时：AIstudy 没开、内网访问没开、Tailscale 没在线，或 `6188` 没暴露成功。
 - 401/403：token 错了，或请求头没有带 `Authorization`。
-- 能读不能写：远程编辑权限没开，这是默认安全状态。
+- 能读不能写：先检查当前连接的 `mcp_get_started.safety.editPolicy`。静态配置已开启但 `enabled=false` 时，说明当前任务仍持有旧进程，需要重新连接、新建任务或重启客户端。
 - `MCP_EDIT_POLICY_DENIED`：本地 stdio 精确编辑白名单未包含工具、知识库或节点，或请求缺少已受限的目标。
 - `dataRootExists=false`：本地数据目录路径错了。
 - `MCP requires an explicit knowledge base`：编辑调用没有传 `courseId`。

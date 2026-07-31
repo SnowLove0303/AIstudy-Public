@@ -58,6 +58,7 @@ node scripts\qa\validate-error-codes.mjs
 - Does Codex setup register the MCP through `codex mcp add`, keep the default read-only, verify with a fresh Codex process, and avoid direct TOML edits?
 - Does Claude Code setup keep bearer tokens outside the Skill and repository, verify the server with `claude mcp list`/`/mcp`, and avoid one-process-per-call helpers?
 - Does `mcp_get_started` expose effective tool/course/node edit allowlists and the honest RAG status?
+- Do setup and troubleshooting instructions distinguish saved configuration from the effective policy of a long-running MCP process, require reconnect/restart after permission changes, and verify through the same client session that will write?
 - Does `write_node_document` still refuse accidental overwrite?
 - Do human docs and the skill say the same first-use order?
 - Does `agents/openai.yaml` still describe the skill accurately?

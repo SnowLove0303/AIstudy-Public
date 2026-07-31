@@ -72,6 +72,8 @@ AISTUDY_MCP_ALLOWED_COURSE_IDS=<full-course-id>
 AISTUDY_MCP_ALLOWED_NODE_IDS=<full-node-id>
 ```
 
+Changing `.mcp.json` or its environment block does not update an already running stdio server. After any permission change, disconnect and reconnect `aistudy` from `/mcp`, or restart Claude Code. Call `mcp_get_started` through the reconnected session and trust its `safety.editPolicy`; `claude mcp get`, the JSON file, and a one-shot helper show saved or diagnostic state only.
+
 ## Verify Claude Code
 
 Run:

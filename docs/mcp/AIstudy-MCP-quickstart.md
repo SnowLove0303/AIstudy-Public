@@ -306,13 +306,21 @@ AISTUDY_MCP_ALLOWED_NODE_IDS=node_xxx
 
 只要配置了任一范围白名单，缺少目标或目标不在白名单内都会以 `MCP_EDIT_POLICY_DENIED` 拒绝，不会回退成环境级全权限。`mcp_get_started.safety.editPolicy` 会返回当前实际生效的策略。
 
+### 权限配置变更如何生效
+
+本地 stdio MCP 在进程启动时读取环境变量。把配置文件或 MCP 注册中的 `AISTUDY_MCP_ALLOW_EDIT` 改成 `1`，不会改变已经运行的 `aistudy-mcp-server.mjs` 进程。
+
+修改权限后必须新建 Codex 任务、从 Claude Code `/mcp` 重新连接，或重启对应客户端。随后从真正要执行写入的同一个任务调用 `mcp_get_started`，只有 `safety.editPolicy.enabled=true` 且工具、知识库、节点均未被限制时才能继续。`codex mcp get`、`claude mcp get` 和一次性辅助脚本只能证明保存配置或新诊断进程，不能证明旧任务已经重新加载权限。
+
+如需检查残留进程，只匹配命令行包含完整 `aistudy-mcp-server.mjs` 路径的 `node.exe`；禁止批量结束所有 Node 进程。优先使用新任务或客户端正常重启，因为单独结束 stdio 子进程可能让原任务保持断连。
+
 ## 排障
 
 - `dataRootExists=false`：数据目录路径填错了。
 - `dataRootExists=false` 但 `mysql=true`：MCP 服务已启动，数据库能连上，但当前配置的数据目录不是 AIstudy 正在使用的目录。
 - `mysql=false` 或启动报连接错误：MySQL 没启动，或配置指向了错误数据库。
 - `MCP requires an explicit knowledge base.`：写入没有传入 `courseId`。MCP 不依赖客户端当前选中项，编辑必须明确目标知识库。
-- `MCP edit calls are disabled by configuration.`：编辑权限没有打开，这是默认安全行为。
+- `MCP edit calls are disabled by configuration.`：先从当前任务调用 `mcp_get_started`。若 `editPolicy.enabled=false`，当前运行进程仍是只读；即使静态配置已是 `1`，也要重连 MCP、新建任务或重启客户端后再验证。
 - `MCP_EDIT_POLICY_DENIED`：工具、知识库或节点不在当前精确编辑白名单内，或配置了范围白名单但请求没有携带目标。
 - `resolve_course_locator` 返回的 `locatorPath`：这是给外部 Codex 使用的本地定位文件路径，里面包含数据目录、固定数据库名、固定表名和知识库 ID；其中数据库名和表名只是边界元数据，不代表公开版运行时支持覆盖库名或表名。
 - `Unknown tool: copy_config`：当前连接的是独立 `scripts/mcp` 服务，复制接入配置请在 AIstudy 设置页里点按钮。

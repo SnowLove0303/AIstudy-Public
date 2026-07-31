@@ -57,6 +57,19 @@ codex mcp add `
 
 Use `codex mcp add` and `codex mcp remove`; do not hand-edit Codex TOML for ordinary registration changes.
 
+## Activate A Changed Permission Policy
+
+Codex keeps one AIstudy stdio process alive for each task. Changing the MCP registration updates the desired configuration for newly started processes; it does not rewrite the environment of an already running `aistudy-mcp-server.mjs` process.
+
+After changing `AISTUDY_MCP_ALLOW_EDIT` or any edit allowlist:
+
+1. Run `codex mcp get aistudy --json` only to confirm the saved registration.
+2. Start a fresh Codex task, or restart Codex Desktop when several old tasks must be refreshed together.
+3. Call `mcp_get_started` from that exact task and trust only `safety.editPolicy` as the effective policy.
+4. Continue to the write only when `enabled` is true and the requested tool, course, and node are inside the returned restrictions.
+
+Do not use `call-aistudy-mcp.mjs` as proof that an existing Codex task reloaded its policy. It starts a separate process with its own environment. If process inspection is necessary, match both `node.exe` and the full `aistudy-mcp-server.mjs` path; never stop every Node process. Stopping a task's stdio child may leave that task disconnected, so prefer a fresh task or a controlled client restart.
+
 ## Verify The Real Codex Path
 
 1. Run `codex mcp list` and confirm `aistudy` is enabled.
@@ -66,7 +79,7 @@ Use `codex mcp add` and `codex mcp remove`; do not hand-edit Codex TOML for ordi
    - `health.mysql: true`
    - `health.dataRootExists: true`
    - `safety.defaultMode: read-only`
-   - `safety.editPolicy.enabled: false`
+   - `safety.editPolicy.enabled` matches the intended registration.
 5. Perform one targeted read using a real compact `aistudy://node/...` ref. Do not use an intentional database write as a connection test.
 
 Codex keeps the stdio server alive for the task. Do not wrap each tool call in a new `call-aistudy-mcp.mjs` process; that helper is for diagnostics and scripted batches.
@@ -77,7 +90,8 @@ Codex keeps the stdio server alive for the task. Do not wrap each tool call in a
 - MCP is registered but calls fail immediately: verify the Node path, server script, runtime data path, and MySQL health.
 - Calls work but target selection or document behavior is wrong: compare the loaded Skill against the project source and refresh stale files.
 - A helper call works but Codex does not: test from a fresh Codex process; helper success proves the server, not Codex registration.
-- Editing is denied: this is the safe default. Do not enable editing merely to prove connectivity.
+- `codex mcp get` shows edit enabled but the task returns `MCP edit calls are disabled by configuration.`: the task still owns an older stdio process. Start a fresh task or restart Codex Desktop, then verify through that task's `mcp_get_started`.
+- Editing is denied and the current task reports `editPolicy.enabled: false`: this is the effective safe state. Do not write until the user authorizes editing and the restarted connection reports the intended policy.
 
 ## Rollback
 

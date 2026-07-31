@@ -68,6 +68,10 @@ AISTUDY_MCP_ALLOWED_NODE_IDS=<full-node-id>
 
 An unset allowlist is unrestricted within the global edit switch. A configured allowlist fails closed when the required target is missing.
 
+### Permission activation lifecycle
+
+Environment variables are captured when a local stdio server starts. Editing a client config does not change an already running server process. Reconnect the named MCP server, start a fresh task, or restart the client, then call `mcp_get_started` through the same session that will write. Treat its `safety.editPolicy` as effective state. Treat configuration files, `codex mcp get`, `claude mcp get`, and one-shot helper calls only as desired-state or diagnostic evidence.
+
 ### Local stdio transport rule
 
 `scripts/mcp/aistudy-mcp-server.mjs` is line-delimited JSON-RPC over stdio. Send exactly one JSON-RPC object followed by `\n`, and read responses as one JSON object per line.
