@@ -8107,3 +8107,137 @@ h3 {
   border-color: #b9d4f5;
   box-shadow: 0 0 0 3px rgba(31, 111, 209, 0.08), 0 10px 28px rgba(15, 23, 42, 0.05);
 }
+
+/* StudyPower Obsidian Cyber-Glass: Standalone Node Document Window */
+.standalone-doc-window {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sp-surface-bg, #181a1f);
+  color: var(--text-primary, #e2e8f0);
+}
+.standalone-doc-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 14px;
+  background: #1e222b;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.standalone-doc-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f1f5f9;
+  min-width: 0;
+}
+.standalone-doc-title span {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.standalone-doc-title-badge {
+  color: #10b981;
+  font-family: var(--sp-font-mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 1px 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.standalone-doc-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.standalone-doc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.standalone-doc-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.standalone-doc-btn:active {
+  transform: scale(0.98);
+}
+.standalone-doc-btn.active {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: #10b981;
+  color: #10b981;
+}
+.standalone-doc-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+.standalone-doc-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.standalone-doc-editor-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+}
+.standalone-doc-format-drawer {
+  width: 290px;
+  height: 100%;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  background: #181a1f;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.document-code-block-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 6px;
+  padding: 0 8px;
+  height: 28px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.document-code-block-button:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: #10b981;
+}
+.document-code-block-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.document-code-block-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

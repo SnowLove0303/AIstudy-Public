@@ -256,10 +256,13 @@ Set-Location $projectRoot
 $npmCache = Join-Path $cacheRoot "npm"
 $electronCache = Join-Path $cacheRoot "electron"
 $electronBuilderCache = Join-Path $cacheRoot "electron-builder"
-New-Item -ItemType Directory -Force -Path $npmCache, $electronCache, $electronBuilderCache | Out-Null
+$buildTemp = Join-Path $cacheRoot "temp"
+New-Item -ItemType Directory -Force -Path $npmCache, $electronCache, $electronBuilderCache, $buildTemp | Out-Null
 $env:npm_config_cache = $npmCache
 $env:electron_config_cache = $electronCache
 $env:ELECTRON_BUILDER_CACHE = $electronBuilderCache
+$env:TEMP = $buildTemp
+$env:TMP = $buildTemp
 
 $packageJson = Get-Content -LiteralPath (Join-Path $projectRoot "package.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $appVersion = [string] $packageJson.version

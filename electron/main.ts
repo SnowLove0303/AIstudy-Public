@@ -11365,6 +11365,7 @@ function createMainWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
     closeTextbookPdfWindows();
+    closeNodeDocumentWindow();
   });
 
   if (isDev) {
@@ -11935,6 +11936,142 @@ async function openTextbookPdfWindow(input: unknown) {
   return true;
 }
 
+let nodeDocumentWindow: BrowserWindow | null = null;
+let currentNodeDocumentContext: { courseId: string; mindMapId: string; nodeId: string; nodeTitle: string } | null = null;
+
+function normalizeString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function closeNodeDocumentWindow() {
+  if (nodeDocumentWindow && !nodeDocumentWindow.isDestroyed()) {
+    nodeDocumentWindow.destroy();
+  }
+  nodeDocumentWindow = null;
+  currentNodeDocumentContext = null;
+}
+
+async function openNodeDocumentWindow(input: unknown) {
+  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const request = {
+    courseId: normalizeString(raw.courseId),
+    mindMapId: normalizeString(raw.mindMapId),
+    nodeId: normalizeString(raw.nodeId),
+    nodeTitle: normalizeString(raw.nodeTitle) || "节点文档"
+  };
+  if (!request.courseId || !request.mindMapId || !request.nodeId) {
+    throw new Error("请选择有效的导图节点。");
+  }
+  if (nodeDocumentWindow && !nodeDocumentWindow.isDestroyed()) {
+    currentNodeDocumentContext = request;
+    nodeDocumentWindow.setTitle(`${request.nodeTitle} - 节点文档 - AIstudy`);
+    nodeDocumentWindow.webContents.send("node-document:switch", request);
+    if (nodeDocumentWindow.isMinimized()) nodeDocumentWindow.restore();
+    if (!nodeDocumentWindow.isVisible()) nodeDocumentWindow.show();
+    nodeDocumentWindow.focus();
+    return true;
+  }
+
+  currentNodeDocumentContext = request;
+  nodeDocumentWindow = new BrowserWindow({
+    width: 1040,
+    height: 880,
+    minWidth: 800,
+    minHeight: 600,
+    frame: true,
+    autoHideMenuBar: true,
+    show: false,
+    backgroundColor: "#181a1f",
+    title: `${request.nodeTitle} - 节点文档 - AIstudy`,
+    icon: path.join(__dirname, "../build/icon.ico"),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+
+  let isDocDraining = false;
+  let canDocClose = false;
+  nodeDocumentWindow.on("close", (event) => {
+    if (canDocClose) return;
+    event.preventDefault();
+    if (isDocDraining) return;
+    isDocDraining = true;
+    requestRendererBeforeCloseDrain(nodeDocumentWindow!).finally(() => {
+      canDocClose = true;
+      if (nodeDocumentWindow && !nodeDocumentWindow.isDestroyed()) {
+        nodeDocumentWindow.close();
+      }
+    });
+  });
+
+  const destroyDocWindow = () => {
+    if (nodeDocumentWindow && !nodeDocumentWindow.isDestroyed()) {
+      nodeDocumentWindow.destroy();
+    }
+    nodeDocumentWindow = null;
+    currentNodeDocumentContext = null;
+  };
+
+  nodeDocumentWindow.once("ready-to-show", () => {
+    if (nodeDocumentWindow && !nodeDocumentWindow.isDestroyed()) {
+      nodeDocumentWindow.show();
+    }
+  });
+  nodeDocumentWindow.on("closed", () => {
+    nodeDocumentWindow = null;
+    currentNodeDocumentContext = null;
+  });
+  nodeDocumentWindow.on("unresponsive", destroyDocWindow);
+  nodeDocumentWindow.webContents.on("render-process-gone", destroyDocWindow);
+
+  const query = {
+    view: "node-document",
+    courseId: request.courseId,
+    mindMapId: request.mindMapId,
+    nodeId: request.nodeId,
+    nodeTitle: request.nodeTitle
+  };
+
+  if (isDev) {
+    const url = new URL(process.env.VITE_DEV_SERVER_URL!);
+    for (const [name, value] of Object.entries(query)) {
+      url.searchParams.set(name, value);
+    }
+    await nodeDocumentWindow.loadURL(url.toString()).catch((err) => {
+      destroyDocWindow();
+      throw err;
+    });
+  } else {
+    await nodeDocumentWindow.loadFile(path.join(__dirname, "../dist/index.html"), { query }).catch((err) => {
+      destroyDocWindow();
+      throw err;
+    });
+  }
+  return true;
+}
+
+function switchNodeDocumentIfOpen(input: unknown) {
+  if (nodeDocumentWindow && !nodeDocumentWindow.isDestroyed()) {
+    const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    const request = {
+      courseId: normalizeString(raw.courseId),
+      mindMapId: normalizeString(raw.mindMapId),
+      nodeId: normalizeString(raw.nodeId),
+      nodeTitle: normalizeString(raw.nodeTitle) || "节点文档"
+    };
+    if (request.courseId && request.mindMapId && request.nodeId) {
+      currentNodeDocumentContext = request;
+      nodeDocumentWindow.setTitle(`${request.nodeTitle} - 节点文档 - AIstudy`);
+      nodeDocumentWindow.webContents.send("node-document:switch", request);
+      return true;
+    }
+  }
+  return false;
+}
+
 if (process.argv.includes("--aistudy-mcp")) {
   void mcpController.startStdioServer();
 } else {
@@ -11963,6 +12100,7 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   closeTextbookPdfWindows();
+  closeNodeDocumentWindow();
   stopMcpEventBridge();
   void vocabularyCaptureService.stop();
   void mcpRemoteAccessController.close();
@@ -12068,6 +12206,23 @@ ipcMain.handle("knowledge-documents:save", withUserFacingError("knowledge-docume
 ipcMain.handle("knowledge-documents:export-docx", withUserFacingError("knowledge-documents:export-docx", "Word 文档导出没有完成，请稍后再试。", (event, request) => {
   const invokeEvent = event as IpcMainInvokeEvent;
   return exportKnowledgeDocumentDocx(BrowserWindow.fromWebContents(invokeEvent.sender), request);
+}));
+
+ipcMain.handle("knowledge-documents:open-window", withUserFacingError("knowledge-documents:open-window", "节点文档窗口没有打开。", (_event, request) => (
+  openNodeDocumentWindow(request)
+)));
+
+ipcMain.handle("knowledge-documents:switch-window-node", withUserFacingError("knowledge-documents:switch-window-node", "节点文档窗口切换没有完成。", (_event, request) => (
+  switchNodeDocumentIfOpen(request)
+)));
+
+ipcMain.handle("knowledge-documents:is-window-open", withUserFacingError("knowledge-documents:is-window-open", "节点文档窗口状态读取失败。", () => (
+  Boolean(nodeDocumentWindow && !nodeDocumentWindow.isDestroyed())
+)));
+
+ipcMain.handle("knowledge-documents:close-window", withUserFacingError("knowledge-documents:close-window", "节点文档窗口关闭失败。", () => {
+  closeNodeDocumentWindow();
+  return true;
 }));
 
 ipcMain.handle("knowledge-assets:choose-image", withUserFacingError("knowledge-assets:choose-image", "图片没有插入成功，请稍后再试。", (event, request) => (

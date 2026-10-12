@@ -1827,6 +1827,26 @@ export async function createCanvasDocumentEditor(
     insertTable: (rows, cols) => {
       runFormatCommand(() => editor.command.executeInsertTable(rows, cols));
     },
+    insertCodeBlock: (code?: string) => {
+      const ctx = editor.command.getRangeContext?.();
+      if (!ctx || ctx.isCollapsed) {
+        const rawText = code || "console.log('AIstudy Code');\n";
+        const elements = rawText.split("").map((char) => ({
+          value: char,
+          font: "Consolas, 'JetBrains Mono', monospace",
+          color: "#10b981",
+          highlight: "#1e293b",
+          size: 13
+        }));
+        runFormatCommand(() => editor.command.executeInsertElementList(elements as any));
+      } else {
+        runFormatCommand(() => {
+          editor.command.executeFont("Consolas, 'JetBrains Mono', monospace");
+          editor.command.executeColor("#10b981");
+          editor.command.executeHighlight("#1e293b");
+        });
+      }
+    },
     insertColumnBlock: (columns) => {
       runFormatCommand(() => applyColumnLayout(columns));
     },

@@ -133,12 +133,12 @@ function areDocumentFormatStatesEqual(left: KnowledgeDocumentFormatState, right:
   );
 }
 
-const SAVE_DEBOUNCE_MS = 900;
+const SAVE_DEBOUNCE_MS = 1500;
 const DOCUMENT_STORAGE_PREFIX = "aistudy:knowledge-document:v1:";
-const FONT_FAMILY_OPTIONS = ["Microsoft YaHei", "SimSun", "SimHei", "KaiTi", "Arial", "Times New Roman"];
+const FONT_FAMILY_OPTIONS = ["Microsoft YaHei", "SimSun", "SimHei", "KaiTi", "Arial", "Times New Roman", "JetBrains Mono", "Consolas"];
 const FONT_SIZE_OPTIONS = [10, 11, 12, 14, 16, 18, 20, 22, 24, 28, 32, 36, 48];
-const COLOR_OPTIONS = ["#1f2937", "#2563eb", "#0f766e", "#d97706", "#dc2626", "#7c3aed"];
-const HIGHLIGHT_OPTIONS = ["#fff2ac", "#dbeafe", "#dcfce7", "#fee2e2"];
+const COLOR_OPTIONS = ["#1f2937", "#2563eb", "#0f766e", "#d97706", "#dc2626", "#7c3aed", "#10b981"];
+const HIGHLIGHT_OPTIONS = ["#fff2ac", "#dbeafe", "#dcfce7", "#fee2e2", "#1e293b"];
 const TITLE_LEVEL_OPTIONS = [
   { value: "paragraph", label: "正文" },
   { value: "first", label: "标题 1" },
@@ -164,6 +164,11 @@ declare global {
       listStatuses: (request: StatusRequest) => Promise<KnowledgeDocumentStatus[]>;
       save: (input: KnowledgeDocumentSaveInput) => Promise<KnowledgeDocumentRecord>;
       exportDocx: (request: { title: string; snapshot: KnowledgeDocumentSnapshot }) => Promise<{ canceled: boolean; filePath: string }>;
+      openWindow?: (request: { courseId?: string; mindMapId?: string; nodeId?: string; nodeTitle?: string }) => Promise<{ success: boolean }>;
+      switchWindowNode?: (request: { courseId?: string; mindMapId?: string; nodeId?: string; nodeTitle?: string }) => Promise<{ success: boolean }>;
+      isWindowOpen?: () => Promise<boolean>;
+      closeWindow?: () => Promise<{ success: boolean }>;
+      onSwitchNode?: (callback: (target: { courseId?: string; mindMapId?: string; nodeId?: string; nodeTitle?: string }) => void) => () => void;
     };
     aistudyKnowledgeAssets?: {
       createGeneratedImage: (request: {

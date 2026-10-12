@@ -62,6 +62,7 @@ import {
 } from "./features/mindmap/MindMapWorkspace";
 import type { MindMapOutlineItem, MindMapSelectedNode } from "./features/mindmap/mindMapTypes";
 import { TextbookPdfWindow } from "./features/textbook/TextbookPdfWindow";
+import { NodeDocumentStandaloneWindow } from "./features/documents/NodeDocumentStandaloneWindow";
 import { VocabularyCapturePanel } from "./features/vocabulary/VocabularyCapturePanel";
 import { isImeComposingEvent } from "./lib/ime";
 import { startCoreFeatureWarmup } from "./lib/performanceWarmup";
@@ -1433,6 +1434,17 @@ function App() {
     setCatalogBoundaryRequest(null);
   }, [activeCourseId]);
 
+  React.useEffect(() => {
+    if (selectedMindMapNode.id) {
+      window.aistudyKnowledgeDocuments?.switchWindowNode?.({
+        courseId: activeCourse?.id,
+        mindMapId: activeMindMapId || activeCourse?.id,
+        nodeId: selectedMindMapNode.id,
+        nodeTitle: selectedMindMapNode.title || "节点文档"
+      });
+    }
+  }, [selectedMindMapNode, activeCourse?.id, activeMindMapId]);
+
   function openCreateDialog(sectionId: string | null = activeCourse?.sectionId ?? null) {
     const validSectionId = sectionId && sectionIds.has(sectionId) ? sectionId : null;
     setDialogMode("create");
@@ -1973,7 +1985,7 @@ function App() {
 }
 
 const routeParams = new URLSearchParams(window.location.search);
-const rootContent = routeParams.get("view") === "textbook-pdf" ? <TextbookPdfWindow /> : <App />;
+const rootContent = routeParams.get("view") === "node-document" ? <NodeDocumentStandaloneWindow /> : routeParams.get("view") === "textbook-pdf" ? <TextbookPdfWindow /> : <App />;
 
 createRoot(document.getElementById("root")!).render(
   <AppErrorBoundary>

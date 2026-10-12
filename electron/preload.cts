@@ -69,7 +69,18 @@ contextBridge.exposeInMainWorld("aistudyKnowledgeDocuments", {
   load: (request: unknown) => invokeApp("knowledge-documents:load", request),
   listStatuses: (request: unknown) => invokeApp("knowledge-documents:list-statuses", request),
   save: (request: unknown) => invokeApp("knowledge-documents:save", request),
-  exportDocx: (request: unknown) => invokeApp("knowledge-documents:export-docx", request)
+  exportDocx: (request: unknown) => invokeApp("knowledge-documents:export-docx", request),
+  openWindow: (request: unknown) => invokeApp("knowledge-documents:open-window", request),
+  switchWindowNode: (request: unknown) => invokeApp("knowledge-documents:switch-window-node", request),
+  isWindowOpen: () => invokeApp("knowledge-documents:is-window-open"),
+  closeWindow: () => invokeApp("knowledge-documents:close-window"),
+  onSwitchNode: (callback: (target: { courseId: string; mindMapId: string; nodeId: string; nodeTitle: string }) => void) => {
+    const listener = (_event: unknown, target: { courseId: string; mindMapId: string; nodeId: string; nodeTitle: string }) => callback(target);
+    ipcRenderer.on("node-document:switch", listener);
+    return () => {
+      ipcRenderer.off("node-document:switch", listener);
+    };
+  }
 });
 
 contextBridge.exposeInMainWorld("aistudyKnowledgeAssets", {

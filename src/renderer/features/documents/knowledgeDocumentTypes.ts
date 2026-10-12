@@ -129,6 +129,7 @@ export type KnowledgeDocumentEditorHandle = {
   insertTable: (rows: number, cols: number) => void;
   insertColumnBlock: (columns: KnowledgeDocumentColumnCount) => void;
   setColumnLayout: (columns: KnowledgeDocumentColumnLayout) => void;
+  insertCodeBlock?: (code?: string) => void;
   startFormatPainter: (reusable: boolean) => boolean;
   clearFormatPainter: () => void;
   focus: () => void;
